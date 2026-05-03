@@ -2,7 +2,7 @@
 // :: majorVersion: 1
 // :: fileVersion: 4
 // :: description: Types and failure structures for Appy v1.5.12.
-// :: filename: code/cmd/appy/types.go
+// :: filename: /home/aprice/dev/appy/types.go
 // :: serialization: go
 
 package main

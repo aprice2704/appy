@@ -2,7 +2,7 @@
 // :: majorVersion: 1
 // :: fileVersion: 2
 // :: description: Unit tests for compiler pre-flight.
-// :: filename: code/cmd/appy/compiler_test.go
+// :: filename: /home/aprice/dev/appy/compiler_test.go
 // :: serialization: go
 
 package main

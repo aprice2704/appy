@@ -2,7 +2,7 @@
 // :: majorVersion: 1
 // :: fileVersion: 2
 // :: description: v1.5.14 - Updated control plane buttons to match spec.
-// :: filename: code/cmd/appy/ui_html.go
+// :: filename: /home/aprice/dev/appy/ui_html.go
 // :: serialization: go
 
 package main
@@ -23,14 +23,15 @@ const htmlMiddle = `</style>
         <textarea id="bundleInput" placeholder="Paste the raw LLM output here (including the markdown code blocks and %%% syntax)..." oninput="debouncePreview()"></textarea>
         
         <div class="controls">
-            <button id="clearPasteBtn" onclick="clearAndPaste()" style="background: #4caf50; color: #fff;">Clear & Paste</button>
-            <button id="unarmorBtn" onclick="unarmorText()">Remove @@@</button>
-            <button id="checkBtn" onclick="checkSyntax()" disabled style="background: #ff9800; color: #fff;">Check Compiler</button>
-            <button id="applyBtn" onclick="applyBundle()" disabled>Apply to Disk</button>
-            <button id="fixPathsBtn" onclick="fixFilePaths()" style="background: #2196f3; color: #fff; display: none;">Fix File Paths</button>
-            <button id="copyLedgerBtn" onclick="copyResultLedger()" style="display: none;">Copy Result Ledger</button>
-            <button id="retestBtn" onclick="runRetest()" style="background: #007acc; color: #fff; display: none; font-weight: bold;">Retest Impacted</button>
-            <button id="cancelRetestBtn" onclick="cancelRetest()" style="background: #f44336; color: #fff; display: none; font-weight: bold;">Stop Tests</button>
+                        <button id="clearPasteBtn" onclick="clearAndPaste()">📋 Clear & Paste</button>
+            <button id="unarmorBtn" onclick="unarmorText()">🛡️ Remove @@@</button>
+            <button id="checkBtn" onclick="checkSyntax()" disabled>🧪 Check Compiler</button>
+            <button id="applyBtn" onclick="applyBundle()" disabled>🚀 Apply to Disk</button>
+                        <button id="fixPathsBtn" onclick="fixFilePaths()" style="display: none;">🔧 Fix File Paths</button>
+            <button id="copyErrorsBtn" onclick="copyPreviewErrors()" style="display: none; background: #dc2626; color: white; border: 1px solid #ef4444;">📋 Copy Errors</button>
+            <button id="copyLedgerBtn" onclick="copyResultLedger()" style="display: none;">✅ Copy Result Ledger</button>
+            <button id="retestBtn" onclick="runRetest()" style="display: none;">🔄 Retest Impacted</button>
+            <button id="cancelRetestBtn" onclick="cancelRetest()" style="display: none;">⏹️ Stop Tests</button>
         </div>
         
         <div id="output" class="output">

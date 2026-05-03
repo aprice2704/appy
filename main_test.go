@@ -3,7 +3,7 @@
 // :: fileVersion: 2
 // :: description: Unit tests for main package helpers.
 // :: latestChange: Updated to cover findTextAnchor and path resolution logic.
-// :: filename: code/cmd/appy/main_test.go
+// :: filename: /home/aprice/dev/appy/main_test.go
 // :: serialization: go
 
 package main

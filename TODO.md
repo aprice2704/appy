@@ -2,12 +2,12 @@
 // :: majorVersion: 1
 // :: fileVersion: 1
 // :: description: Appy feature requests and backlog.
-// :: filename: code/cmd/appy/TODO.md
+// :: filename: /home/aprice/dev/appy/TODO.md
 // :: serialization: md
 
 # Appy TODO & Backlog
 
 ## AST-Aware HTML/Astro Patching
-*   **Request**: Implement `replace_element` or `replace_html_node` directive.
-*   **Reasoning**: "This failure mode argues for a replace_element / replace_html_node directive someday. Target by id='principles-title' or by enclosing <section id='principles'>, then replace the AST-ish HTML node. The fuzzy text matcher is being asked to do surgery wearing boxing gloves." (via Team Grey)
-*   **Target Specs**: Should leverage `x/net/html` or similar to locate nodes by tag/ID/class instead of relying purely on lexical fuzzy matching.
+*   **Status**: DONE (v1.5.18).
+*   **Implementation**: Utilizes `golang.org/x/net/html` Tokenizer for precision byte-offset localization. Resolves exact element boundaries to preserve all external whitespace without triggering a global DOM re-render/reformat.
+*   **Syntax**: `%%% replace_element #id`, `%%% replace_element .class`, `%%% replace_element tag`. Supports `near <line>`.

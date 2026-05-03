@@ -2,7 +2,7 @@
 // :: majorVersion: 1
 // :: fileVersion: 1
 // :: description: Unit tests for types and ledger state.
-// :: filename: code/cmd/appy/types_test.go
+// :: filename: /home/aprice/dev/appy/types_test.go
 // :: serialization: go
 
 package main

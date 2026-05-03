@@ -1,20 +1,26 @@
 // :: product: FDM/NS
 // :: majorVersion: 1
-// :: fileVersion: 23
-// :: description: v1.5.14 - Version bump and UI spec alignment.
-// :: filename: code/cmd/appy/main.go
-// :: serialization: go
-
-// :: fileVersion: 24
-// :: description: v1.5.15 - Wired up Retest Impacted button.
-// :: filename: code/cmd/appy/main.go
+// :: fileVersion: 25
+// :: description: v1.5.16 - Restored rocket icons.
+// :: filename: /home/aprice/dev/appy/main.go
 // :: serialization: go
 
 // :: fileVersion: 25
 // :: description: v1.5.16 - Restored rocket icons.
-// :: filename: code/cmd/appy/main.go
+// :: filename: /home/aprice/dev/appy/main.go
 // :: serialization: go
-
+// :: fileVersion: 26
+// :: description: v1.5.18 - AST-Aware HTML/Astro patching and UI upgrades.
+// :: filename: /home/aprice/dev/appy/main.go
+// :: serialization: go
+// :: fileVersion: 26
+// :: description: v1.5.18 - AST-Aware HTML/Astro patching and UI upgrades.
+// :: filename: /home/aprice/dev/appy/main.go
+// :: serialization: go
+// :: fileVersion: 27
+// :: description: v1.5.19 - State-machine UI bug fixes, decorators, and test reporting.
+// :: filename: /home/aprice/dev/appy/main.go
+// :: serialization: go
 package main
 
 import (
@@ -56,7 +62,7 @@ func watchSelfForReload() {
 	}
 }
 
-const AppVersion = "v1.5.16"
+const AppVersion = "v1.5.19"
 
 func withRecoveryAndCORS(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
