@@ -1,7 +1,7 @@
 // :: product: FDM/NS
 // :: majorVersion: 1
-// :: fileVersion: 2
-// :: description: CSS styles for the Appy UI.
+// :: fileVersion: 3
+// :: description: CSS styles for the Appy UI v1.5.22.
 // :: filename: ui_css.go
 // :: serialization: go
 
@@ -11,10 +11,16 @@ const cssStyles = `
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Helvetica Neue", sans-serif; background: #0b0f19; color: #e2e8f0; margin: 0; padding: 20px; font-size: 15px; }
         .container { display: flex; flex-direction: column; height: 95vh; max-width: 1400px; margin: 0 auto; gap: 20px; }
         
+        .header-zone { display: flex; flex-direction: column; }
+        
         textarea { flex: 1; background: #121826; color: #a0aec0; border: 1px solid #2d3748; padding: 18px; font-family: 'Consolas', 'JetBrains Mono', monospace; font-size: 14px; resize: none; border-radius: 6px; outline: none; box-shadow: inset 0 2px 4px rgba(0,0,0,0.2); transition: border-color 0.2s; }
         textarea:focus { border-color: #3b82f6; box-shadow: 0 0 0 1px #3b82f6, inset 0 2px 4px rgba(0,0,0,0.2); }
         
-        .controls { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; background: #121826; padding: 12px 18px; border-radius: 6px; border: 1px solid #2d3748; }
+        .controls { display: flex; justify-content: space-between; align-items: center; background: #121826; padding: 12px 18px; border-radius: 6px; border: 1px solid #2d3748; }
+        .control-group { display: flex; gap: 8px; align-items: center; }
+        .prep-group { justify-content: flex-start; flex: 1; }
+        .action-group { justify-content: center; flex: 1; }
+        .export-group { justify-content: flex-end; flex: 1; position: relative; }
         
         button { padding: 10px 20px; border: none; border-radius: 4px; font-size: 14px; cursor: pointer; font-weight: 600; transition: all 0.2s ease; letter-spacing: 0.3px; display: flex; align-items: center; gap: 6px; }
         button:hover { filter: brightness(1.15); transform: translateY(-1px); }
@@ -36,8 +42,8 @@ const cssStyles = `
         
         .file-block { margin-bottom: 16px; border: 1px solid #334155; border-radius: 6px; overflow: hidden; background: #1e293b; transition: all 0.2s; box-shadow: 0 2px 5px rgba(0,0,0,0.15); }
         
-        .file-block.status-ok { border-color: #16a34a; }
-        .file-block.status-ok .file-header { background: rgba(22, 163, 74, 0.15); color: #bbf7d0; border-bottom: 1px solid rgba(22, 163, 74, 0.3); }
+        .file-block.status-ready { border-color: #16a34a; }
+        .file-block.status-ready .file-header { background: rgba(22, 163, 74, 0.15); color: #bbf7d0; border-bottom: 1px solid rgba(22, 163, 74, 0.3); }
         
         .file-block.status-applied { border-color: #475569; opacity: 0.85; }
         .file-block.status-applied .file-header { background: rgba(71, 85, 105, 0.2); color: #cbd5e1; border-bottom: 1px solid rgba(71, 85, 105, 0.4); }
@@ -58,10 +64,13 @@ const cssStyles = `
         .patch-block:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
         
         .status-badge { padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; }
-        .status-ok { background: rgba(34, 197, 94, 0.2); color: #4ade80; border: 1px solid rgba(34, 197, 94, 0.3); }
+        .status-ready { background: rgba(34, 197, 94, 0.2); color: #4ade80; border: 1px solid rgba(34, 197, 94, 0.3); }
         .status-error { background: rgba(239, 68, 68, 0.2); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.3); }
         .status-ignored { background: rgba(245, 158, 11, 0.2); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.3); }
         .status-applied { background: rgba(100, 116, 139, 0.2); color: #94a3b8; border: 1px solid rgba(100, 116, 139, 0.3); }
+        
+        .net-lines { font-family: 'Consolas', monospace; font-size: 11px; color: #94a3b8; margin-left: 12px; padding: 2px 6px; background: rgba(0,0,0,0.25); border-radius: 4px; border: 1px solid rgba(255,255,255,0.05); }
+        .rhs-chips { display: flex; align-items: center; gap: 8px; }
         
         .error-msg { color: #f87171; margin-top: 8px; font-size: 13px; font-weight: 500; }
         

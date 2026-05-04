@@ -1,8 +1,8 @@
 // :: product: FDM/NS
 // :: majorVersion: 1
-// :: fileVersion: 12
+// :: fileVersion: 13
 // :: description: Assembles HTML/JS/CSS constants for Appy.
-// :: filename: code/cmd/appy/ui.go
+// :: filename: ui.go
 // :: serialization: go
 
 package main

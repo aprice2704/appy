@@ -1,8 +1,8 @@
 // :: product: FDM/NS
 // :: majorVersion: 1
-// :: fileVersion: 9
+// :: fileVersion: 10
 // :: description: Core JS logic and state management for Appy UI.
-// :: filename: code/cmd/appy/ui_script.go
+// :: filename: ui_script.go
 // :: serialization: go
 
 package main
@@ -20,10 +20,10 @@ const unarmorBtn = document.getElementById('unarmorBtn');
 const fixPathsBtn = document.getElementById('fixPathsBtn');
 const copyLedgerBtn = document.getElementById('copyLedgerBtn');
 const copyErrorsBtn = document.getElementById('copyErrorsBtn');
+const copyTestReportBtn = document.getElementById('copyTestReportBtn');
 const retestBtn = document.getElementById('retestBtn');
 let previewTimeout;
-window.lastLedgerText = "";
-window.lastErrorText = "";
+window.tracePayload = ""; // Unified clipboard payload for current state
 
 async function clearAndPaste() {
     inputEl.value = "";
@@ -70,11 +70,25 @@ function unarmorText() {
 }
 
 function debouncePreview() {
+    outputEl.innerHTML = "<em style='color: #64748b;'>Waiting for input... (Stale preview cleared)</em>";
+    applyBtn.disabled = true;
+    applyBtn.classList.remove('ready');
+    checkBtn.disabled = true;
+    setExportMode('none');
+    retestBtn.style.display = 'none';
+    fixPathsBtn.style.display = 'none';
+    
     syncUIState();
     clearTimeout(previewTimeout);
     previewTimeout = setTimeout(() => {
         sendRequest('/api/preview');
-    }, 400);
+    }, 500);
+}
+
+function setExportMode(mode) {
+    copyErrorsBtn.style.display = mode === 'errors' ? 'inline-block' : 'none';
+    copyLedgerBtn.style.display = mode === 'ledger' ? 'inline-block' : 'none';
+    copyTestReportBtn.style.display = mode === 'test' ? 'inline-block' : 'none';
 }
 
 async function checkSyntax() {
@@ -97,8 +111,12 @@ async function sendRequest(endpoint, skipCompiler = false, checkOnly = false) {
         });
         const data = await res.json();
         
-        if (data.error) {
+                if (data.error) {
             outputEl.innerHTML = "<div class='error' style='margin-top:15px; padding: 15px; border: 1px solid #f44336; border-radius: 4px; background: rgba(244,67,54,0.1);'><strong>Server Error:</strong> " + escapeHtml(data.error) + "</div>";
+            window.tracePayload = "**Appy Server Error**\n\n" + data.error;
+            setExportMode('errors');
+            applyBtn.disabled = true;
+            checkBtn.disabled = true;
             return;
         }
 
@@ -107,8 +125,10 @@ async function sendRequest(endpoint, skipCompiler = false, checkOnly = false) {
         } else {
             renderPreview(data);
         }
-    } catch (err) {
+        } catch (err) {
         outputEl.innerHTML = "<div class='error'>Error: " + err.message + "</div>";
+        window.tracePayload = "**Appy Network/Client Error**\n\n" + err.message;
+        setExportMode('errors');
     }
 }
 
@@ -124,39 +144,47 @@ function fixFilePaths() {
     debouncePreview();
 }
 
-async function copyResultLedger() {
+async function copyTraceReport(mode) {
     try {
-        await navigator.clipboard.writeText(window.lastLedgerText || "No ledger available.");
-        const originalText = copyLedgerBtn.innerText;
-        copyLedgerBtn.innerText = "Copied!";
-        setTimeout(() => copyLedgerBtn.innerText = originalText, 2000);
+        await navigator.clipboard.writeText(window.tracePayload || "No data available.");
+        let btn = copyLedgerBtn;
+        if (mode === 'errors') btn = copyErrorsBtn;
+        if (mode === 'test') btn = copyTestReportBtn;
+        
+        const originalText = btn.innerText;
+        btn.innerText = "Copied!";
+        setTimeout(() => btn.innerText = originalText, 2000);
     } catch (err) {
         console.error("Failed to copy:", err);
     }
 }
 
-async function copyPreviewErrors() {
+async function retestImpacted() {
+    const originalText = retestBtn.innerText;
+    retestBtn.innerText = "Running Tests...";
+    retestBtn.disabled = true;
+    
     try {
-        await navigator.clipboard.writeText(window.lastErrorText || "No errors to report.");
-        const originalText = copyErrorsBtn.innerText;
-        copyErrorsBtn.innerText = "Copied!";
-        setTimeout(() => copyErrorsBtn.innerText = originalText, 2000);
+        const res = await fetch('/api/retest', { method: 'POST' });
+        const data = await res.json();
+        renderRetest(data);
     } catch (err) {
-        console.error("Failed to copy errors:", err);
+        outputEl.innerHTML += "<div class='error'>Retest Error: " + err.message + "</div>";
+    } finally {
+        retestBtn.innerText = originalText;
+        retestBtn.disabled = false;
     }
 }
 
 function addDecorator(el, emoji) {
-    let header = el.querySelector('summary > div');
-    if (header) {
-        let dec = header.querySelector('.decorator');
+    let rhs = el.querySelector('.rhs-chips');
+    if (rhs) {
+        let dec = rhs.querySelector('.decorator');
         if (!dec) {
             dec = document.createElement('span');
             dec.className = 'decorator';
-            dec.style.marginRight = '8px';
             dec.style.fontSize = '1.2em';
-            const badge = header.querySelector('.status-badge');
-            header.insertBefore(dec, badge);
+            rhs.insertBefore(dec, rhs.firstChild);
         }
         if (!dec.innerText.includes(emoji)) {
             dec.innerText += emoji;

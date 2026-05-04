@@ -1,0 +1,16 @@
+{
+  "package": "github.com/aprice2704/appy",
+  "directory": "/home/aprice/dev/appy",
+  "overall_coverage_percent": 84,
+  "target_coverage_percent": 72,
+  "instructions": [
+    "This package is not fully healthy (has failures, skips, or coverage below target).",
+    "Write table-driven tests to cover the functions listed below or fix the failing tests.",
+    "Follow project rules from AG.md: DO NOT use testify, use standard library 'testing'.",
+    "Use generated builders from fdm/code/nodes (Canonical Creation Law).",
+    "Use strongly typed constants from fdm/code/interfaces.",
+    "Ensure there are no silent failures. Mock external interfaces where appropriate.",
+    "No test files or coverage data found. Implement a comprehensive test suite from scratch."
+  ],
+  "under_tested_functions": []
+}

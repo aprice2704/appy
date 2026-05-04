@@ -1,8 +1,8 @@
 // :: product: FDM/NS
 // :: majorVersion: 1
-// :: fileVersion: 4
-// :: description: Types and failure structures for Appy v1.5.12.
-// :: filename: /home/aprice/dev/appy/types.go
+// :: fileVersion: 6
+// :: description: Types and failure structures compliant with Appy UI Spec v1.5.22.
+// :: filename: types.go
 // :: serialization: go
 
 package main
@@ -25,32 +25,58 @@ type RetestPayload struct {
 	Packages []string `json:"packages"`
 }
 
-type PreviewPatch struct {
-	Search    string `json:"search"`
-	Replace   string `json:"replace"`
-	Index     int    `json:"index"`
-	LineNum   int    `json:"line_num"`
-	Status    string `json:"status"` // "ok", "ignored", "error", "applied"
-	Message   string `json:"message"`
-	Hint      string `json:"hint"`
-	LineDelta int    `json:"line_delta"`
-	Advisory  string `json:"advisory,omitempty"`
-	Recovery  string `json:"recovery,omitempty"` // Suggested next patch syntax
+type PreviewFile struct {
+	Path     string         `json:"path"`
+	Status   string         `json:"status"` // READY, ERROR, IGNORED
+	NetLines int            `json:"net_lines"`
+	Patches  []PreviewPatch `json:"patches"`
 }
 
-type RejectedFile struct {
-	Filename                string       `json:"filename"`
-	Status                  string       `json:"file_commit_status"` // "rejected"
-	Reason                  string       `json:"reason"`
-	Committed               bool         `json:"committed"`
-	SuccessfulMemoryPatches []string     `json:"successful_memory_patches"`
-	FailedPatch             *FailedPatch `json:"failed_patch,omitempty"`
+type PreviewPatch struct {
+	SearchBlock      string `json:"search_block,omitempty"`
+	ReplaceBlock     string `json:"replace_block"`
+	IsOverwrite      bool   `json:"is_overwrite,omitempty"`
+	Error            string `json:"error,omitempty"`
+	ClosestMatchHint string `json:"closest_match_hint,omitempty"`
+	LLMFallbackHint  string `json:"llm_fallback_hint,omitempty"`
+}
+
+type ApplyFile struct {
+	Path        string       `json:"path"`
+	Applied     bool         `json:"applied"`
+	NetLines    int          `json:"net_lines"`
+	HashBefore  string       `json:"hash_before,omitempty"`
+	HashAfter   string       `json:"hash_after,omitempty"`
+	LedgerEntry string       `json:"ledger_entry,omitempty"`
+	Error       string       `json:"error,omitempty"`
+	FailedPatch *FailedPatch `json:"failed_patch,omitempty"`
+}
+
+type CompilerCheckFile struct {
+	Path           string   `json:"path"`
+	CompilerStatus string   `json:"compiler_status"` // PASS, FAIL
+	Diagnostics    []string `json:"diagnostics,omitempty"`
+	RawOutput      string   `json:"raw_output,omitempty"`
 }
 
 type FailedPatch struct {
-	Directive string `json:"directive"`
-	Reason    string `json:"reason"`
-	Current   string `json:"current_line,omitempty"` // Matched line echo
+	Error           string `json:"error,omitempty"`
+	CurrentLineEcho string `json:"current_line_echo,omitempty"`
+	LLMFallbackHint string `json:"llm_fallback_hint,omitempty"`
+}
+
+type RetestResponse struct {
+	Packages []string             `json:"packages"`
+	Files    []RetestResponseFile `json:"files"`
+}
+
+type RetestResponseFile struct {
+	Path           string `json:"path"`
+	TestStatus     string `json:"test_status"` // PASS, FAIL
+	Package        string `json:"package"`
+	Summary        string `json:"summary"`
+	FailureExcerpt string `json:"failure_excerpt,omitempty"`
+	RawOutput      string `json:"raw_output,omitempty"`
 }
 
 var (

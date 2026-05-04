@@ -1,8 +1,8 @@
 // :: product: FDM/NS
 // :: majorVersion: 1
-// :: fileVersion: 1
-// :: description: JS retest logic for Appy UI.
-// :: filename: code/cmd/appy/ui_script_retest.go
+// :: fileVersion: 2
+// :: description: JS retest logic matched to new schema and DOM isolation rules.
+// :: filename: ui_script_retest.go
 // :: serialization: go
 
 package main
@@ -35,48 +35,40 @@ async function runRetest() {
         if (loader) loader.style.display = 'none';
 
         let reportMd = "**Appy Retest Report**\n\n";
-        reportMd += "Success: " + (data.success ? "✅" : "❌") + "\n\n";
+        
+        const hasFails = data.files && data.files.some(f => f.test_status === 'FAIL');
+        reportMd += "Success: " + (!hasFails ? "✅" : "❌") + "\n\n";
 
         if (window.committedFiles) {
             window.committedFiles.forEach(f => {
-                const el = document.getElementById('file-block-' + f);
+                const el = document.getElementById('file-block-' + escapeHtml(f));
                 if (el) {
-                    let failed = false;
-                    if (!data.success && data.hard_fails) {
+                    let failItem = null;
+                    if (hasFails && data.files) {
                         const parts = f.split('/');
                         parts.pop();
-                        const folder = parts.length > 0 ? parts[parts.length - 1] : '';
-                                                failed = data.hard_fails.some(fail => {
-                            return folder === '' || (fail.Task && fail.Task.Package && fail.Task.Package.endsWith(folder));
+                        const folder = parts.length > 0 ? parts.join('/') : '';
+                        failItem = data.files.find(fail => {
+                            return fail.test_status === 'FAIL' && (folder === '' || (fail.package && fail.package.endsWith(folder)));
                         });
                     }
-                    addDecorator(el, failed ? '💥' : '🧪');
+                    addDecorator(el, failItem ? '💥' : '🧪');
                 }
             });
         }
 
-        if (data.hard_fails && data.hard_fails.length > 0) {
+        if (hasFails) {
             reportMd += "Hard Fails:\n";
-            data.hard_fails.forEach(fail => {
-                const pkg = fail.Task ? fail.Task.Package : 'Unknown';
-                const testName = (fail.Task && fail.Task.Test) ? fail.Task.Test : 'Package';
-                reportMd += "- **" + pkg + "** (" + testName + "):\n  " + tbt + "\n  " + (fail.Output ? fail.Output.trim() : 'Failed') + "\n  " + tbt + "\n";
-            });
-        }
-        if (data.heisenfails && data.heisenfails.length > 0) {
-            reportMd += "\nHeisenfails (Passed on rerun):\n";
-            data.heisenfails.forEach(fail => {
-                const pkg = fail.Task ? fail.Task.Package : 'Unknown';
-                const testName = (fail.Task && fail.Task.Test) ? fail.Task.Test : 'Package';
-                reportMd += "- **" + pkg + "** (" + testName + ")\n";
+            data.files.forEach(fail => {
+                if (fail.test_status === 'FAIL') {
+                    const pkg = fail.package || 'Unknown';
+                    reportMd += "- **" + pkg + "**:\n  " + tbt + "text\n  " + (fail.raw_output ? fail.raw_output.trim().replace(/\n/g, "\n  ") : 'Failed') + "\n  " + tbt + "\n\n";
+                }
             });
         }
 
-        window.lastLedgerText = reportMd;
-        copyLedgerBtn.innerText = "📋 Copy Test Report";
-        copyLedgerBtn.style.background = data.success ? "#16a34a" : "#dc2626";
-        copyLedgerBtn.style.borderColor = data.success ? "#22c55e" : "#ef4444";
-        copyLedgerBtn.style.display = 'inline-block';
+        window.tracePayload = reportMd;
+        setExportMode('test');
         
     } catch (err) {
         const loader = document.getElementById('testLoading');

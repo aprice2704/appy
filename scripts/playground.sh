@@ -31,13 +31,13 @@ fi
 
 echo "🚀 Building Appy..."
 cd "$REPO_ROOT"
-go build -o appy_bin .
+go install .
 
 echo "🔥 Launching Appy within playground sandbox..."
 cd "$PLAYGROUND_DIR"
 
 if [ $# -eq 0 ]; then
-    ../appy_bin -port 8086
+    appy -port 8086
 else
-    ../appy_bin "$@"
+    appy "$@"
 fi

@@ -1,0 +1,3067 @@
+FDM Context Bundle
+-- compiler.go --
+// :: product: FDM/NS
+// :: majorVersion: 1
+// :: fileVersion: 5
+// :: description: Compiler pre-flight and formatting via patcheng registry.
+// :: filename: /home/aprice/dev/appy/compiler.go
+// :: serialization: go
+
+package main
+
+import (
+	"context"
+	"path/filepath"
+	"strings"
+
+	"github.com/aprice2704/fdm/code/patcheng"
+)
+
+func runCompilerPreFlight(registry *patcheng.ProfileRegistry, memoryResults map[string]string, skipSlow bool) map[string]string {
+	compilerErrors := make(map[string]string)
+	for path, content := range memoryResults {
+		if strings.TrimSpace(content) == "" {
+			continue
+		}
+		prof := registry.GetByExtension(filepath.Ext(path))
+		if prof != nil && prof.Validator != nil {
+			if skipSlow && !prof.FastValidator {
+				continue
+			}
+			if err := prof.Validator(context.Background(), []byte(content)); err != nil {
+				compilerErrors[path] = err.Error()
+			}
+		}
+	}
+	return compilerErrors
+}
+-- compiler_test.go --
+// :: product: FDM/NS
+// :: majorVersion: 1
+// :: fileVersion: 2
+// :: description: Unit tests for compiler pre-flight.
+// :: filename: /home/aprice/dev/appy/compiler_test.go
+// :: serialization: go
+
+package main
+
+import (
+	"testing"
+
+	"github.com/aprice2704/fdm/code/patcheng"
+)
+
+func TestRunCompilerPreFlight(t *testing.T) {
+	t.Run("Valid Code", func(t *testing.T) {
+		mem := map[string]string{
+			"main.go": "package main\n\nfunc main() {}\n",
+		}
+		errs := runCompilerPreFlight(patcheng.DefaultRegistry, mem, false)
+		if len(errs) > 0 {
+			t.Errorf("Expected no error for valid code, got: %v", errs)
+		}
+	})
+
+	t.Run("Invalid Code", func(t *testing.T) {
+		mem := map[string]string{
+			"main.go": "package main\n\nfunc main() { syntax error!! }\n",
+		}
+		errs := runCompilerPreFlight(patcheng.DefaultRegistry, mem, false)
+		if len(errs) == 0 {
+			t.Fatal("Expected error for invalid code")
+		}
+	})
+}
+-- main.go --
+// :: product: FDM/NS
+// :: majorVersion: 1
+// :: fileVersion: 25
+// :: description: v1.5.16 - Restored rocket icons.
+// :: filename: /home/aprice/dev/appy/main.go
+// :: serialization: go
+
+// :: fileVersion: 25
+// :: description: v1.5.16 - Restored rocket icons.
+// :: filename: /home/aprice/dev/appy/main.go
+// :: serialization: go
+// :: fileVersion: 26
+// :: description: v1.5.18 - AST-Aware HTML/Astro patching and UI upgrades.
+// :: filename: /home/aprice/dev/appy/main.go
+// :: serialization: go
+// :: fileVersion: 26
+// :: description: v1.5.18 - AST-Aware HTML/Astro patching and UI upgrades.
+// :: filename: /home/aprice/dev/appy/main.go
+// :: serialization: go
+// :: fileVersion: 27
+// :: description: v1.5.19 - State-machine UI bug fixes, decorators, and test reporting.
+// :: filename: /home/aprice/dev/appy/main.go
+// :: serialization: go
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"flag"
+	"fmt"
+	"log"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/aprice2704/fdm/code/patcheng"
+	"github.com/aprice2704/fdm/code/retest"
+)
+
+func watchSelfForReload() {
+	execPath, err := os.Executable()
+	if err != nil {
+		log.Printf("Hot reload watcher disabled: cannot determine executable path: %v", err)
+		return
+	}
+	stat, err := os.Stat(execPath)
+	if err != nil {
+		log.Printf("Hot reload watcher disabled: cannot stat executable: %v", err)
+		return
+	}
+	initialModTime := stat.ModTime()
+
+	for {
+		time.Sleep(1 * time.Second)
+		stat, err := os.Stat(execPath)
+		if err == nil && stat.ModTime().After(initialModTime) {
+			log.Printf("Binary updated (mod time changed). Triggering hot reload (Exit 42)...")
+			os.Exit(42)
+		}
+	}
+}
+
+const AppVersion = "v1.5.19"
+
+func withRecoveryAndCORS(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		defer func() {
+			if rec := recover(); rec != nil {
+				log.Printf("PANIC: %v", rec)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusInternalServerError)
+				json.NewEncoder(w).Encode(map[string]string{"error": fmt.Sprintf("Server Panic: %v", rec)})
+			}
+		}()
+		h(w, r)
+	}
+}
+
+func newServer(rootDir string) *http.ServeMux {
+	mux := http.NewServeMux()
+	absRootDir, _ := filepath.Abs(rootDir)
+	LoadLedger(absRootDir)
+
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" {
+			http.NotFound(w, r)
+			return
+		}
+		html := strings.ReplaceAll(indexHTML, "{TITLE}", filepath.Base(absRootDir))
+		html = strings.ReplaceAll(html, "{VERSION}", AppVersion)
+		w.Header().Set("Content-Type", "text/html")
+		w.Write([]byte(html))
+	})
+
+	mux.HandleFunc("/api/preview", withRecoveryAndCORS(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+
+		var req Payload
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			sendError(w, "Invalid JSON", http.StatusBadRequest)
+			return
+		}
+
+		req.Bundle = preprocessDeleteBlocks(req.Bundle, patcheng.BundleDelim)
+
+		parsed, err := patcheng.ParseTextBundle(req.Bundle, patcheng.DefaultRegistry)
+		if err != nil {
+			sendError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		responsePatches := make(map[string][]PreviewPatch)
+		pathFixes := make(map[string]string)
+
+		for rawFilename, patches := range parsed {
+			if !isPathSafe(absRootDir, rawFilename) {
+				continue
+			}
+
+			absPath := filepath.Join(absRootDir, rawFilename)
+			contentBytes, _ := os.ReadFile(absPath)
+			content := string(contentBytes)
+
+			var filePreviews []PreviewPatch
+			for _, p := range patches {
+				delta := 0
+				if p.FullOverwrite {
+					delta = countLines(p.Replace) - countLines(content)
+				} else {
+					delta = countLines(p.Replace) - countLines(p.Search)
+				}
+
+				pp := PreviewPatch{
+					Search:    p.Search,
+					Replace:   p.Replace,
+					Index:     p.Index,
+					LineNum:   p.LineNum,
+					Status:    "ok",
+					LineDelta: delta,
+				}
+
+				patchHash := hashPatch(rawFilename, p.Search, p.Replace)
+				appliedPatchesMu.RLock()
+				alreadyApplied := appliedPatches[patchHash]
+				appliedPatchesMu.RUnlock()
+
+				if alreadyApplied {
+					pp.Status = "applied"
+				} else {
+					prof := patcheng.DefaultRegistry.GetByExtension(filepath.Ext(rawFilename))
+					_, pErr := patcheng.ApplyFuzzyPatchesAgnostic(prof, content, []patcheng.FuzzyPatch{p})
+					if pErr != nil {
+						errMsg := pErr.Error()
+						if strings.Contains(errMsg, "refusing to overwrite existing file") {
+							pp.Status = "ignored"
+							pp.Message = "File already exists. Use '%%% overwrite' to replace it."
+						} else if strings.Contains(errMsg, "target file is empty or does not exist") {
+							pp.Status = "ignored"
+							pp.Message = "Target file missing. Click 'Fix File Paths'."
+							if fixed := findUniquePathSuffix(absRootDir, rawFilename); fixed != "" {
+								pathFixes[rawFilename] = fixed
+							}
+						} else {
+							pp.Status = "error"
+							pp.Message = pErr.Error()
+							pp.Advisory = generateAdvisory(prof, pErr)
+							pp.Hint = generateDiagnosticHint(prof, rawFilename, content, p.Search, p.NearLine)
+						}
+					}
+				}
+
+				filePreviews = append(filePreviews, pp)
+			}
+			responsePatches[rawFilename] = filePreviews
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(withND("appy/preview", "Simulation results", map[string]any{
+			"patches":    responsePatches,
+			"path_fixes": pathFixes,
+		}))
+	}))
+
+	mux.HandleFunc("/api/apply", withRecoveryAndCORS(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+
+		var req Payload
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			sendError(w, "Invalid JSON", http.StatusBadRequest)
+			return
+		}
+
+		req.Bundle = preprocessDeleteBlocks(req.Bundle, patcheng.BundleDelim)
+
+		parsed, err := patcheng.ParseTextBundle(req.Bundle, patcheng.DefaultRegistry)
+		if err != nil {
+			sendError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		memoryResults := make(map[string]string)
+		fileErrors := make(map[string]string)
+		rejectedFiles := make(map[string]RejectedFile)
+		appliedInThisBatch := make(map[string]bool)
+
+		for rawFilename, patches := range parsed {
+			if !isPathSafe(absRootDir, rawFilename) {
+				sendError(w, "Path traversal denied", http.StatusBadRequest)
+				return
+			}
+			absPath := filepath.Join(absRootDir, rawFilename)
+			contentBytes, _ := os.ReadFile(absPath)
+			prof := patcheng.DefaultRegistry.GetByExtension(filepath.Ext(rawFilename))
+
+			newContent, applyErr := patcheng.ApplyFuzzyPatchesAgnostic(prof, string(contentBytes), patches)
+			if applyErr != nil {
+				// Safety ignores do not trigger 207 Multi-Status
+				if strings.Contains(applyErr.Error(), "refusing to overwrite existing file") {
+					fileErrors[rawFilename] = applyErr.Error()
+					continue
+				}
+
+				var successes []string
+				var failedBlock *FailedPatch
+
+				for _, p := range patches {
+					_, pErr := patcheng.ApplyFuzzyPatchesAgnostic(prof, string(contentBytes), []patcheng.FuzzyPatch{p})
+					if pErr == nil {
+						successes = append(successes, patcheng.FormatMissingSnippet(p.Search))
+					} else if failedBlock == nil {
+						cur := ""
+						hint := generateDiagnosticHint(prof, rawFilename, string(contentBytes), p.Search, p.NearLine)
+						if strings.Contains(hint, ": ") {
+							lines := strings.Split(hint, "\n")
+							for _, l := range lines {
+								if strings.Contains(l, ": ") && !strings.Contains(l, "elided") {
+									cur = strings.TrimSpace(strings.SplitN(l, ": ", 2)[1])
+									break
+								}
+							}
+						}
+						failedBlock = &FailedPatch{
+							Directive: fmt.Sprintf("replace near %d", p.NearLine),
+							Reason:    pErr.Error(),
+							Current:   cur,
+						}
+					}
+				}
+
+				fileErrors[rawFilename] = applyErr.Error()
+				rejectedFiles[rawFilename] = RejectedFile{
+					Filename:                rawFilename,
+					Status:                  "rejected",
+					Reason:                  applyErr.Error() + " (all patches for this file were rolled back)",
+					Committed:               false,
+					SuccessfulMemoryPatches: successes,
+					FailedPatch:             failedBlock,
+				}
+				continue
+			}
+
+			// Apply language-specific formatting before staging
+			if prof != nil && prof.Formatter != nil {
+				formatted, _, err := prof.Formatter(context.Background(), []byte(newContent))
+				if err == nil {
+					newContent = string(formatted)
+				}
+			}
+
+			memoryResults[absPath] = newContent
+			for _, p := range patches {
+				appliedInThisBatch[hashPatch(rawFilename, p.Search, p.Replace)] = true
+			}
+		}
+
+		if len(memoryResults) > 0 && !req.SkipCompiler {
+			compErrs := runCompilerPreFlight(patcheng.DefaultRegistry, memoryResults, false)
+			for p, e := range compErrs {
+				rel, _ := filepath.Rel(absRootDir, p)
+				fileErrors[rel] = e
+				rejectedFiles[rel] = RejectedFile{
+					Filename: rel,
+					Status:   "rejected",
+					Reason:   "Compiler Error: " + e,
+				}
+				delete(memoryResults, p)
+			}
+		}
+
+		filesModified := 0
+		if !req.CheckOnly {
+			for path, content := range memoryResults {
+				os.MkdirAll(filepath.Dir(path), 0755)
+				os.WriteFile(path, []byte(content), 0644)
+				filesModified++
+			}
+		}
+
+		if filesModified > 0 {
+			appliedPatchesMu.Lock()
+			for h := range appliedInThisBatch {
+				appliedPatches[h] = true
+			}
+			appliedPatchesMu.Unlock()
+			SaveLedger(absRootDir)
+		}
+
+		status := http.StatusOK
+		if len(rejectedFiles) > 0 {
+			status = http.StatusMultiStatus
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		json.NewEncoder(w).Encode(withND("appy/apply-success", "Result", map[string]any{
+			"status":                     "ok",
+			"files_modified":             filesModified,
+			"file_errors":                fileErrors,
+			"rejected_files":             rejectedFiles,
+			"successful_files_committed": getKeysFromMemory(memoryResults, absRootDir),
+		}))
+	}))
+
+	mux.HandleFunc("/api/retest", withRecoveryAndCORS(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+
+		var req RetestPayload
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			sendError(w, "Invalid JSON", http.StatusBadRequest)
+			return
+		}
+
+		opts := retest.Options{JSONMode: true, Args: req.Packages}
+		report, err := retest.Run(r.Context(), opts)
+		if err != nil {
+			sendError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		b, _ := json.Marshal(report)
+		var rm map[string]any
+		json.Unmarshal(b, &rm)
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(withND("appy/retest", "Test execution report", rm))
+	}))
+
+	return mux
+}
+
+func getKeysFromMemory(m map[string]string, root string) []string {
+	var keys []string
+	for k := range m {
+		rel, _ := filepath.Rel(root, k)
+		keys = append(keys, filepath.ToSlash(rel))
+	}
+	return keys
+}
+
+func main() {
+	port := flag.String("port", "8085", "Port to run the appy server on")
+	flag.Parse()
+
+	go watchSelfForReload()
+
+	cwd, _ := os.Getwd()
+	fmt.Printf("Appy %s on http://localhost:%s\n", AppVersion, *port)
+
+	http.ListenAndServe(":"+*port, newServer(cwd))
+}
+-- main_test.go --
+// :: product: FDM/NS
+// :: majorVersion: 1
+// :: fileVersion: 2
+// :: description: Unit tests for main package helpers.
+// :: latestChange: Updated to cover findTextAnchor and path resolution logic.
+// :: filename: /home/aprice/dev/appy/main_test.go
+// :: serialization: go
+
+package main
+
+import (
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/aprice2704/fdm/code/patcheng"
+)
+
+func TestHashPatch(t *testing.T) {
+	h1 := hashPatch("file.go", "search string", "replace string")
+	h2 := hashPatch("file.go", "search string", "replace string")
+	h3 := hashPatch("file.go", "search string", "different")
+
+	if h1 != h2 {
+		t.Errorf("Expected deterministic hash for identical inputs")
+	}
+	if h1 == h3 {
+		t.Errorf("Expected different hashes for different inputs")
+	}
+}
+
+func TestNormalizeSpace(t *testing.T) {
+	input := "  func \t Old() {\n\tprintln(1)  \r\n} "
+	expected := "funcOld(){println(1)}"
+	if got := normalizeSpace(input); got != expected {
+		t.Errorf("Expected %q, got %q", expected, got)
+	}
+}
+
+func TestGetNonEmptyLines(t *testing.T) {
+	input := "\n  \nfunc Old() {}\n\n\n\t\nfunc New() {}"
+	lines := getNonEmptyLines(input)
+	if len(lines) != 2 {
+		t.Fatalf("Expected 2 non-empty lines, got %d", len(lines))
+	}
+	if lines[0] != "func Old() {}" || lines[1] != "func New() {}" {
+		t.Errorf("Unexpected lines extracted: %v", lines)
+	}
+}
+
+func TestFindTextAnchor(t *testing.T) {
+	content := "package main\n\nfunc A() {}\n\nfunc Old() {\n\tprintln(\"old\")\n}\n\nfunc B() {}"
+
+	t.Run("Finds Typo Match", func(t *testing.T) {
+		search := "func old() {\n\tprintln(\"old\")\n}"
+		match := findTextAnchor(content, search)
+		if !strings.Contains(match, "func Old() {") {
+			t.Errorf("Failed to find closest text match. Got:\n%s", match)
+		}
+		if !strings.Contains(match, "3: func A() {}") {
+			t.Errorf("Failed to include preceding context lines. Got:\n%s", match)
+		}
+	})
+
+	t.Run("Elides Large Blocks", func(t *testing.T) {
+		longContent := "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15"
+		longSearch := "4\n5\n6\n7\n8\n9\n10\n11\n12\n13" // 10 lines
+		match := findTextAnchor(longContent, longSearch)
+		if !strings.Contains(match, "elided") {
+			t.Errorf("Expected elision for blocks > 8 lines. Got:\n%s", match)
+		}
+		if !strings.Contains(match, "4: 4") || !strings.Contains(match, "13: 13") {
+			t.Errorf("Expected boundaries to be preserved. Got:\n%s", match)
+		}
+	})
+
+	t.Run("Empty Search", func(t *testing.T) {
+		if match := findTextAnchor(content, "   \n\t"); match != "" {
+			t.Errorf("Expected empty hint for empty search, got %q", match)
+		}
+	})
+}
+
+func TestPreprocessDeleteBlocks(t *testing.T) {
+	input := "### delete\nold code\n### end\n"
+	expected := "### replace\nold code\n### with\n### end\n"
+	got := preprocessDeleteBlocks(input, "###")
+	if got != expected {
+		t.Errorf("Expected %q, got %q", expected, got)
+	}
+}
+
+func TestFindUniquePathSuffix(t *testing.T) {
+	dir := t.TempDir()
+	// Setup mock filesystem
+	os.MkdirAll(filepath.Join(dir, "sys", "auth"), 0755)
+	os.MkdirAll(filepath.Join(dir, "plugins", "auth"), 0755)
+	os.MkdirAll(filepath.Join(dir, ".git", "auth"), 0755) // Should be ignored
+	os.WriteFile(filepath.Join(dir, "sys", "auth", "login.go"), []byte(""), 0644)
+	os.WriteFile(filepath.Join(dir, "plugins", "auth", "login.go"), []byte(""), 0644)
+	os.WriteFile(filepath.Join(dir, "sys", "auth", "unique.go"), []byte(""), 0644)
+	os.WriteFile(filepath.Join(dir, ".git", "auth", "login.go"), []byte(""), 0644)
+
+	t.Run("Unique Match", func(t *testing.T) {
+		match := findUniquePathSuffix(dir, "auth/unique.go")
+		expected := filepath.ToSlash(filepath.Join("sys", "auth", "unique.go"))
+		if match != expected {
+			t.Errorf("Expected %q, got %q", expected, match)
+		}
+	})
+
+	t.Run("Ambiguous Match", func(t *testing.T) {
+		match := findUniquePathSuffix(dir, "auth/login.go")
+		if match != "" {
+			t.Errorf("Expected empty string for ambiguous match, got %q", match)
+		}
+	})
+
+	t.Run("No Match", func(t *testing.T) {
+		match := findUniquePathSuffix(dir, "missing.go")
+		if match != "" {
+			t.Errorf("Expected empty string for missing file, got %q", match)
+		}
+	})
+
+	t.Run("Exact Root Relative Match", func(t *testing.T) {
+		match := findUniquePathSuffix(dir, "sys/auth/login.go")
+		expected := filepath.ToSlash(filepath.Join("sys", "auth", "login.go"))
+		if match != expected {
+			t.Errorf("Expected %q, got %q", expected, match)
+		}
+	})
+}
+
+func TestGenerateDiagnosticHint(t *testing.T) {
+	content := "package main\n\ntype MyStruct struct{}\n\nfunc (m *MyStruct) Process() {}\n\nfunc Standalone() {}\n"
+
+	t.Run("Finds AST Context for Method", func(t *testing.T) {
+		hint := generateDiagnosticHint(patcheng.GoProfile, "file.go", content, "func (m *MyStruct) Process() {\n\t// broken", 0)
+		if !strings.Contains(hint, "Targeting func (*MyStruct) Process") {
+			t.Errorf("Failed to find method context. Got:\n%s", hint)
+		}
+	})
+
+	t.Run("Finds AST Context for Type", func(t *testing.T) {
+		hint := generateDiagnosticHint(patcheng.GoProfile, "file.go", content, "type MyStruct struct{", 0)
+		if !strings.Contains(hint, "Targeting type MyStruct") {
+			t.Errorf("Failed to find type context. Got:\n%s", hint)
+		}
+	})
+
+	t.Run("Finds AST Context via NearLine", func(t *testing.T) {
+		hint := generateDiagnosticHint(patcheng.GoProfile, "file.go", content, "foo", 7) // Line 7 is Standalone()
+		if !strings.Contains(hint, "Targeting func Standalone") {
+			t.Errorf("Failed to find nearLine context. Got:\n%s", hint)
+		}
+	})
+}
+
+func TestGenerateAdvisory(t *testing.T) {
+	tests := []struct {
+		err      error
+		contains string
+	}{
+		{nil, ""},
+		{errors.New("overlapping patches detected: oops"), "combining the patches"},
+		{errors.New("search block not found in file"), "Ensure exact matching"},
+		{errors.New("ambiguous search block"), "Provide more context lines"},
+		{errors.New("random error"), ""},
+	}
+
+	for _, tc := range tests {
+		res := generateAdvisory(nil, tc.err)
+		if tc.contains == "" && res != "" {
+			t.Errorf("Expected empty advisory for %v, got %q", tc.err, res)
+		} else if tc.contains != "" && !strings.Contains(res, tc.contains) {
+			t.Errorf("Expected advisory for %v to contain %q, got %q", tc.err, tc.contains, res)
+		}
+	}
+
+	t.Run("Includes Profile Nudge", func(t *testing.T) {
+		prof := &patcheng.LanguageProfile{
+			ID:                  "testlang",
+			PreferredStrategies: []string{"magic", "fuzzy"},
+		}
+		res := generateAdvisory(prof, errors.New("search block not found"))
+		if !strings.Contains(res, "LLM Nudge: Preferred patching strategies for testlang are [magic, fuzzy]") {
+			t.Errorf("Failed to inject LLM nudge, got: %q", res)
+		}
+	})
+}
+-- server_test.go --
+// :: product: FDM/NS
+// :: majorVersion: 1
+// :: fileVersion: 7
+// :: description: Unit tests for the appy server APIs.
+// :: latestChange: Updated to test partial success (file-level transactions) and removed literal patch delimiters to protect parsers.
+// :: filename: /home/aprice/dev/appy/server_test.go
+// :: serialization: go
+
+package main
+
+import (
+	"bytes"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/aprice2704/fdm/code/patcheng"
+)
+
+func setupTestWorkspace(t *testing.T) string {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module appytest\n\ngo 1.22\n"), 0644)
+	os.WriteFile(filepath.Join(dir, "base.go"), []byte("package mypkg\n"), 0644)
+	return dir
+}
+
+func TestAPI_Root(t *testing.T) {
+	mux := newServer(setupTestWorkspace(t))
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Result().StatusCode != http.StatusOK {
+		t.Errorf("Expected 200 OK for root, got %d", w.Result().StatusCode)
+	}
+}
+
+func TestAPI_RootNotFound(t *testing.T) {
+	mux := newServer(setupTestWorkspace(t))
+	req := httptest.NewRequest(http.MethodGet, "/random-path", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Result().StatusCode != http.StatusNotFound {
+		t.Errorf("Expected 404 for unknown path, got %d", w.Result().StatusCode)
+	}
+}
+
+func TestAPI_MethodNotAllowed(t *testing.T) {
+	mux := newServer(setupTestWorkspace(t))
+
+	reqs := []*http.Request{
+		httptest.NewRequest(http.MethodGet, "/api/preview", nil),
+		httptest.NewRequest(http.MethodPut, "/api/apply", nil),
+	}
+
+	for _, req := range reqs {
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, req)
+		if w.Result().StatusCode != http.StatusMethodNotAllowed {
+			t.Errorf("Expected 405 Method Not Allowed for %s %s, got %d", req.Method, req.URL.Path, w.Result().StatusCode)
+		}
+	}
+}
+
+func TestAPI_InvalidJSON(t *testing.T) {
+	mux := newServer(setupTestWorkspace(t))
+
+	reqs := []*http.Request{
+		httptest.NewRequest(http.MethodPost, "/api/preview", strings.NewReader("{bad json")),
+		httptest.NewRequest(http.MethodPost, "/api/apply", strings.NewReader("{bad json")),
+	}
+
+	for _, req := range reqs {
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, req)
+		if w.Result().StatusCode != http.StatusBadRequest {
+			t.Errorf("Expected 400 Bad Request for invalid JSON on %s, got %d", req.URL.Path, w.Result().StatusCode)
+		}
+	}
+}
+
+func TestAPI_Preview_Valid(t *testing.T) {
+	mux := newServer(setupTestWorkspace(t))
+
+	payload := Payload{
+		Bundle: strings.ReplaceAll(`
+### filename: test.go
+### replace
+func A() {}
+### with
+func B() {}
+### end
+`, "###", patcheng.BundleDelim),
+	}
+	body, _ := json.Marshal(payload)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/preview", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	mux.ServeHTTP(w, req)
+
+	res := w.Result()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("Expected status 200, got %d", res.StatusCode)
+	}
+
+	var response map[string]any
+	if err := json.NewDecoder(res.Body).Decode(&response); err != nil {
+		t.Fatalf("Failed to decode response: %v", err)
+	}
+
+	patches, ok := response["patches"].(map[string]any)
+	if !ok || len(patches) != 1 {
+		t.Fatalf("Expected 1 file in patches map, got %v", patches)
+	}
+}
+
+func TestAPI_Preview_InvalidSyntax(t *testing.T) {
+	mux := newServer(setupTestWorkspace(t))
+
+	payload := Payload{Bundle: patcheng.BundleDelim + " replace\nbroken"}
+	body, _ := json.Marshal(payload)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/preview", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Result().StatusCode != http.StatusBadRequest {
+		t.Errorf("Expected 400 Bad Request for invalid bundle syntax, got %d", w.Result().StatusCode)
+	}
+}
+
+func TestAPI_Apply_ValidModify(t *testing.T) {
+	tempDir := setupTestWorkspace(t)
+	mux := newServer(tempDir)
+
+	targetFile := filepath.Join(tempDir, "target.go")
+	initialContent := "package mypkg\n\nfunc Old() {}\n"
+	os.WriteFile(targetFile, []byte(initialContent), 0644)
+
+	payload := Payload{
+		Bundle: strings.ReplaceAll(`
+### filename: target.go
+### replace
+func Old() {}
+### with
+func New() {}
+### end
+`, "###", patcheng.BundleDelim),
+	}
+	body, _ := json.Marshal(payload)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/apply", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	mux.ServeHTTP(w, req)
+
+	res := w.Result()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("Expected status 200, got %d. Body: %s", res.StatusCode, w.Body.String())
+	}
+
+	modifiedContentBytes, _ := os.ReadFile(targetFile)
+	modifiedContent := string(modifiedContentBytes)
+
+	if !strings.Contains(modifiedContent, "func New() {}") {
+		t.Errorf("File was not correctly patched. Content:\n%s", modifiedContent)
+	}
+}
+
+func TestAPI_Apply_PathTraversalDenied(t *testing.T) {
+	tempDir := setupTestWorkspace(t)
+	mux := newServer(tempDir)
+
+	payloads := []string{
+		patcheng.BundleDelim + ` filename: ../../../etc/passwd` + "\n" + patcheng.BundleDelim + " replace\n" + patcheng.BundleDelim + " with\n" + patcheng.BundleDelim + " end",
+		patcheng.BundleDelim + ` filename: /var/log/syslog` + "\n" + patcheng.BundleDelim + " replace\n" + patcheng.BundleDelim + " with\n" + patcheng.BundleDelim + " end",
+	}
+
+	for _, bundleText := range payloads {
+		payload := Payload{Bundle: bundleText}
+		body, _ := json.Marshal(payload)
+
+		req := httptest.NewRequest(http.MethodPost, "/api/apply", bytes.NewReader(body))
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, req)
+
+		if w.Result().StatusCode != http.StatusBadRequest {
+			t.Errorf("Expected 400 Bad Request for path traversal %s, got %d", bundleText, w.Result().StatusCode)
+		}
+		if !strings.Contains(w.Body.String(), "Path traversal denied") {
+			t.Errorf("Expected path traversal error message, got: %s", w.Body.String())
+		}
+	}
+}
+
+func TestAPI_Apply_PartialSuccess(t *testing.T) {
+	tempDir := setupTestWorkspace(t)
+	mux := newServer(tempDir)
+
+	os.WriteFile(filepath.Join(tempDir, "fileA.go"), []byte("package mypkg\nfunc A() {}"), 0644)
+	os.WriteFile(filepath.Join(tempDir, "fileB.go"), []byte("package mypkg\nfunc B() {}"), 0644)
+
+	bundle := strings.ReplaceAll(`
+### filename: fileA.go
+### replace
+func A() {}
+### with
+func MODIFIED_A() {}
+### end
+
+### filename: fileB.go
+### replace
+func DOES_NOT_EXIST() {}
+### with
+func BROKEN() {}
+### end
+`, "###", patcheng.BundleDelim)
+
+	payload := Payload{Bundle: bundle}
+	body, _ := json.Marshal(payload)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/apply", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Result().StatusCode != http.StatusMultiStatus {
+		t.Fatalf("Expected 207 Multi-Status due to partial failure, got %d", w.Result().StatusCode)
+	}
+
+	// fileA should be modified
+	contentA, _ := os.ReadFile(filepath.Join(tempDir, "fileA.go"))
+	if !strings.Contains(string(contentA), "func MODIFIED_A() {}") {
+		t.Errorf("fileA should have been modified on partial success. Content: %s", string(contentA))
+	}
+
+	// fileB should NOT be modified
+	contentB, _ := os.ReadFile(filepath.Join(tempDir, "fileB.go"))
+	if !strings.Contains(string(contentB), "func B() {}") {
+		t.Errorf("fileB should remain unchanged. Content: %s", string(contentB))
+	}
+}
+
+func TestAPI_Apply_CompilerPreFlightFailure(t *testing.T) {
+	tempDir := setupTestWorkspace(t)
+	mux := newServer(tempDir)
+
+	targetFile := filepath.Join(tempDir, "badcode.go")
+	os.WriteFile(targetFile, []byte("package mypkg\nfunc Old() {}\n"), 0644)
+
+	goodFile := filepath.Join(tempDir, "goodcode.go")
+	os.WriteFile(goodFile, []byte("package mypkg\nfunc Good() {}\n"), 0644)
+
+	payload := Payload{
+		Bundle: strings.ReplaceAll(`
+### filename: badcode.go
+### replace
+func Old() {}
+### with
+func Old() { this is deliberately invalid syntax!
+### end
+### filename: goodcode.go
+### replace
+func Good() {}
+### with
+func Good() { println("ok") }
+### end
+`, "###", patcheng.BundleDelim),
+	}
+
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/api/apply", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	res := w.Result()
+	if res.StatusCode != http.StatusMultiStatus {
+		t.Fatalf("Expected status 207 for compiler failure, got %d", res.StatusCode)
+	}
+
+	var response map[string]any
+	json.NewDecoder(res.Body).Decode(&response)
+
+	fileErrors, ok := response["file_errors"].(map[string]any)
+	if !ok || fileErrors["badcode.go"] == nil {
+		t.Fatalf("Expected a 'badcode.go' error key in file_errors, got: %v", response["file_errors"])
+	}
+
+	// Ensure the file on disk was NOT modified (No Limping)
+
+	// Ensure the file on disk was NOT modified (No Limping)
+	contentBytes, _ := os.ReadFile(targetFile)
+	if strings.Contains(string(contentBytes), "deliberately invalid syntax") {
+		t.Errorf("File was modified on disk despite compiler error!")
+	}
+}
+
+func TestAPI_Apply_CreateNewFile_NativeEngine(t *testing.T) {
+	tempDir := setupTestWorkspace(t)
+	mux := newServer(tempDir)
+
+	payload := Payload{
+		Bundle: strings.ReplaceAll(`
+### filename: deep/dir/newfile.go
+### replace
+### with
+package mypkg
+func Boot() {}
+### end
+`, "###", patcheng.BundleDelim),
+	}
+	body, _ := json.Marshal(payload)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/apply", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	res := w.Result()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("Expected status 200, got %d. Body: %s", res.StatusCode, w.Body.String())
+	}
+
+	contentBytes, err := os.ReadFile(filepath.Join(tempDir, "deep", "dir", "newfile.go"))
+	if err != nil {
+		t.Fatalf("Failed to read newly created file: %v", err)
+	}
+	expected := "package mypkg\n\nfunc Boot() {}\n"
+	if string(contentBytes) != expected {
+		t.Errorf("New file content mismatch.\nExpected: %q\nGot: %q", expected, string(contentBytes))
+	}
+}
+
+func TestAPI_Retest(t *testing.T) {
+	tempDir := setupTestWorkspace(t)
+	mux := newServer(tempDir)
+
+	payload := RetestPayload{Packages: []string{"path"}} // stdlib package so it passes quickly
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/api/retest", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	res := w.Result()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("Expected status 200 for retest, got %d", res.StatusCode)
+	}
+
+	var response map[string]any
+	if err := json.NewDecoder(res.Body).Decode(&response); err != nil {
+		t.Fatalf("Failed to decode JSON: %v", err)
+	}
+
+	if success, ok := response["success"].(bool); !ok || !success {
+		t.Errorf("Expected retest to report success for 'path' package")
+	}
+}
+
+func TestAPI_Apply_EmptySearchOverwritesIgnored(t *testing.T) {
+	tempDir := setupTestWorkspace(t)
+	mux := newServer(tempDir)
+
+	targetFile := filepath.Join(tempDir, "important.go")
+	os.WriteFile(targetFile, []byte("package mypkg\nfunc Old() {}"), 0644)
+
+	payload := Payload{
+		Bundle: strings.ReplaceAll(`
+### filename: important.go
+### replace
+### with
+func AccidentalOverwrite() {}
+### end
+`, "###", patcheng.BundleDelim),
+	}
+	body, _ := json.Marshal(payload)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/apply", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Result().StatusCode != http.StatusOK {
+		t.Errorf("Expected 200 OK for gracefully ignoring existing file overwrite, got %d", w.Result().StatusCode)
+	}
+
+	var response map[string]any
+	json.NewDecoder(w.Result().Body).Decode(&response)
+
+	if modified, ok := response["files_modified"].(float64); !ok || modified != 0 {
+		t.Errorf("Expected 0 files_modified, got: %v", response["files_modified"])
+	}
+}
+
+func TestAPI_Preview_WarningsAndHints(t *testing.T) {
+	tempDir := setupTestWorkspace(t)
+	mux := newServer(tempDir)
+
+	os.WriteFile(filepath.Join(tempDir, "exists.go"), []byte("package mypkg\n\nfunc Old() {}\n"), 0644)
+
+	// Setup for path fixer test
+	os.MkdirAll(filepath.Join(tempDir, "nested", "deep"), 0755)
+	os.WriteFile(filepath.Join(tempDir, "nested", "deep", "missing.go"), []byte("package mypkg\nfunc Old() {}"), 0644)
+
+	bundle := strings.ReplaceAll(`
+### filename: exists.go
+### replace
+### with
+func AccidentalOverwrite() {}
+### end
+
+### filename: missing.go
+### replace
+func Old() {}
+### with
+func New() {}
+### end
+
+### filename: exists.go
+### replace
+package mypkg
+func Older() {}
+### with
+func New() {}
+### end
+`, "###", patcheng.BundleDelim)
+
+	payload := Payload{Bundle: bundle}
+	body, _ := json.Marshal(payload)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/preview", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Result().StatusCode != http.StatusOK {
+		t.Fatalf("Expected 200 OK for preview, got %d", w.Result().StatusCode)
+	}
+
+	var response map[string]any
+	json.NewDecoder(w.Result().Body).Decode(&response)
+
+	patches, ok := response["patches"].(map[string]any)
+	if !ok {
+		t.Fatalf("Expected patches map, got: %v", response)
+	}
+
+	// Check exists.go (creation -> ignored, modify with typo -> error + hint)
+	existsPatches := patches["exists.go"].([]any)
+	if len(existsPatches) != 2 {
+		t.Fatalf("Expected 2 patches for exists.go, got %d", len(existsPatches))
+	}
+
+	p0 := existsPatches[0].(map[string]any)
+	if p0["status"] != "ignored" || !strings.Contains(p0["message"].(string), "File already exists") {
+		t.Errorf("Expected ignored warning for existing file creation, got: %v", p0)
+	}
+
+	p1 := existsPatches[1].(map[string]any)
+	if p1["status"] != "error" {
+		t.Errorf("Expected error for fuzzy patch mismatch, got: %v", p1)
+	}
+	if p1["hint"] == nil || !strings.Contains(p1["hint"].(string), "func Old() {}") {
+		t.Errorf("Expected hint to contain the closest match, got hint: %v", p1["hint"])
+	}
+
+	// Check missing.go
+	missingPatches := patches["missing.go"].([]any)
+	pM := missingPatches[0].(map[string]any)
+	if pM["status"] != "ignored" || !strings.Contains(pM["message"].(string), "Target file missing") {
+		t.Errorf("Expected ignored warning for missing target file, got: %v", pM)
+	}
+
+	// Verify Path Fixer payload
+	pathFixes, ok := response["path_fixes"].(map[string]any)
+	if !ok || pathFixes["missing.go"] != "nested/deep/missing.go" {
+		t.Errorf("Expected path_fixes map to contain nested resolution, got: %v", pathFixes)
+	}
+	if !strings.Contains(pM["message"].(string), "Click 'Fix File Paths'") {
+		t.Errorf("Expected UI hint for missing file resolution, got: %s", pM["message"])
+	}
+}
+
+func TestAPI_Apply_TracksHistory(t *testing.T) {
+	tempDir := setupTestWorkspace(t)
+	mux := newServer(tempDir)
+
+	targetFile := filepath.Join(tempDir, "history.go")
+	os.WriteFile(targetFile, []byte("package mypkg\nfunc Old() {}"), 0644)
+
+	bundle := strings.ReplaceAll(`
+### filename: history.go
+### replace
+func Old() {}
+### with
+func New() {}
+### end
+`, "###", patcheng.BundleDelim)
+
+	payload := Payload{Bundle: bundle}
+	body, _ := json.Marshal(payload)
+
+	// 1. Apply it
+	req := httptest.NewRequest(http.MethodPost, "/api/apply", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Result().StatusCode != http.StatusOK {
+		t.Fatalf("Expected 200 OK on apply")
+	}
+
+	// 2. Preview it again to verify hash memory
+	reqPreview := httptest.NewRequest(http.MethodPost, "/api/preview", bytes.NewReader(body))
+	wPreview := httptest.NewRecorder()
+	mux.ServeHTTP(wPreview, reqPreview)
+
+	var response map[string]any
+	json.NewDecoder(wPreview.Result().Body).Decode(&response)
+	patches := response["patches"].(map[string]any)
+	hist := patches["history.go"].([]any)[0].(map[string]any)
+
+	if hist["status"] != "applied" {
+		t.Errorf("Expected status 'applied', got %v", hist["status"])
+	}
+}
+
+func TestAPI_Apply_DeleteBlock(t *testing.T) {
+	tempDir := setupTestWorkspace(t)
+	mux := newServer(tempDir)
+
+	targetFile := filepath.Join(tempDir, "delete_me.go")
+	os.WriteFile(targetFile, []byte("package mypkg\nfunc Old() {}\nfunc Keep() {}"), 0644)
+
+	payload := Payload{
+		Bundle: strings.ReplaceAll(`
+### filename: delete_me.go
+### delete
+func Old() {}
+### end
+`, "###", patcheng.BundleDelim),
+	}
+	body, _ := json.Marshal(payload)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/apply", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	contentBytes, _ := os.ReadFile(targetFile)
+	if !strings.Contains(string(contentBytes), "func Keep() {}") || strings.Contains(string(contentBytes), "func Old() {}") {
+		t.Errorf("Expected func Old() {} to be deleted, got: %q", string(contentBytes))
+	}
+}
+
+func TestAPI_Apply_EmptyFileDeletion(t *testing.T) {
+	tempDir := setupTestWorkspace(t)
+	mux := newServer(tempDir)
+
+	targetFile := filepath.Join(tempDir, "delete_me.go")
+	os.WriteFile(targetFile, []byte("package mypkg\nfunc Old() {}"), 0644)
+
+	payload := Payload{
+		Bundle: strings.ReplaceAll(`
+### filename: delete_me.go
+### replace
+package mypkg
+func Old() {}
+### with
+### end
+`, "###", patcheng.BundleDelim),
+	}
+	body, _ := json.Marshal(payload)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/apply", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	contentBytes, _ := os.ReadFile(targetFile)
+	if len(contentBytes) != 0 {
+		t.Errorf("Expected file to be empty, got: %q", string(contentBytes))
+	}
+}
+
+func TestAPI_Apply_ReplaceSymbol(t *testing.T) {
+	tempDir := setupTestWorkspace(t)
+	mux := newServer(tempDir)
+
+	targetFile := filepath.Join(tempDir, "symbol.go")
+	os.WriteFile(targetFile, []byte("package mypkg\nfunc Old() {}\n"), 0644)
+
+	bundle := strings.ReplaceAll(`
+### filename: symbol.go
+### replace_symbol Old
+### with
+func Old(ctx context.Context) {}
+### end
+`, "###", patcheng.BundleDelim)
+
+	payload := Payload{Bundle: bundle}
+	body, _ := json.Marshal(payload)
+	req := httptest.NewRequest(http.MethodPost, "/api/apply", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+
+	mux.ServeHTTP(w, req)
+
+	if w.Result().StatusCode != http.StatusOK {
+		t.Fatalf("Expected 200 OK, got %d", w.Result().StatusCode)
+	}
+
+	content, _ := os.ReadFile(targetFile)
+	if !strings.Contains(string(content), "func Old(ctx context.Context)") {
+		t.Errorf("Failed to replace symbol via API. Content:\n%s", string(content))
+	}
+}
+
+func TestWithRecoveryAndCORS(t *testing.T) {
+	handler := withRecoveryAndCORS(func(w http.ResponseWriter, r *http.Request) {
+		panic("test panic")
+	})
+
+	t.Run("OPTIONS Request", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodOptions, "/", nil)
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+
+		if w.Result().StatusCode != http.StatusOK {
+			t.Errorf("Expected 200 OK for OPTIONS, got %d", w.Result().StatusCode)
+		}
+		if w.Header().Get("Access-Control-Allow-Origin") != "*" {
+			t.Errorf("Missing CORS headers")
+		}
+	})
+
+	t.Run("Panic Recovery", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+
+		if w.Result().StatusCode != http.StatusInternalServerError {
+			t.Errorf("Expected 500 Internal Server Error, got %d", w.Result().StatusCode)
+		}
+		if !strings.Contains(w.Body.String(), "Server Panic: test panic") {
+			t.Errorf("Expected panic message in JSON, got: %s", w.Body.String())
+		}
+	})
+}
+-- types.go --
+// :: product: FDM/NS
+// :: majorVersion: 1
+// :: fileVersion: 4
+// :: description: Types and failure structures for Appy v1.5.12.
+// :: filename: /home/aprice/dev/appy/types.go
+// :: serialization: go
+
+package main
+
+import (
+	"encoding/json"
+	"log"
+	"os"
+	"path/filepath"
+	"sync"
+)
+
+type Payload struct {
+	Bundle       string `json:"bundle"`
+	SkipCompiler bool   `json:"skip_compiler"`
+	CheckOnly    bool   `json:"check_only"`
+}
+
+type RetestPayload struct {
+	Packages []string `json:"packages"`
+}
+
+type PreviewPatch struct {
+	Search    string `json:"search"`
+	Replace   string `json:"replace"`
+	Index     int    `json:"index"`
+	LineNum   int    `json:"line_num"`
+	Status    string `json:"status"` // "ok", "ignored", "error", "applied"
+	Message   string `json:"message"`
+	Hint      string `json:"hint"`
+	LineDelta int    `json:"line_delta"`
+	Advisory  string `json:"advisory,omitempty"`
+	Recovery  string `json:"recovery,omitempty"` // Suggested next patch syntax
+}
+
+type RejectedFile struct {
+	Filename                string       `json:"filename"`
+	Status                  string       `json:"file_commit_status"` // "rejected"
+	Reason                  string       `json:"reason"`
+	Committed               bool         `json:"committed"`
+	SuccessfulMemoryPatches []string     `json:"successful_memory_patches"`
+	FailedPatch             *FailedPatch `json:"failed_patch,omitempty"`
+}
+
+type FailedPatch struct {
+	Directive string `json:"directive"`
+	Reason    string `json:"reason"`
+	Current   string `json:"current_line,omitempty"` // Matched line echo
+}
+
+var (
+	appliedPatchesMu sync.RWMutex
+	appliedPatches   = make(map[string]bool)
+)
+
+const ledgerFilename = ".appy_ledger.json"
+
+func LoadLedger(workspaceRoot string) {
+	appliedPatchesMu.Lock()
+	defer appliedPatchesMu.Unlock()
+	b, err := os.ReadFile(filepath.Join(workspaceRoot, ledgerFilename))
+	if err == nil {
+		if err := json.Unmarshal(b, &appliedPatches); err != nil {
+			log.Printf("Warning: failed to unmarshal patch ledger: %v", err)
+		}
+	} else if !os.IsNotExist(err) {
+		log.Printf("Warning: failed to read patch ledger: %v", err)
+	}
+}
+
+func SaveLedger(workspaceRoot string) {
+	appliedPatchesMu.RLock()
+	defer appliedPatchesMu.RUnlock()
+	b, err := json.MarshalIndent(appliedPatches, "", "  ")
+	if err != nil {
+		log.Printf("Error: failed to marshal patch ledger: %v", err)
+		return
+	}
+	if err := os.WriteFile(filepath.Join(workspaceRoot, ledgerFilename), b, 0644); err != nil {
+		log.Printf("Error: failed to write patch ledger to disk: %v", err)
+	}
+}
+-- types_test.go --
+// :: product: FDM/NS
+// :: majorVersion: 1
+// :: fileVersion: 1
+// :: description: Unit tests for types and ledger state.
+// :: filename: /home/aprice/dev/appy/types_test.go
+// :: serialization: go
+
+package main
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+func TestLedgerPersistence(t *testing.T) {
+	dir := t.TempDir()
+
+	// Set initial state
+	appliedPatchesMu.Lock()
+	appliedPatches = map[string]bool{"hash1": true, "hash2": true}
+	appliedPatchesMu.Unlock()
+
+	// Save to temp dir
+	SaveLedger(dir)
+
+	// Verify file exists
+	if _, err := os.Stat(filepath.Join(dir, ledgerFilename)); os.IsNotExist(err) {
+		t.Fatal("SaveLedger failed to create ledger file")
+	}
+
+	// Clear memory
+	appliedPatchesMu.Lock()
+	appliedPatches = make(map[string]bool)
+	appliedPatchesMu.Unlock()
+
+	// Load from temp dir
+	LoadLedger(dir)
+
+	// Verify state restored
+	appliedPatchesMu.RLock()
+	defer appliedPatchesMu.RUnlock()
+	if !appliedPatches["hash1"] || !appliedPatches["hash2"] || len(appliedPatches) != 2 {
+		t.Errorf("LoadLedger failed to restore state, got: %v", appliedPatches)
+	}
+}
+
+func TestLoadLedger_NotExist(t *testing.T) {
+	// Should not panic or crash when the file doesn't exist
+	LoadLedger(t.TempDir())
+}
+
+func TestLoadLedger_InvalidJSON(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, ledgerFilename), []byte("{bad json"), 0644)
+	LoadLedger(dir) // Should log warning but not crash
+}
+
+func TestSaveLedger_WriteError(t *testing.T) {
+	// Write to a path that isn't a directory to force an error
+	file, _ := os.CreateTemp("", "bad_dir")
+	defer os.Remove(file.Name())
+	SaveLedger(file.Name()) // Should log warning but not crash
+}
+-- ui.go --
+// :: product: FDM/NS
+// :: majorVersion: 1
+// :: fileVersion: 12
+// :: description: Assembles HTML/JS/CSS constants for Appy.
+// :: filename: /home/aprice/dev/appy/ui.go
+// :: serialization: go
+
+package main
+
+const indexHTML = htmlTop + cssStyles + htmlMiddle + jsCore + jsRender + jsRetest + "\n// Initial state check\nsyncUIState();\n" + htmlBottom
+-- ui_css.go --
+// :: product: FDM/NS
+// :: majorVersion: 1
+// :: fileVersion: 2
+// :: description: CSS styles for the Appy UI.
+// :: filename: /home/aprice/dev/appy/ui_css.go
+// :: serialization: go
+
+package main
+
+const cssStyles = `
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Helvetica Neue", sans-serif; background: #0b0f19; color: #e2e8f0; margin: 0; padding: 20px; font-size: 15px; }
+        .container { display: flex; flex-direction: column; height: 95vh; max-width: 1400px; margin: 0 auto; gap: 20px; }
+        
+        textarea { flex: 1; background: #121826; color: #a0aec0; border: 1px solid #2d3748; padding: 18px; font-family: 'Consolas', 'JetBrains Mono', monospace; font-size: 14px; resize: none; border-radius: 6px; outline: none; box-shadow: inset 0 2px 4px rgba(0,0,0,0.2); transition: border-color 0.2s; }
+        textarea:focus { border-color: #3b82f6; box-shadow: 0 0 0 1px #3b82f6, inset 0 2px 4px rgba(0,0,0,0.2); }
+        
+        .controls { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; background: #121826; padding: 12px 18px; border-radius: 6px; border: 1px solid #2d3748; }
+        
+        button { padding: 10px 20px; border: none; border-radius: 4px; font-size: 14px; cursor: pointer; font-weight: 600; transition: all 0.2s ease; letter-spacing: 0.3px; display: flex; align-items: center; gap: 6px; }
+        button:hover { filter: brightness(1.15); transform: translateY(-1px); }
+        button:active { transform: translateY(0); }
+        button:disabled { opacity: 0.4; cursor: not-allowed; transform: none; filter: none; }
+        
+        #clearPasteBtn { background: #3f3f46; color: white; border: 1px solid #52525b; }
+        #checkBtn { background: #ca8a04; color: #fff; border: 1px solid #eab308; }
+        #applyBtn { background: #2563eb; color: white; border: 1px solid #3b82f6; }
+        #applyBtn.ready { background: #16a34a; border-color: #22c55e; box-shadow: 0 0 10px rgba(34, 197, 94, 0.3); }
+        #unarmorBtn { background: #7c3aed; color: #fff; max-width: 0; padding-left: 0; padding-right: 0; opacity: 0; overflow: hidden; white-space: nowrap; transition: all 0.3s ease; display: none; }
+        #unarmorBtn.show { max-width: 200px; padding-left: 20px; padding-right: 20px; opacity: 1; border: 1px solid #8b5cf6; }
+        #fixPathsBtn { background: #0891b2; color: white; border: 1px solid #06b6d4; }
+        #copyLedgerBtn { background: #475569; color: white; border: 1px solid #64748b; }
+        #retestBtn { background: #0284c7; color: white; border: 1px solid #06b6d4; }
+        #cancelRetestBtn { background: #dc2626; color: white; border: 1px solid #ef4444; }
+
+        .output { flex: 1; background: #0f1420; border: 1px solid #2d3748; padding: 20px; overflow-y: auto; border-radius: 6px; font-family: 'Consolas', 'JetBrains Mono', monospace; font-size: 13.5px; line-height: 1.6; box-shadow: inset 0 2px 4px rgba(0,0,0,0.1); }
+        
+        .file-block { margin-bottom: 16px; border: 1px solid #334155; border-radius: 6px; overflow: hidden; background: #1e293b; transition: all 0.2s; box-shadow: 0 2px 5px rgba(0,0,0,0.15); }
+        
+        .file-block.status-ok { border-color: #16a34a; }
+        .file-block.status-ok .file-header { background: rgba(22, 163, 74, 0.15); color: #bbf7d0; border-bottom: 1px solid rgba(22, 163, 74, 0.3); }
+        
+        .file-block.status-applied { border-color: #475569; opacity: 0.85; }
+        .file-block.status-applied .file-header { background: rgba(71, 85, 105, 0.2); color: #cbd5e1; border-bottom: 1px solid rgba(71, 85, 105, 0.4); }
+        
+        .file-block.status-error { border-color: #ef4444; }
+        .file-block.status-error .file-header { background: rgba(239, 68, 68, 0.15); color: #fecaca; border-bottom: 1px solid rgba(239, 68, 68, 0.3); }
+        
+        .file-block.status-ignored { border-color: #f59e0b; }
+        .file-block.status-ignored .file-header { background: rgba(245, 158, 11, 0.15); color: #fef08a; border-bottom: 1px solid rgba(245, 158, 11, 0.3); }
+        
+        .file-header { background: #1e293b; padding: 10px 16px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; user-select: none; transition: background 0.2s; font-family: -apple-system, BlinkMacSystemFont, sans-serif; letter-spacing: 0.2px; }
+        .file-header:hover { filter: brightness(1.2); }
+        
+        .file-content { padding: 14px 16px; }
+        .file-block[open] .file-content { display: block; }
+        
+        .patch-block { margin-bottom: 18px; padding-bottom: 18px; border-bottom: 1px dashed #475569; }
+        .patch-block:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
+        
+        .status-badge { padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; }
+        .status-ok { background: rgba(34, 197, 94, 0.2); color: #4ade80; border: 1px solid rgba(34, 197, 94, 0.3); }
+        .status-error { background: rgba(239, 68, 68, 0.2); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.3); }
+        .status-ignored { background: rgba(245, 158, 11, 0.2); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.3); }
+        .status-applied { background: rgba(100, 116, 139, 0.2); color: #94a3b8; border: 1px solid rgba(100, 116, 139, 0.3); }
+        
+        .error-msg { color: #f87171; margin-top: 8px; font-size: 13px; font-weight: 500; }
+        
+        .replace-block { color: #86efac; margin-top: 8px; white-space: pre-wrap; background: rgba(34, 197, 94, 0.08); padding: 10px 12px; border-left: 3px solid #22c55e; border-radius: 0 4px 4px 0; }
+        .replace-block.applied { color: #94a3b8; background: rgba(100, 116, 139, 0.08); border-left: 3px solid #64748b; }
+        
+        .hint-block { color: #7dd3fc; margin-top: 8px; white-space: pre-wrap; background: rgba(6, 182, 212, 0.08); padding: 10px 12px; border-left: 3px dashed #06b6d4; border-radius: 0 4px 4px 0; }
+        
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: #0f1420; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #475569; }
+`
+-- ui_e2e_test.go --
+// :: product: FDM/NS
+// :: majorVersion: 1
+// :: fileVersion: 5
+// :: description: End-to-End browser tests for the Appy UI using chromedp.
+// :: filename: /home/aprice/dev/appy/ui_e2e_test.go
+// :: serialization: go
+
+package main
+
+import (
+	"context"
+	"fmt"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/aprice2704/fdm/code/patcheng"
+	"github.com/chromedp/cdproto/runtime"
+	"github.com/chromedp/chromedp"
+)
+
+// setupTestServer creates an isolated Appy server and a chromedp context.
+func setupTestServer(t *testing.T) (*httptest.Server, context.Context, context.CancelFunc, string) {
+	tempDir := t.TempDir()
+
+	// Create a dummy target file for patching tests
+	err := os.WriteFile(filepath.Join(tempDir, "target.go"), []byte("package main\n\nfunc Old() {}\n"), 0644)
+	if err != nil {
+		t.Fatalf("Failed to create dummy target file: %v", err)
+	}
+
+	ts := httptest.NewServer(newServer(tempDir))
+
+	opts := append(chromedp.DefaultExecAllocatorOptions[:],
+		chromedp.DisableGPU,
+		chromedp.NoSandbox,
+		chromedp.Headless,
+	)
+	allocCtx, _ := chromedp.NewExecAllocator(context.Background(), opts...)
+
+	// Capture browser console logs to aid in debugging test failures
+	ctx, cancel := chromedp.NewContext(allocCtx)
+	chromedp.ListenTarget(ctx, func(ev interface{}) {
+		switch ev := ev.(type) {
+		case *runtime.EventExceptionThrown:
+			t.Logf("Browser Exception: %s", ev.ExceptionDetails.Text)
+		case *runtime.EventConsoleAPICalled:
+			var args []string
+			for _, arg := range ev.Args {
+				args = append(args, string(arg.Value))
+			}
+			t.Logf("Browser Console: %s", strings.Join(args, " "))
+		}
+	})
+
+	return ts, ctx, cancel, tempDir
+}
+
+func TestE2E_UI_InitialState(t *testing.T) {
+	ts, ctx, cancel, _ := setupTestServer(t)
+	defer ts.Close()
+	defer cancel()
+
+	ctx, cancelTimeout := context.WithTimeout(ctx, 10*time.Second)
+	defer cancelTimeout()
+
+	var checkBtnDisabled, applyBtnDisabled bool
+	var unarmorDisplay string
+
+	err := chromedp.Run(ctx,
+		chromedp.Navigate(ts.URL),
+		chromedp.WaitVisible(`#bundleInput`, chromedp.ByQuery),
+		chromedp.Evaluate(`document.getElementById('checkBtn').hasAttribute('disabled')`, &checkBtnDisabled),
+		chromedp.Evaluate(`document.getElementById('applyBtn').hasAttribute('disabled')`, &applyBtnDisabled),
+		chromedp.Evaluate(`document.getElementById('unarmorBtn').style.display || "none"`, &unarmorDisplay),
+	)
+	if err != nil {
+		t.Fatalf("Chromedp run failed: %v", err)
+	}
+
+	if !checkBtnDisabled || !applyBtnDisabled {
+		t.Errorf("Expected check and apply buttons to be disabled on load")
+	}
+	if unarmorDisplay != "none" && unarmorDisplay != "" {
+		t.Errorf("Expected unarmor button to be hidden on load, got display: %s", unarmorDisplay)
+	}
+}
+
+func TestE2E_UI_ArmorLogic(t *testing.T) {
+	ts, ctx, cancel, _ := setupTestServer(t)
+	defer ts.Close()
+	defer cancel()
+
+	ctx, cancelTimeout := context.WithTimeout(ctx, 10*time.Second)
+	defer cancelTimeout()
+
+	var display string
+
+	// Helper to set textarea value and trigger input event
+	setInput := func(val string) chromedp.Action {
+		return chromedp.Evaluate(fmt.Sprintf(`
+			var el = document.getElementById('bundleInput');
+			el.value = %q;
+			el.dispatchEvent(new Event('input'));
+		`, val), nil)
+	}
+
+	err := chromedp.Run(ctx,
+		chromedp.Navigate(ts.URL),
+		chromedp.WaitVisible(`#bundleInput`, chromedp.ByQuery),
+
+		// 1. Mixed text (should hide)
+		setInput("@@@line 1\nline 2"),
+		chromedp.Sleep(100*time.Millisecond),
+		chromedp.Evaluate(`document.getElementById('unarmorBtn').style.display || "none"`, &display),
+	)
+	if err != nil {
+		t.Fatalf("Chromedp run failed: %v", err)
+	}
+	if display != "none" {
+		t.Errorf("Expected unarmor button to be hidden for mixed text, got %s", display)
+	}
+
+	err = chromedp.Run(ctx,
+		// 2. Strict armored text (should show)
+		setInput("@@@line 1\n@@@line 2\n\n@@@line 3"),
+		chromedp.Sleep(100*time.Millisecond),
+		chromedp.Evaluate(`document.getElementById('unarmorBtn').style.display`, &display),
+	)
+	if err != nil {
+		t.Fatalf("Chromedp run failed: %v", err)
+	}
+	if display != "inline-block" {
+		t.Errorf("Expected unarmor button to be shown for strictly armored text, got %s", display)
+	}
+}
+
+func TestE2E_UI_PreviewAndApplyFlow(t *testing.T) {
+	ts, ctx, cancel, tempDir := setupTestServer(t)
+	defer ts.Close()
+	defer cancel()
+
+	ctx, cancelTimeout := context.WithTimeout(ctx, 15*time.Second)
+	defer cancelTimeout()
+
+	// Create a valid bundle targeting our dummy file
+	bundle := strings.ReplaceAll(`
+### filename: target.go
+### replace
+func Old() {}
+### with
+func New() {}
+### end
+`, "###", patcheng.BundleDelim)
+
+	var applyBtnDisabled bool
+	var stripeClass string
+
+	err := chromedp.Run(ctx,
+		chromedp.Navigate(ts.URL),
+		chromedp.WaitVisible(`#bundleInput`, chromedp.ByQuery),
+
+		// Paste the bundle and wait for the debounce/fetch cycle
+		chromedp.Evaluate(fmt.Sprintf(`
+			var el = document.getElementById('bundleInput');
+			el.value = %q;
+			el.dispatchEvent(new Event('input'));
+		`, bundle), nil),
+
+		// Wait for the OK stripe to render
+		chromedp.WaitVisible(`.file-block.status-ok`, chromedp.ByQuery),
+		chromedp.Evaluate(`document.getElementById('applyBtn').hasAttribute('disabled')`, &applyBtnDisabled),
+	)
+	if err != nil {
+		t.Fatalf("Preview phase failed: %v", err)
+	}
+
+	if applyBtnDisabled {
+		t.Errorf("Expected apply button to be ENABLED after successful preview")
+	}
+
+	// Click Apply via direct JS evaluation to guarantee execution
+	err = chromedp.Run(ctx,
+		chromedp.Evaluate(`document.getElementById('applyBtn').click()`, nil),
+	)
+	if err != nil {
+		t.Fatalf("Failed to click applyBtn: %v", err)
+	}
+
+	// Wait for the stripe to turn grey (applied)
+	err = chromedp.Run(ctx,
+		chromedp.WaitVisible(`.file-block.status-applied`, chromedp.ByQuery),
+		chromedp.AttributeValue(`#file-block-target\.go`, "class", &stripeClass, nil, chromedp.ByQuery),
+	)
+	if err != nil {
+		// If it times out, dump the exact HTML state of the output box so we can diagnose
+		var outputHTML string
+		chromedp.Run(ctx, chromedp.OuterHTML(`#output`, &outputHTML, chromedp.ByID))
+		t.Fatalf("Apply phase failed waiting for DOM update: %v\nOutput HTML state:\n%s", err, outputHTML)
+	}
+
+	if !strings.Contains(stripeClass, "status-applied") {
+		t.Errorf("Expected stripe to have 'status-applied' class, got: %s", stripeClass)
+	}
+
+	// Verify the file was actually written to disk by the backend
+	contentBytes, err := os.ReadFile(filepath.Join(tempDir, "target.go"))
+	if err != nil {
+		t.Fatalf("Failed to read modified file: %v", err)
+	}
+	if !strings.Contains(string(contentBytes), "func New() {}") {
+		t.Errorf("File on disk was not modified correctly. Content:\n%s", string(contentBytes))
+	}
+}
+-- ui_html.go --
+// :: product: FDM/NS
+// :: majorVersion: 1
+// :: fileVersion: 2
+// :: description: v1.5.14 - Updated control plane buttons to match spec.
+// :: filename: /home/aprice/dev/appy/ui_html.go
+// :: serialization: go
+
+package main
+
+const htmlTop = `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+        <link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">🚀</text></svg>'>
+    <title>{TITLE} | Appy</title>
+    <style>`
+
+const htmlMiddle = `</style>
+</head>
+<body>
+    <div class="container">
+        <h2 style="margin: 0;">  {TITLE} | Appy <span style="font-size: 0.6em; color: #888; font-weight: normal;">{VERSION}</span></h2>
+        <textarea id="bundleInput" placeholder="Paste the raw LLM output here (including the markdown code blocks and %%% syntax)..." oninput="debouncePreview()"></textarea>
+        
+        <div class="controls">
+                        <button id="clearPasteBtn" onclick="clearAndPaste()">📋 Clear & Paste</button>
+            <button id="unarmorBtn" onclick="unarmorText()">🛡️ Remove @@@</button>
+            <button id="checkBtn" onclick="checkSyntax()" disabled>🧪 Check Compiler</button>
+            <button id="applyBtn" onclick="applyBundle()" disabled>🚀 Apply to Disk</button>
+                        <button id="fixPathsBtn" onclick="fixFilePaths()" style="display: none;">🔧 Fix File Paths</button>
+            <button id="copyErrorsBtn" onclick="copyPreviewErrors()" style="display: none; background: #dc2626; color: white; border: 1px solid #ef4444;">📋 Copy Errors</button>
+            <button id="copyLedgerBtn" onclick="copyResultLedger()" style="display: none;">✅ Copy Result Ledger</button>
+            <button id="retestBtn" onclick="runRetest()" style="display: none;">🔄 Retest Impacted</button>
+            <button id="cancelRetestBtn" onclick="cancelRetest()" style="display: none;">⏹️ Stop Tests</button>
+        </div>
+        
+        <div id="output" class="output">
+            <em>Waiting for input...</em>
+        </div>
+    </div>
+    <script>`
+
+const htmlBottom = `</script>
+</body>
+</html>`
+-- ui_script.go --
+// :: product: FDM/NS
+// :: majorVersion: 1
+// :: fileVersion: 9
+// :: description: Core JS logic and state management for Appy UI.
+// :: filename: /home/aprice/dev/appy/ui_script.go
+// :: serialization: go
+
+package main
+
+const jsCore = `
+const bt = String.fromCharCode(96);
+const tbt = bt + bt + bt;
+
+const inputEl = document.getElementById('bundleInput');
+const outputEl = document.getElementById('output');
+const applyBtn = document.getElementById('applyBtn');
+const checkBtn = document.getElementById('checkBtn');
+const clearPasteBtn = document.getElementById('clearPasteBtn');
+const unarmorBtn = document.getElementById('unarmorBtn');
+const fixPathsBtn = document.getElementById('fixPathsBtn');
+const copyLedgerBtn = document.getElementById('copyLedgerBtn');
+const copyErrorsBtn = document.getElementById('copyErrorsBtn');
+const retestBtn = document.getElementById('retestBtn');
+let previewTimeout;
+window.lastLedgerText = "";
+window.lastErrorText = "";
+
+async function clearAndPaste() {
+    inputEl.value = "";
+    try {
+        const text = await navigator.clipboard.readText();
+        inputEl.value = text;
+        syncUIState();
+        sendRequest('/api/preview');
+    } catch (err) {
+        console.error("Clipboard access denied:", err);
+        outputEl.innerHTML = "<div class='error'>Clipboard access denied. Please paste manually (Ctrl+V).</div>";
+    }
+}
+
+function syncUIState() {
+    const hasContent = inputEl.value.trim().length > 0;
+    checkBtn.disabled = !hasContent;
+    
+    const lines = inputEl.value.split('\n');
+    let hasArmor = false;
+    if (lines.length > 0) {
+        hasArmor = lines.every(line => {
+            const trimmed = line.trim();
+            return trimmed === '' || trimmed.startsWith('@@@');
+        });
+        if (hasArmor) {
+            hasArmor = lines.some(line => line.trim().startsWith('@@@'));
+        }
+    }
+
+    if (hasArmor) {
+        unarmorBtn.classList.add('show');
+        unarmorBtn.style.display = 'inline-block';
+    } else {
+        unarmorBtn.classList.remove('show');
+        unarmorBtn.style.display = 'none';
+    }
+}
+
+function unarmorText() {
+    inputEl.value = inputEl.value.replace(/^@@@/gm, '');
+    syncUIState();
+    sendRequest('/api/preview');
+}
+
+function debouncePreview() {
+    syncUIState();
+    clearTimeout(previewTimeout);
+    previewTimeout = setTimeout(() => {
+        sendRequest('/api/preview');
+    }, 400);
+}
+
+async function checkSyntax() {
+    sendRequest('/api/apply', false, true); 
+}
+
+async function applyBundle() {
+    sendRequest('/api/apply', true, false);
+}
+
+async function sendRequest(endpoint, skipCompiler = false, checkOnly = false) {
+    const bundle = inputEl.value;
+    if (!bundle.trim()) return;
+
+    try {
+        const res = await fetch(endpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ bundle, skip_compiler: skipCompiler, check_only: checkOnly })
+        });
+        const data = await res.json();
+        
+        if (data.error) {
+            outputEl.innerHTML = "<div class='error' style='margin-top:15px; padding: 15px; border: 1px solid #f44336; border-radius: 4px; background: rgba(244,67,54,0.1);'><strong>Server Error:</strong> " + escapeHtml(data.error) + "</div>";
+            return;
+        }
+
+        if (endpoint === '/api/apply') {
+            renderResult(data, checkOnly);
+        } else {
+            renderPreview(data);
+        }
+    } catch (err) {
+        outputEl.innerHTML = "<div class='error'>Error: " + err.message + "</div>";
+    }
+}
+
+function fixFilePaths() {
+    if (!window.pendingPathFixes) return;
+    let val = inputEl.value;
+    for (const [oldPath, newPath] of Object.entries(window.pendingPathFixes)) {
+        val = val.replace("filename: " + oldPath, "filename: " + newPath);
+    }
+    inputEl.value = val;
+    window.pendingPathFixes = null;
+    fixPathsBtn.style.display = 'none';
+    debouncePreview();
+}
+
+async function copyResultLedger() {
+    try {
+        await navigator.clipboard.writeText(window.lastLedgerText || "No ledger available.");
+        const originalText = copyLedgerBtn.innerText;
+        copyLedgerBtn.innerText = "Copied!";
+        setTimeout(() => copyLedgerBtn.innerText = originalText, 2000);
+    } catch (err) {
+        console.error("Failed to copy:", err);
+    }
+}
+
+async function copyPreviewErrors() {
+    try {
+        await navigator.clipboard.writeText(window.lastErrorText || "No errors to report.");
+        const originalText = copyErrorsBtn.innerText;
+        copyErrorsBtn.innerText = "Copied!";
+        setTimeout(() => copyErrorsBtn.innerText = originalText, 2000);
+    } catch (err) {
+        console.error("Failed to copy errors:", err);
+    }
+}
+
+function addDecorator(el, emoji) {
+    let header = el.querySelector('summary > div');
+    if (header) {
+        let dec = header.querySelector('.decorator');
+        if (!dec) {
+            dec = document.createElement('span');
+            dec.className = 'decorator';
+            dec.style.marginRight = '8px';
+            dec.style.fontSize = '1.2em';
+            const badge = header.querySelector('.status-badge');
+            header.insertBefore(dec, badge);
+        }
+        if (!dec.innerText.includes(emoji)) {
+            dec.innerText += emoji;
+        }
+    }
+}
+
+function escapeHtml(unsafe) {
+    if (!unsafe) return "";
+    return unsafe.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+`
+-- ui_script_render.go --
+// :: product: FDM/NS
+// :: majorVersion: 1
+// :: fileVersion: 1
+// :: description: JS rendering logic for Appy UI.
+// :: filename: /home/aprice/dev/appy/ui_script_render.go
+// :: serialization: go
+
+package main
+
+const jsRender = `
+function renderResult(data, isCheck) {
+    if (isCheck) {
+        if (data.successful_files_committed) {
+            data.successful_files_committed.forEach(f => {
+                const el = document.getElementById('file-block-' + f);
+                if (el) addDecorator(el, '🏅');
+            });
+        }
+        if (data.rejected_files) {
+            for (const [file, details] of Object.entries(data.rejected_files)) {
+                const el = document.getElementById('file-block-' + file);
+                if (el) {
+                    el.className = 'file-block status-error';
+                    const badge = el.querySelector('.status-badge');
+                    if (badge) {
+                        badge.className = 'status-badge status-error';
+                        badge.innerText = 'ERROR';
+                    }
+                    addDecorator(el, '❌');
+                    
+                    const content = el.querySelector('.file-content');
+                    if (content && !content.querySelector('.error-msg.compiler-err')) {
+                        let errHtml = '<div class="patch-block compiler-err" style="border-top: 2px solid #f44336; padding-top: 10px;">';
+                        errHtml += '<div class="error-msg"><strong>Compiler Rejected:</strong> ' + escapeHtml(details.reason) + '</div>';
+                        errHtml += '</div>';
+                        content.innerHTML += errHtml;
+                    }
+                }
+            }
+        }
+        
+        const anyOk = document.querySelectorAll('.file-block.status-ok').length > 0;
+        applyBtn.disabled = !anyOk;
+        if (anyOk) applyBtn.classList.add('ready');
+        else applyBtn.classList.remove('ready');
+        
+        return;
+    }
+
+    let ledger = "**Appy Result Ledger**\n\n";
+    if (data.successful_files_committed && data.successful_files_committed.length > 0) {
+        ledger += "Committed files:\n" + data.successful_files_committed.map(f => "- " + bt + f + bt).join('\n') + "\n\n";
+    }
+    if (data.rejected_files && Object.keys(data.rejected_files).length > 0) {
+        ledger += "Rejected files:\n";
+        for (const [file, details] of Object.entries(data.rejected_files)) {
+            ledger += "- " + bt + file + bt + " (file_commit_status: rejected)\n";
+            ledger += "  Issue: " + details.reason + "\n";
+            if (details.failed_patch && details.failed_patch.current_line) {
+                ledger += "  Current line echo: " + bt + details.failed_patch.current_line + bt + "\n";
+            }
+        }
+    }
+    window.lastLedgerText = ledger;
+    window.committedFiles = data.successful_files_committed;
+
+    if (data.successful_files_committed) {
+        data.successful_files_committed.forEach(f => {
+            const el = document.getElementById('file-block-' + f);
+            if (el) {
+                el.className = 'file-block status-applied';
+                const badge = el.querySelector('.status-badge');
+                if (badge) {
+                    badge.className = 'status-badge status-applied';
+                    badge.innerText = 'APPLIED';
+                }
+            }
+        });
+    }
+
+    if (data.rejected_files) {
+        for (const [file, details] of Object.entries(data.rejected_files)) {
+            const el = document.getElementById('file-block-' + file);
+            if (el) {
+                el.className = 'file-block status-error';
+                const badge = el.querySelector('.status-badge');
+                if (badge) {
+                    badge.className = 'status-badge status-error';
+                    badge.innerText = 'ERROR';
+                }
+                const content = el.querySelector('.file-content');
+                if (content) {
+                    let errHtml = '<div class="patch-block" style="border-top: 2px solid #f44336; padding-top: 10px;">';
+                    errHtml += '<div class="error-msg"><strong>Rejected:</strong> ' + escapeHtml(details.reason) + '</div>';
+                    if (details.failed_patch && details.failed_patch.current_line) {
+                        errHtml += '<div class="hint-block"><strong>Matched Line Echo:</strong><pre>' + escapeHtml(details.failed_patch.current_line) + '</pre></div>';
+                    }
+                    errHtml += '</div>';
+                    content.innerHTML += errHtml;
+                }
+            }
+        }
+    }
+
+    copyLedgerBtn.innerText = "✅ Copy Result Ledger";
+    copyLedgerBtn.style.background = "";
+    copyLedgerBtn.style.borderColor = "";
+    copyLedgerBtn.style.display = 'inline-block';
+    copyErrorsBtn.style.display = 'none';
+    if (data.successful_files_committed && data.successful_files_committed.length > 0) {
+        retestBtn.style.display = 'inline-block';
+    }
+    
+    applyBtn.disabled = true;
+    applyBtn.classList.remove('ready');
+    applyBtn.innerText = "Applied!";
+    setTimeout(() => { applyBtn.innerText = "🚀 Apply to Disk"; }, 2500);
+}
+
+function renderPreview(data) {
+    if (!data.patches || Object.keys(data.patches).length === 0) {
+        outputEl.innerHTML = "<em>No valid patches found in bundle.</em>";
+        applyBtn.disabled = true;
+        copyLedgerBtn.style.display = 'none';
+        copyErrorsBtn.style.display = 'none';
+        retestBtn.style.display = 'none';
+        return;
+    }
+
+    let html = '';
+    let readyCount = 0;
+    let errorCount = 0;
+    let errorReport = "**Appy Preview Errors**\n\nRejected files:\n";
+    
+    for (const [file, patches] of Object.entries(data.patches)) {
+        let fileHasError = patches.some(p => p.status === 'error');
+        let fileHasIgnored = patches.some(p => p.status === 'ignored');
+        
+        if (!fileHasError && !fileHasIgnored) {
+            readyCount++;
+        } else if (fileHasError) {
+            errorCount++;
+            errorReport += "- " + bt + file + bt + "\n";
+        }
+        
+        let statusClass = fileHasError ? 'status-error' : (fileHasIgnored ? 'status-ignored' : 'status-ok');
+        let chipText = fileHasError ? 'ERROR' : (fileHasIgnored ? 'IGNORED' : 'OK');
+        
+        html += '<details id="file-block-' + escapeHtml(file) + '" class="file-block ' + statusClass + '">';
+        html += '<summary class="file-header" style="display: flex; align-items: center;">';
+        html += '<div style="flex: 1; display: flex; justify-content: space-between; align-items: center;">';
+        html += '<strong>' + escapeHtml(file) + '</strong>';
+        html += '<span class="status-badge ' + statusClass + '">' + chipText + '</span>';
+        html += '</div></summary>';
+        
+        html += '<div class="file-content">';
+        patches.forEach(p => {
+            if (p.status === 'error') {
+                errorReport += "  Issue: " + (p.message || "Unknown error") + "\n";
+                if (p.hint) {
+                    errorReport += "  Hint/Closest Match:\n  " + tbt + "\n  " + p.hint.replace(/\n/g, "\n  ") + "\n  " + tbt + "\n";
+                }
+                if (p.advisory) {
+                    errorReport += "  Advisory: " + p.advisory + "\n";
+                }
+            }
+
+            html += '<div class="patch-block">';
+            html += '<div style="display: flex; justify-content: space-between; margin-bottom: 8px;">';
+            html += '<span class="status-badge status-' + p.status + '">' + p.status + '</span>';
+            let delta = p.line_delta > 0 ? ('+' + p.line_delta) : p.line_delta;
+            html += '<span style="font-size:11px; color:#888;">Net lines: ' + delta + '</span>';
+            html += '</div>';
+
+            if (p.message) html += '<div class="error-msg">' + escapeHtml(p.message) + '</div>';
+            if (p.hint) html += '<div class="hint-block"><strong>Closest Match:</strong><pre>' + escapeHtml(p.hint) + '</pre></div>';
+            if (p.advisory) html += '<div class="hint-block" style="color:#2196f3; border-left: 3px solid #2196f3;"><strong>Advisory:</strong><br>' + escapeHtml(p.advisory) + '</div>';
+            
+            if (p.replace !== undefined) {
+                html += '<div class="replace-block"><pre style="margin:0; white-space: pre-wrap; font-family: inherit;">' + escapeHtml(p.replace) + '</pre></div>';
+            }
+            html += '</div>';
+        });
+        html += '</div></details>';
+    }
+    
+    outputEl.innerHTML = html;
+    
+    applyBtn.disabled = (readyCount === 0);
+    if (readyCount > 0) applyBtn.classList.add('ready');
+    else applyBtn.classList.remove('ready');
+    applyBtn.innerText = "🚀 Apply to Disk";
+
+    if (data.path_fixes && Object.keys(data.path_fixes).length > 0) {
+        fixPathsBtn.style.display = 'inline-block';
+        window.pendingPathFixes = data.path_fixes;
+    } else {
+        fixPathsBtn.style.display = 'none';
+    }
+    
+    copyLedgerBtn.style.display = 'none';
+    retestBtn.style.display = 'none';
+
+    if (errorCount > 0) {
+        window.lastErrorText = errorReport;
+        copyErrorsBtn.style.display = 'inline-block';
+    } else {
+        copyErrorsBtn.style.display = 'none';
+    }
+}
+`
+-- ui_script_retest.go --
+// :: product: FDM/NS
+// :: majorVersion: 1
+// :: fileVersion: 1
+// :: description: JS retest logic for Appy UI.
+// :: filename: /home/aprice/dev/appy/ui_script_retest.go
+// :: serialization: go
+
+package main
+
+const jsRetest = `
+async function runRetest() {
+    if (!window.committedFiles || window.committedFiles.length === 0) return;
+    
+    const packages = [...new Set(window.committedFiles.map(f => {
+        const parts = f.split('/');
+        parts.pop();
+        return "./" + (parts.length > 0 ? parts.join('/') : '.');
+    }))];
+    
+    retestBtn.innerText = "Running Tests...";
+    retestBtn.disabled = true;
+    
+    const loadingHtml = "<div id='testLoading' class='patch-block' style='margin-top: 15px; border-top: 1px solid #555; padding-top: 15px;'><em>Running tests for " + packages.join(', ') + " ...</em></div>";
+    outputEl.innerHTML += loadingHtml;
+
+    try {
+        const res = await fetch('/api/retest', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ packages: packages })
+        });
+        const data = await res.json();
+        
+        const loader = document.getElementById('testLoading');
+        if (loader) loader.style.display = 'none';
+
+        let reportMd = "**Appy Retest Report**\n\n";
+        reportMd += "Success: " + (data.success ? "✅" : "❌") + "\n\n";
+
+        if (window.committedFiles) {
+            window.committedFiles.forEach(f => {
+                const el = document.getElementById('file-block-' + f);
+                if (el) {
+                    let failed = false;
+                    if (!data.success && data.hard_fails) {
+                        const parts = f.split('/');
+                        parts.pop();
+                        const folder = parts.length > 0 ? parts[parts.length - 1] : '';
+                                                failed = data.hard_fails.some(fail => {
+                            return folder === '' || (fail.Task && fail.Task.Package && fail.Task.Package.endsWith(folder));
+                        });
+                    }
+                    addDecorator(el, failed ? '💥' : '🧪');
+                }
+            });
+        }
+
+        if (data.hard_fails && data.hard_fails.length > 0) {
+            reportMd += "Hard Fails:\n";
+            data.hard_fails.forEach(fail => {
+                const pkg = fail.Task ? fail.Task.Package : 'Unknown';
+                const testName = (fail.Task && fail.Task.Test) ? fail.Task.Test : 'Package';
+                reportMd += "- **" + pkg + "** (" + testName + "):\n  " + tbt + "\n  " + (fail.Output ? fail.Output.trim() : 'Failed') + "\n  " + tbt + "\n";
+            });
+        }
+        if (data.heisenfails && data.heisenfails.length > 0) {
+            reportMd += "\nHeisenfails (Passed on rerun):\n";
+            data.heisenfails.forEach(fail => {
+                const pkg = fail.Task ? fail.Task.Package : 'Unknown';
+                const testName = (fail.Task && fail.Task.Test) ? fail.Task.Test : 'Package';
+                reportMd += "- **" + pkg + "** (" + testName + ")\n";
+            });
+        }
+
+        window.lastLedgerText = reportMd;
+        copyLedgerBtn.innerText = "📋 Copy Test Report";
+        copyLedgerBtn.style.background = data.success ? "#16a34a" : "#dc2626";
+        copyLedgerBtn.style.borderColor = data.success ? "#22c55e" : "#ef4444";
+        copyLedgerBtn.style.display = 'inline-block';
+        
+    } catch (err) {
+        const loader = document.getElementById('testLoading');
+        if (loader) loader.style.display = 'none';
+        outputEl.innerHTML += "<div class='error' style='margin-top:15px;'>Test request failed: " + err.message + "</div>";
+    } finally {
+        retestBtn.innerText = "🔄 Retest Impacted";
+        retestBtn.disabled = false;
+    }
+}
+
+function cancelRetest() {
+    console.log("Cancel retest not fully implemented on backend yet.");
+}
+`
+-- utils.go --
+// :: product: FDM/NS // :: majorVersion: 1 // :: fileVersion: 6 // :: description: Corrected advisory strings and path safety logic. // :: filename: code/cmd/appy/utils.go // :: serialization: go
+package main
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/aprice2704/fdm/code/patcheng"
+)
+
+func isPathSafe(root, target string) bool {
+	target = filepath.Clean(target)
+	if !filepath.IsAbs(target) {
+		target = filepath.Join(root, target)
+	}
+	rel, err := filepath.Rel(root, target)
+	if err != nil {
+		return false
+	}
+	// Check for traversal out of root
+	return !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && rel != ".."
+}
+
+func findUniquePathSuffix(rootDir, targetSuffix string) string {
+	targetSuffix = filepath.Clean(targetSuffix)
+	targetSuffixWithSep := string(filepath.Separator) + targetSuffix
+	var match string
+	var count int
+
+	filepath.WalkDir(rootDir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() {
+			name := d.Name()
+			if name == ".git" || name == "vendor" || name == "node_modules" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		rel, err := filepath.Rel(rootDir, path)
+		if err != nil {
+			return nil
+		}
+		if rel == targetSuffix || strings.HasSuffix(rel, targetSuffixWithSep) {
+			match = rel
+			count++
+		}
+		return nil
+	})
+
+	if count == 1 {
+		return filepath.ToSlash(match)
+	}
+	return ""
+}
+
+func hashPatch(file, search, replace string) string {
+	h := sha256.Sum256([]byte(file + "\x00" + search + "\x00" + replace))
+	return hex.EncodeToString(h[:])
+}
+
+func normalizeSpace(s string) string {
+	return strings.Join(strings.Fields(s), "")
+}
+
+func getNonEmptyLines(s string) []string {
+	var res []string
+	for _, l := range strings.Split(s, "\n") {
+		if strings.TrimSpace(l) != "" {
+			res = append(res, l)
+		}
+	}
+	return res
+}
+
+func countLines(s string) int {
+	if s == "" {
+		return 0
+	}
+	return strings.Count(s, "\n") + 1
+}
+
+func formatHintLine(contentIdx, bestStart int, searchLines, contentLines []string) string {
+	searchIdx := contentIdx - bestStart
+	if searchIdx >= 0 && searchIdx < len(searchLines) {
+		if strings.TrimSpace(searchLines[searchIdx]) == "..." {
+			return fmt.Sprintf("  %d: ...\n", contentIdx+1)
+		}
+	}
+	return fmt.Sprintf("  %d: %s\n", contentIdx+1, contentLines[contentIdx])
+}
+
+func findTextAnchor(content string, search string) string {
+	searchLines := getNonEmptyLines(search)
+	if len(searchLines) == 0 {
+		return ""
+	}
+	contentLines := strings.Split(content, "\n")
+	bestScore, bestStart := -1, -1
+
+	for i := 0; i <= len(contentLines)-len(searchLines); i++ {
+		score := 0
+		for j := 0; j < len(searchLines); j++ {
+			if strings.TrimSpace(searchLines[j]) == "..." {
+				score++
+				continue
+			}
+			if normalizeSpace(contentLines[i+j]) == normalizeSpace(searchLines[j]) {
+				score++
+			}
+		}
+		if score > bestScore {
+			bestScore = score
+			bestStart = i
+		}
+	}
+
+	if bestScore > 0 && bestStart >= 0 {
+		start := bestStart - 2
+		if start < 0 {
+			start = 0
+		}
+		end := bestStart + len(searchLines) + 2
+		if end > len(contentLines) {
+			end = len(contentLines)
+		}
+		var sb strings.Builder
+		if end-start <= 8 {
+			for i := start; i < end; i++ {
+				sb.WriteString(formatHintLine(i, bestStart, searchLines, contentLines))
+			}
+		} else {
+			for i := start; i < start+3; i++ {
+				sb.WriteString(formatHintLine(i, bestStart, searchLines, contentLines))
+			}
+			sb.WriteString(fmt.Sprintf("... [%d lines elided] ...\n", (end-3)-(start+3)))
+			for i := end - 3; i < end; i++ {
+				sb.WriteString(formatHintLine(i, bestStart, searchLines, contentLines))
+			}
+		}
+		return sb.String()
+	}
+	return ""
+}
+
+func generateDiagnosticHint(profile *patcheng.LanguageProfile, filename, content, search string, nearLine int) string {
+	if profile != nil && profile.HintGenerator != nil {
+		return profile.HintGenerator([]byte(content), search, nearLine)
+	}
+	return findTextAnchor(content, search)
+}
+
+func generateAdvisory(prof *patcheng.LanguageProfile, err error) string {
+	if err == nil {
+		return ""
+	}
+	errMsg := err.Error()
+	var base string
+
+	if strings.Contains(errMsg, "overlapping patches") {
+		base = "Overlapping patches detected. Combine blocks or use '%%% overwrite' by combining the patches."
+	}
+	if strings.Contains(errMsg, "search block not found") {
+		base = "Search block not found. Ensure exact matching. For single-line replacements, retry using '%%% match_line' with the exact line from Closest Match."
+	}
+	if strings.Contains(errMsg, "ambiguous") {
+		base = "Ambiguous search block. Provide more context lines or use 'near <line>'."
+	}
+
+	nudge := ""
+	if prof != nil {
+		if len(prof.PreferredStrategies) > 0 {
+			nudge = fmt.Sprintf("LLM Nudge: Preferred patching strategies for %s are [%s].", prof.ID, strings.Join(prof.PreferredStrategies, ", "))
+		}
+		if prof.ID == "markdown" || strings.Contains(prof.ID, "html") || strings.Contains(prof.ID, "astro") || prof.ID == "css" {
+			nudge += "\nAdvice: For non-Go structured text, prefer 'match_line' and tiny replacements. Avoid big fuzzy blocks."
+		}
+	}
+
+	if base != "" && nudge != "" {
+		return base + "\n\n" + nudge
+	}
+	if base != "" {
+		return base
+	}
+	return nudge
+}
+
+func preprocessDeleteBlocks(bundle, delim string) string {
+	lines := strings.Split(bundle, "\n")
+	var out []string
+	inDelete := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, delim+" delete") {
+			inDelete = true
+			out = append(out, delim+" replace"+strings.TrimPrefix(trimmed, delim+" delete"))
+		} else if inDelete && trimmed == delim+" end" {
+			out = append(out, delim+" with", line)
+			inDelete = false
+		} else {
+			out = append(out, line)
+		}
+	}
+	return strings.Join(out, "\n")
+}
+
+func withND(schema, desc string, payload map[string]any) map[string]any {
+	if payload == nil {
+		payload = make(map[string]any)
+	}
+	payload["__nd"] = map[string]any{
+		"appy_version": AppVersion,
+		"description":  desc,
+		"identity":     map[string]string{"schema": schema, "serialization": "json"},
+	}
+	return payload
+}
+
+func sendError(w http.ResponseWriter, msg string, code int) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	json.NewEncoder(w).Encode(withND("appy/error", "HTTP error response from appy server", map[string]any{"error": msg}))
+}
+-- testdata/fixtures/sample.go --
+package main
+
+func Old() {
+	println("This is the old function.")
+}
+-- TODO.md --
+// :: product: FDM/NS
+// :: majorVersion: 1
+// :: fileVersion: 1
+// :: description: Appy feature requests and backlog.
+// :: filename: /home/aprice/dev/appy/TODO.md
+// :: serialization: md
+
+# Appy TODO & Backlog
+
+## AST-Aware HTML/Astro Patching
+*   **Status**: DONE (v1.5.18).
+*   **Implementation**: Utilizes `golang.org/x/net/html` Tokenizer for precision byte-offset localization. Resolves exact element boundaries to preserve all external whitespace without triggering a global DOM re-render/reformat.
+*   **Syntax**: `%%% replace_element #id`, `%%% replace_element .class`, `%%% replace_element tag`. Supports `near <line>`.
+
+-- TODO_ui_spec.md --
+Team Grey say:
+
+## Overall verdict
+
+This is **much better than a vibes-spec**, but it still leaves too much wiggle room in exactly the places where dev can rotate the canid again. 🐕‍🦺🔩
+
+The core model is good:
+
+```text
+input bundle
+→ preview parse
+→ file stripes with status
+→ optional compiler check
+→ apply OK files
+→ optional retest
+→ decorate applied stripes
+→ copy machine-readable-ish reports
+```
+
+The spec correctly identifies the three main layout zones, the stripe-state model, the control buttons, status decorators, armor handling, preview details, and recovery reporting .
+
+But I would harden it into a **state machine spec**, because right now it says what buttons do, but not enough about **when state mutates**, **what survives across actions**, and **what must never happen**.
+
+---
+
+# Biggest strengths
+
+## 1. Stripe model is the right UI primitive
+
+The file-block stripe idea is sound. It gives the operator a fast visual ledger:
+
+| State     | Meaning                         |
+| --------- | ------------------------------- |
+| `OK`      | preview matched, safe candidate |
+| `ERROR`   | parse/match/syntax failure      |
+| `APPLIED` | written to disk                 |
+| `IGNORED` | intentionally skipped           |
+
+This is exactly right for appy. The UI is not a document editor; it is a **patch-flight console**.
+
+## 2. “Check Compiler must not disable Apply” is excellent
+
+This line is important:
+
+> **Check Compiler** performs in-memory validation and **MUST NOT disable Apply to Disk**. 
+
+Good. That prevents the classic failure where an optional diagnostic pass accidentally becomes a gatekeeper.
+
+But see below: you need to clarify what happens if compiler check downgrades some files to `ERROR`.
+
+## 3. Copy Preview Errors and Matched Line Echo are exactly the right recovery loop
+
+The spec says preview failures should be copyable as markdown and include closest-match hints, plus a matched line echo for `%%% match_line` recovery . This is very appy-shaped.
+
+That gives you the golden loop:
+
+```text
+LLM emits patch
+→ appy rejects surgically
+→ user copies precise failure report
+→ LLM repairs patch
+```
+
+This should be treated as first-class, not auxiliary.
+
+## 4. Retest results decorate stripes instead of dumping JSON
+
+Very good. The spec explicitly says retest results must not be dumped as raw JSON, and should decorate applied file stripes instead . That is the correct operator UX.
+
+Raw JSON at the bottom of the screen is the UI equivalent of finding a squid in the bread drawer.
+
+---
+
+# Main problems to fix
+
+## 1. Define the state machine explicitly
+
+Right now, state is implicit. Add a canonical state transition table.
+
+Suggested:
+
+| Action                       | Before             | After                                        |
+| ---------------------------- | ------------------ | -------------------------------------------- |
+| `/api/preview` success       | none/input changed | file status = `OK`                           |
+| `/api/preview` patch failure | none/input changed | file status = `ERROR`                        |
+| `/api/preview` safety skip   | none/input changed | file status = `IGNORED`                      |
+| `Check Compiler` pass        | `OK`               | remains `OK`, add compiler pass decorator    |
+| `Check Compiler` fail        | `OK`               | becomes `ERROR`, add compiler fail decorator |
+| `Apply to Disk` success      | `OK`               | `APPLIED`                                    |
+| `Apply to Disk` failure      | `OK`               | `ERROR`, show write failure                  |
+| `Retest Impacted` pass       | `APPLIED`          | remains `APPLIED`, add test pass decorator   |
+| `Retest Impacted` fail       | `APPLIED`          | remains `APPLIED`, add test fail decorator   |
+| input changes                | any                | stale preview cleared or marked stale        |
+
+That last one matters.
+
+If the input changes after preview, the old stripes are now stale. The spec should say one of:
+
+```text
+Option A: clear preview immediately on input edit.
+Option B: mark existing preview as STALE and disable Apply.
+```
+
+I recommend **Option A**. Simpler. Fewer undead UI states.
+
+---
+
+## 2. Separate primary status from secondary verification
+
+The spec currently says compiler failure downgrades files to `ERROR`, while test failure decorates applied files with 💥 . That is plausible, but needs a clearer model.
+
+I’d define:
+
+```text
+primary_status:
+  READY | ERROR | APPLIED | IGNORED
+
+compiler_status:
+  NOT_RUN | PASS | FAIL
+
+test_status:
+  NOT_RUN | PASS | FAIL
+```
+
+Then render:
+
+```text
+READY + compiler PASS = OK 🏅
+ERROR + compiler FAIL = ERROR 💥 or ERROR compiler-fail
+APPLIED + test PASS = APPLIED 🧪
+APPLIED + test FAIL = APPLIED 💥
+```
+
+Do **not** overload one state field with all meanings. Otherwise dev will build a state lasagna.
+
+---
+
+## 3. “Ready” vs `OK` naming is inconsistent
+
+The table uses:
+
+```text
+State: Ready
+Chip: OK
+```
+
+This is not fatal, but specs benefit from one canonical term. Pick one.
+
+I’d use:
+
+```text
+internal enum: READY
+chip text: OK
+```
+
+And state that explicitly.
+
+Suggested addition:
+
+```md
+The internal status enum is READY, ERROR, APPLIED, IGNORED.
+The READY state renders as an `OK` chip.
+```
+
+---
+
+## 4. `Apply to Disk` semantics need more detail
+
+Current text:
+
+> Commits all `OK` files to the filesystem. Only available if at least one file is in the `OK` state. Must execute immediately without a modal confirmation box. 
+
+Good, but incomplete.
+
+Add:
+
+```text
+Apply to Disk applies only files currently in READY.
+It MUST NOT apply ERROR or IGNORED files.
+It MUST NOT require Check Compiler to have run.
+It MUST record per-file result.
+If some files succeed and others fail, successful files become APPLIED and failed files become ERROR.
+Apply button is disabled once there are zero READY files.
+```
+
+Also: define whether application is **all-or-nothing** or **partial**.
+
+I think appy wants **partial per-file application**, because that matches the stripe model. But the spec must say so.
+
+---
+
+## 5. Compiler check needs “in memory” semantics nailed down
+
+The spec says compiler check applies bundle in memory and validates syntax without committing to disk . Good.
+
+But define:
+
+```text
+- uses current filesystem as base
+- overlays all READY patches into an in-memory workspace
+- validates the resulting files/packages
+- does not mutate source files
+- does not create persistent temp files under repo root
+- may create temp files under OS temp dir if cleaned
+```
+
+That last part matters because you just got bitten by file operation weirdness. Appy should not produce scratch confetti inside the repo unless explicitly intended.
+
+---
+
+## 6. Armor rule is good but too strict unless UX explains it
+
+The spec says `Remove @@@` appears only if every non-empty line starts with `@@@` . I agree.
+
+But add what happens when armor is partial:
+
+```text
+If some but not all non-empty lines are armored, Remove @@@ MUST NOT appear.
+The UI SHOULD display a small warning: "Partial @@@ armor detected; refusing automatic strip."
+```
+
+Otherwise the button just mysteriously fails to exist.
+
+Also, after unarmor:
+
+```text
+Remove @@@ strips exactly one leading @@@ from each non-empty line.
+It must not strip @@@ occurring later in a line.
+It must immediately trigger preview.
+```
+
+---
+
+## 7. Missing: loading/busy/error behaviour
+
+This is a common UI regression cave. Add a section.
+
+For each async action:
+
+| Action          | Busy behaviour                                              |
+| --------------- | ----------------------------------------------------------- |
+| Clear & Paste   | disable while clipboard read/preview is running             |
+| Preview         | show preview pending, disable Apply                         |
+| Check Compiler  | disable Check Compiler only, not Apply unless preview stale |
+| Apply to Disk   | disable Apply during write                                  |
+| Retest Impacted | disable Retest during test run                              |
+
+Critical point:
+
+```text
+Busy states must not erase existing stripes unless the action succeeds with a new preview model.
+```
+
+Otherwise one failed API request can blank the UI. Appy’s goblin window should not have a trapdoor.
+
+---
+
+## 8. Missing: API response contracts
+
+The UI spec references `/api/preview`, compiler check, apply, retest, reports, but does not define response shape.
+
+At minimum, define conceptual payloads:
+
+```text
+PreviewResponse:
+  files[]
+    path
+    status
+    patches[]
+    net_lines
+    match_summary
+    error
+    closest_match
+    matched_line_echo
+
+ApplyResponse:
+  files[]
+    path
+    applied
+    hash_before
+    hash_after
+    ledger_entry
+    error
+
+CompilerCheckResponse:
+  files[]
+    path
+    compiler_status
+    diagnostics[]
+
+RetestResponse:
+  packages[]
+  files[]
+    path
+    test_status
+    package
+    summary
+    failure_excerpt
+```
+
+You do not need final JSON schema in `ui_spec.md`, but you do need enough that dev cannot invent incompatible blobs.
+
+---
+
+# Specific wording fixes
+
+## Current
+
+> **Test Verified (`Retest Impacted`)**: Acquires a 🧪 (green pass) or 💥 (red explosion/fail) icon
+
+Problem: 🧪 is not inherently green. Emoji color is platform-dependent.
+
+Better:
+
+```md
+Test pass renders as `🧪 PASS`; test fail renders as `💥 FAIL`.
+Do not rely on emoji color alone.
+```
+
+## Current
+
+> **Compiler Verified**: Acquires a 🏅 or ✅ icon
+
+Pick one. UI specs should not use “or” for visual contract unless it is intentional configurability.
+
+I’d use:
+
+```text
+compiler pass: 🏅
+compiler fail: ⚠️
+test pass: 🧪
+test fail: 💥
+```
+
+Then the RHS might render:
+
+```text
+OK 🏅
+APPLIED 🧪
+APPLIED 💥
+ERROR ⚠️
+```
+
+## Current
+
+> Diff Preview: The targeted replacement text rendered inside a `.replace-block`
+
+This sounds like it shows only replacement text. But for operator confidence, you probably want:
+
+```text
+search block / old text
+replacement block / new text
+net lines
+```
+
+If space is tight, collapse search by default, but make it inspectable.
+
+Otherwise the user sees what will be inserted but not what it matched. That weakens trust.
+
+---
+
+# Suggested added section: invariants
+
+I’d add this verbatim-ish:
+
+```md
+## UI Behaviour Invariants
+
+1. The UI MUST never apply a file in ERROR or IGNORED state.
+2. The UI MUST never require `Check Compiler` before `Apply to Disk`.
+3. `Check Compiler` MUST NOT write to repository files.
+4. `Retest Impacted` MUST NOT alter primary file status; it only adds test decorators/reports.
+5. Any input edit after preview MUST invalidate the current preview and disable Apply until preview is recomputed.
+6. Status chips MUST remain visible at the RHS of each stripe header regardless of horizontal content length.
+7. Copy Preview Errors MUST contain enough information for an LLM to repair the patch without seeing the whole UI.
+8. Copy Result Ledger MUST only report files actually written to disk.
+9. Partial success during Apply MUST be represented per file, not collapsed into one global success/failure banner.
+10. Raw JSON responses MUST never be rendered directly in the main output zone.
+```
+
+This is the kind of section that stops future footguns from breeding in the walls.
+
+---
+
+# Suggested added section: button visibility matrix
+
+Add a small table:
+
+| Button              | Visible when                         | Enabled when                   |
+| ------------------- | ------------------------------------ | ------------------------------ |
+| Clear & Paste       | always                               | clipboard available / not busy |
+| Remove @@@          | uniformly armored input              | not busy                       |
+| Check Compiler      | preview exists                       | at least one `READY` file      |
+| Apply to Disk       | preview exists                       | at least one `READY` file      |
+| Fix File Paths      | preview has missing-file errors      | not busy                       |
+| Copy Preview Errors | preview has errors                   | not busy                       |
+| Copy Result Ledger  | apply completed with ≥1 applied file | not busy                       |
+| Retest Impacted     | apply completed with ≥1 applied file | not busy                       |
+| Copy Test Report    | retest completed                     | not busy                       |
+
+This is boring but powerful. Boring here is load-bearing.
+
+---
+
+# Suggested added section: stale preview
+
+Very important:
+
+```md
+## Stale Preview Handling
+
+The preview model is valid only for the exact input string and repository snapshot used to produce it.
+
+If the input textarea changes after preview:
+- all existing preview/apply buttons are disabled immediately;
+- existing stripes are cleared or marked STALE;
+- applying stale preview data is forbidden.
+
+If the repository changes between preview and apply:
+- the backend must re-check search block matches before writing;
+- any mismatch becomes ERROR and is not written.
+```
+
+That last point is essential. Preview is not a write lock.
+
+---
+
+# My recommended v1.5.20 delta
+
+If you want this to be “nail down behaviour” grade, I’d revise around these pillars:
+
+```text
+1. canonical state model
+2. button visibility/enabled matrix
+3. backend response contracts
+4. stale preview rules
+5. apply partial-success semantics
+6. no raw JSON invariant
+7. no repo-root temp/build artifacts
+```
+
+## Bottom line
+
+The spec is directionally strong and captures the operator experience well. But it is still too prose-shaped. The next version should be more like:
+
+```text
+state enum
+transition table
+button matrix
+response contracts
+invariants
+```
+
+That will give dev less room to “creatively comply” and turn appy into a haunted toaster.
+-- ui_spec.md --
+# Appy UI Functional Specification v1.5.19
+
+## 1. Top-Level Layout
+The UI is contained within a fixed-height flex container (`95vh`) and divided into three primary functional zones:
+*   **Input Zone**: A large, unformatted textarea for pasting multi-file patch bundles (includes markdown blocks and `%%%` syntax).
+*   **Control Zone**: A horizontal button array for system actions.
+*   **Output Zone**: A scrollable area rendering visual "File Block" stripes.
+
+## 2. File Block Visualization (The Stripes)
+Every file parsed from the bundle is rendered as an expandable `<details>` element. The visual state is driven by the patch status:
+
+| State | Stripe Header Color | RHS Chip Text | Logic |
+| :--- | :--- | :--- | :--- |
+| **Ready** | Light Green | `OK` | Search block matches perfectly; file is ready to commit. |
+| **Error** | Light Red | `ERROR` | Search block not found, ambiguous, or syntax failure. |
+| **Applied** | Dark Grey | `APPLIED` | File successfully written to disk; hash recorded in ledger. |
+| **Ignored** | Light Orange | `IGNORED` | Safety skip (e.g., empty search on existing file). |
+
+### 2.1 RHS Status Chips & Decorators
+Status chips MUST be pinned to the right-hand side of the stripe header using flex-space-between to ensure legibility during rapid scrolling.
+
+**Secondary Decorators:**
+As files pass through extended verification phases, secondary emoji decorators are appended next to the RHS chip:
+*   **Compiler Verified (`Check Compiler`)**: Acquires a 🏅 (medal) or ✅ (checkmark) icon indicating the in-memory AST parsed successfully without syntax errors.
+*   **Test Verified (`Retest Impacted`)**: Acquires a 🧪 (green pass) or 💥 (red explosion/fail) icon indicating post-application test suite results for that specific file/package.
+
+## 3. Control Plane Action Registry
+Buttons are enabled/disabled based on the presence of content and the results of the preview cycle.
+
+*   **Clear & Paste**: Clears the input, reads from the clipboard, and triggers an immediate `/api/preview`.
+*   **Remove @@@**: Unarmors the payload. Only appears if **every single line** of the input (ignoring empty lines) starts with the `@@@` armor prefix.
+*   **Check Compiler**: Executes a full bundle application in memory and performs a language-specific syntax validation without committing to disk. **Crucially, this action MUST NOT disable the 'Apply to Disk' button.** Files that pass validation receive a 🏅 decorator. Files that fail validation are downgraded to the `ERROR` state.
+*   **Apply to Disk**: Commits all `OK` files to the filesystem. Only available if at least one file is in the `OK` state (regardless of whether 'Check Compiler' was clicked). Must execute immediately without a modal confirmation box.
+*   **Fix File Paths**: Resolves "missing" file errors by searching the repository for unique path suffixes.
+*   **Copy Preview Errors**: Appears during the preview phase if any file patch fails. Copies a markdown-formatted report of the rejected files and their closest-match hints to easily paste back to the LLM.
+*   **Copy Result Ledger**: Appears after application. Copies the "Team Grey" markdown summary of the committed files.
+*   **Retest Impacted**: Executes tests for the packages affected by the applied patches. Results MUST NOT be dumped as raw JSON at the bottom of the screen. Instead, results dynamically decorate the applied file stripes.
+*   **Copy Test Report**: Replaces or augments the "Copy Result Ledger" button after a retest, allowing the user to copy a markdown-formatted summary of the test outcomes to feed back to the LLM.
+
+## 4. Code & Metadata Syntax
+When Appy generates Go source files, metadata must be at the absolute top, one directive per line, followed by exactly one blank line. 
+
+**The Armor Mechanism**: If the LLM wraps the code in `@@@` to protect it from markdown parsers, it MUST armor every single line. Appy will only offer to strip the armor if the entire payload is uniformly protected. Example of valid Appy output:
+
+@@@// :: product: FDM/NS
+@@@// :: majorVersion: 1
+@@@// :: fileVersion: 24
+@@@// :: description: v1.5.14
+@@@// :: filename: code/cmd/appy/main.go
+@@@// :: serialization: go
+@@@package main
+@@@...
+
+## 5. Preview & Patch Details
+Each patch block within a file must display:
+*   **Net Lines**: A floating right-hand metric showing the line delta (e.g., `+3` or `-1`).
+*   **Diff Preview**: The targeted replacement text rendered inside a `.replace-block` (light green background) to visualize what will be injected into the file.
+
+## 6. Failure & Recovery Reporting
+Rejected files must include a "Matched Line Echo" in the report to allow for easy operator recovery using `%%% match_line`.
+
+## 7. Backlog & Future Capabilities
+## AST-Aware HTML/Astro Patching
+*   **Status**: DONE (v1.5.18).
+*   **Implementation**: Utilizes `golang.org/x/net/html` Tokenizer for precision byte-offset localization. Resolves exact element boundaries to preserve all external whitespace without triggering a global DOM re-render/reformat.
+*   **Syntax**: `%%% replace_element #id`, `%%% replace_element .class`, `%%% replace_element tag`. Supports `near <line>`.

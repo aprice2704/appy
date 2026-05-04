@@ -9,7 +9,6 @@
 package main
 
 import (
-	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -159,33 +158,20 @@ func TestGenerateDiagnosticHint(t *testing.T) {
 	})
 }
 
-func TestGenerateAdvisory(t *testing.T) {
-	tests := []struct {
-		err      error
-		contains string
-	}{
-		{nil, ""},
-		{errors.New("overlapping patches detected: oops"), "combining the patches"},
-		{errors.New("search block not found in file"), "Ensure exact matching"},
-		{errors.New("ambiguous search block"), "Provide more context lines"},
-		{errors.New("random error"), ""},
-	}
-
-	for _, tc := range tests {
-		res := generateAdvisory(nil, tc.err)
-		if tc.contains == "" && res != "" {
-			t.Errorf("Expected empty advisory for %v, got %q", tc.err, res)
-		} else if tc.contains != "" && !strings.Contains(res, tc.contains) {
-			t.Errorf("Expected advisory for %v to contain %q, got %q", tc.err, tc.contains, res)
+func TestGenerateLLMFallbackHint(t *testing.T) {
+	t.Run("Empty Profile", func(t *testing.T) {
+		res := generateLLMFallbackHint(nil)
+		if res != "" {
+			t.Errorf("Expected empty hint for nil profile, got %q", res)
 		}
-	}
+	})
 
 	t.Run("Includes Profile Nudge", func(t *testing.T) {
 		prof := &patcheng.LanguageProfile{
 			ID:                  "testlang",
 			PreferredStrategies: []string{"magic", "fuzzy"},
 		}
-		res := generateAdvisory(prof, errors.New("search block not found"))
+		res := generateLLMFallbackHint(prof)
 		if !strings.Contains(res, "LLM Nudge: Preferred patching strategies for testlang are [magic, fuzzy]") {
 			t.Errorf("Failed to inject LLM nudge, got: %q", res)
 		}

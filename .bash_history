@@ -108,3 +108,44 @@ balooctl6 status 2>/dev/null || balooctl status
 cls
 systemctl --user disable --now kde-baloo.service 2>/dev/null
 systemctl --user mask kde-baloo.service 2>/dev/null
+t
+licecomb
+licecomb -rewrite
+licecomb
+cls
+txtar * > appy.txtar
+txtar ** > appy.txtar
+txtar **/** > appy.txtar
+txtar *.go *.js  > appy.txtar
+txtar ./*.go ./*.js  > appy.txtar
+txtar -h
+rm appy_bin 
+cat run_appy.sh 
+cls
+tre
+cat ./scripts/playground.sh 
+cls
+rm appy.txtar 
+cd scripts/
+txtar -h
+txtar c "**/*.go" "**/*.js" > context.txtar
+txtar c "**/*.go" **/*.js > context.txtar
+txtar c **/*.go **/*.js **/*.md  > appy.txtar
+rm context.txtar 
+txtar l appy.txtar 
+cls
+txtar c **/*.go **/*.js **/*.md  > appy.txtar
+./run_appy.sh 
+go install .
+t
+go install .
+which go
+go version
+go env GOROOT GOPATH GOTOOLCHAIN GOWORK GOMOD
+t
+ll -a
+t
+go install .
+t
+go install .
+t

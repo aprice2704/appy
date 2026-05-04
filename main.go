@@ -1,25 +1,8 @@
 // :: product: FDM/NS
 // :: majorVersion: 1
-// :: fileVersion: 25
-// :: description: v1.5.16 - Restored rocket icons.
-// :: filename: /home/aprice/dev/appy/main.go
-// :: serialization: go
-
-// :: fileVersion: 25
-// :: description: v1.5.16 - Restored rocket icons.
-// :: filename: /home/aprice/dev/appy/main.go
-// :: serialization: go
-// :: fileVersion: 26
-// :: description: v1.5.18 - AST-Aware HTML/Astro patching and UI upgrades.
-// :: filename: /home/aprice/dev/appy/main.go
-// :: serialization: go
-// :: fileVersion: 26
-// :: description: v1.5.18 - AST-Aware HTML/Astro patching and UI upgrades.
-// :: filename: /home/aprice/dev/appy/main.go
-// :: serialization: go
-// :: fileVersion: 27
-// :: description: v1.5.19 - State-machine UI bug fixes, decorators, and test reporting.
-// :: filename: /home/aprice/dev/appy/main.go
+// :: fileVersion: 28
+// :: description: v1.5.22 - API Contracts matched to UI Spec v1.5.22.
+// :: filename: main.go
 // :: serialization: go
 package main
 
@@ -62,7 +45,7 @@ func watchSelfForReload() {
 	}
 }
 
-const AppVersion = "v1.5.19"
+const AppVersion = "v1.5.23"
 
 func withRecoveryAndCORS(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -99,6 +82,7 @@ func newServer(rootDir string) *http.ServeMux {
 		}
 		html := strings.ReplaceAll(indexHTML, "{TITLE}", filepath.Base(absRootDir))
 		html = strings.ReplaceAll(html, "{VERSION}", AppVersion)
+		html = strings.ReplaceAll(html, "{ROOT_DIR}", absRootDir)
 		w.Header().Set("Content-Type", "text/html")
 		w.Write([]byte(html))
 	})
@@ -123,7 +107,7 @@ func newServer(rootDir string) *http.ServeMux {
 			return
 		}
 
-		responsePatches := make(map[string][]PreviewPatch)
+		var responseFiles []PreviewFile
 		pathFixes := make(map[string]string)
 
 		for rawFilename, patches := range parsed {
@@ -134,8 +118,12 @@ func newServer(rootDir string) *http.ServeMux {
 			absPath := filepath.Join(absRootDir, rawFilename)
 			contentBytes, _ := os.ReadFile(absPath)
 			content := string(contentBytes)
+			prof := patcheng.DefaultRegistry.GetByExtension(filepath.Ext(rawFilename))
 
 			var filePreviews []PreviewPatch
+			fileStatus := "READY"
+			fileNetLines := 0
+
 			for _, p := range patches {
 				delta := 0
 				if p.FullOverwrite {
@@ -143,14 +131,12 @@ func newServer(rootDir string) *http.ServeMux {
 				} else {
 					delta = countLines(p.Replace) - countLines(p.Search)
 				}
+				fileNetLines += delta
 
 				pp := PreviewPatch{
-					Search:    p.Search,
-					Replace:   p.Replace,
-					Index:     p.Index,
-					LineNum:   p.LineNum,
-					Status:    "ok",
-					LineDelta: delta,
+					SearchBlock:  p.Search,
+					ReplaceBlock: p.Replace,
+					IsOverwrite:  p.FullOverwrite,
 				}
 
 				patchHash := hashPatch(rawFilename, p.Search, p.Replace)
@@ -159,38 +145,46 @@ func newServer(rootDir string) *http.ServeMux {
 				appliedPatchesMu.RUnlock()
 
 				if alreadyApplied {
-					pp.Status = "applied"
+					if fileStatus != "ERROR" && fileStatus != "IGNORED" {
+						fileStatus = "APPLIED"
+					}
 				} else {
-					prof := patcheng.DefaultRegistry.GetByExtension(filepath.Ext(rawFilename))
 					_, pErr := patcheng.ApplyFuzzyPatchesAgnostic(prof, content, []patcheng.FuzzyPatch{p})
 					if pErr != nil {
 						errMsg := pErr.Error()
 						if strings.Contains(errMsg, "refusing to overwrite existing file") {
-							pp.Status = "ignored"
-							pp.Message = "File already exists. Use '%%% overwrite' to replace it."
+							pp.Error = "File already exists. Use '%%% overwrite' to replace it."
+							if fileStatus != "ERROR" {
+								fileStatus = "IGNORED"
+							}
 						} else if strings.Contains(errMsg, "target file is empty or does not exist") {
-							pp.Status = "ignored"
-							pp.Message = "Target file missing. Click 'Fix File Paths'."
+							pp.Error = "Target file missing. Click 'Fix File Paths'."
+							fileStatus = "ERROR"
 							if fixed := findUniquePathSuffix(absRootDir, rawFilename); fixed != "" {
 								pathFixes[rawFilename] = fixed
 							}
 						} else {
-							pp.Status = "error"
-							pp.Message = pErr.Error()
-							pp.Advisory = generateAdvisory(prof, pErr)
-							pp.Hint = generateDiagnosticHint(prof, rawFilename, content, p.Search, p.NearLine)
+							fileStatus = "ERROR"
+							pp.Error = pErr.Error()
+							pp.ClosestMatchHint = generateDiagnosticHint(prof, rawFilename, content, p.Search, p.NearLine)
+							pp.LLMFallbackHint = generateLLMFallbackHint(prof)
 						}
 					}
 				}
-
 				filePreviews = append(filePreviews, pp)
 			}
-			responsePatches[rawFilename] = filePreviews
+
+			responseFiles = append(responseFiles, PreviewFile{
+				Path:     rawFilename,
+				Status:   fileStatus,
+				NetLines: fileNetLines,
+				Patches:  filePreviews,
+			})
 		}
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(withND("appy/preview", "Simulation results", map[string]any{
-			"patches":    responsePatches,
+			"files":      responseFiles,
 			"path_fixes": pathFixes,
 		}))
 	}))
@@ -216,9 +210,11 @@ func newServer(rootDir string) *http.ServeMux {
 		}
 
 		memoryResults := make(map[string]string)
-		fileErrors := make(map[string]string)
-		rejectedFiles := make(map[string]RejectedFile)
 		appliedInThisBatch := make(map[string]bool)
+
+		var applyFiles []ApplyFile
+		var checkFiles []CompilerCheckFile
+		hasErrors := false
 
 		for rawFilename, patches := range parsed {
 			if !isPathSafe(absRootDir, rawFilename) {
@@ -229,27 +225,30 @@ func newServer(rootDir string) *http.ServeMux {
 			contentBytes, _ := os.ReadFile(absPath)
 			prof := patcheng.DefaultRegistry.GetByExtension(filepath.Ext(rawFilename))
 
+			fileNetLines := 0
+			for _, p := range patches {
+				if p.FullOverwrite {
+					fileNetLines += countLines(p.Replace) - countLines(string(contentBytes))
+				} else {
+					fileNetLines += countLines(p.Replace) - countLines(p.Search)
+				}
+			}
+
 			newContent, applyErr := patcheng.ApplyFuzzyPatchesAgnostic(prof, string(contentBytes), patches)
 			if applyErr != nil {
-				// Safety ignores do not trigger 207 Multi-Status
 				if strings.Contains(applyErr.Error(), "refusing to overwrite existing file") {
-					fileErrors[rawFilename] = applyErr.Error()
-					continue
+					continue // Safety ignores don't count as failures
 				}
+				hasErrors = true
 
-				var successes []string
 				var failedBlock *FailedPatch
-
 				for _, p := range patches {
 					_, pErr := patcheng.ApplyFuzzyPatchesAgnostic(prof, string(contentBytes), []patcheng.FuzzyPatch{p})
-					if pErr == nil {
-						successes = append(successes, patcheng.FormatMissingSnippet(p.Search))
-					} else if failedBlock == nil {
+					if pErr != nil && failedBlock == nil {
 						cur := ""
 						hint := generateDiagnosticHint(prof, rawFilename, string(contentBytes), p.Search, p.NearLine)
 						if strings.Contains(hint, ": ") {
-							lines := strings.Split(hint, "\n")
-							for _, l := range lines {
+							for _, l := range strings.Split(hint, "\n") {
 								if strings.Contains(l, ": ") && !strings.Contains(l, "elided") {
 									cur = strings.TrimSpace(strings.SplitN(l, ": ", 2)[1])
 									break
@@ -257,26 +256,23 @@ func newServer(rootDir string) *http.ServeMux {
 							}
 						}
 						failedBlock = &FailedPatch{
-							Directive: fmt.Sprintf("replace near %d", p.NearLine),
-							Reason:    pErr.Error(),
-							Current:   cur,
+							Error:           pErr.Error(),
+							CurrentLineEcho: cur,
+							LLMFallbackHint: generateLLMFallbackHint(prof),
 						}
 					}
 				}
 
-				fileErrors[rawFilename] = applyErr.Error()
-				rejectedFiles[rawFilename] = RejectedFile{
-					Filename:                rawFilename,
-					Status:                  "rejected",
-					Reason:                  applyErr.Error() + " (all patches for this file were rolled back)",
-					Committed:               false,
-					SuccessfulMemoryPatches: successes,
-					FailedPatch:             failedBlock,
-				}
+				applyFiles = append(applyFiles, ApplyFile{
+					Path:        rawFilename,
+					Applied:     false,
+					NetLines:    fileNetLines,
+					Error:       applyErr.Error(),
+					FailedPatch: failedBlock,
+				})
 				continue
 			}
 
-			// Apply language-specific formatting before staging
 			if prof != nil && prof.Formatter != nil {
 				formatted, _, err := prof.Formatter(context.Background(), []byte(newContent))
 				if err == nil {
@@ -288,32 +284,68 @@ func newServer(rootDir string) *http.ServeMux {
 			for _, p := range patches {
 				appliedInThisBatch[hashPatch(rawFilename, p.Search, p.Replace)] = true
 			}
+
+			applyFiles = append(applyFiles, ApplyFile{
+				Path:     rawFilename,
+				Applied:  true,
+				NetLines: fileNetLines,
+			})
 		}
 
 		if len(memoryResults) > 0 && !req.SkipCompiler {
 			compErrs := runCompilerPreFlight(patcheng.DefaultRegistry, memoryResults, false)
 			for p, e := range compErrs {
 				rel, _ := filepath.Rel(absRootDir, p)
-				fileErrors[rel] = e
-				rejectedFiles[rel] = RejectedFile{
-					Filename: rel,
-					Status:   "rejected",
-					Reason:   "Compiler Error: " + e,
+				hasErrors = true
+
+				if req.CheckOnly {
+					checkFiles = append(checkFiles, CompilerCheckFile{
+						Path:           filepath.ToSlash(rel),
+						CompilerStatus: "FAIL",
+						RawOutput:      e,
+					})
+				} else {
+					for i, af := range applyFiles {
+						if af.Path == filepath.ToSlash(rel) || af.Path == rel {
+							applyFiles[i].Applied = false
+							applyFiles[i].Error = "Compiler Error"
+							applyFiles[i].FailedPatch = &FailedPatch{
+								Error: "Compiler Error:\n" + e,
+							}
+							break
+						}
+					}
 				}
 				delete(memoryResults, p)
 			}
+
+			if req.CheckOnly {
+				for p := range memoryResults {
+					rel, _ := filepath.Rel(absRootDir, p)
+					checkFiles = append(checkFiles, CompilerCheckFile{
+						Path:           filepath.ToSlash(rel),
+						CompilerStatus: "PASS",
+					})
+				}
+			}
 		}
 
-		filesModified := 0
+		if req.CheckOnly {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(withND("appy/compiler-check", "Compiler pre-flight results", map[string]any{
+				"files": checkFiles,
+			}))
+			return
+		}
+
 		if !req.CheckOnly {
 			for path, content := range memoryResults {
 				os.MkdirAll(filepath.Dir(path), 0755)
 				os.WriteFile(path, []byte(content), 0644)
-				filesModified++
 			}
 		}
 
-		if filesModified > 0 {
+		if len(memoryResults) > 0 {
 			appliedPatchesMu.Lock()
 			for h := range appliedInThisBatch {
 				appliedPatches[h] = true
@@ -323,18 +355,14 @@ func newServer(rootDir string) *http.ServeMux {
 		}
 
 		status := http.StatusOK
-		if len(rejectedFiles) > 0 {
+		if hasErrors {
 			status = http.StatusMultiStatus
 		}
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
 		json.NewEncoder(w).Encode(withND("appy/apply-success", "Result", map[string]any{
-			"status":                     "ok",
-			"files_modified":             filesModified,
-			"file_errors":                fileErrors,
-			"rejected_files":             rejectedFiles,
-			"successful_files_committed": getKeysFromMemory(memoryResults, absRootDir),
+			"files": applyFiles,
 		}))
 	}))
 
@@ -357,7 +385,22 @@ func newServer(rootDir string) *http.ServeMux {
 			return
 		}
 
-		b, _ := json.Marshal(report)
+		// Map the internal retest.Report to the strict RetestResponse UI schema
+		var outFiles []RetestResponseFile
+		for _, fail := range report.HardFails {
+			outFiles = append(outFiles, RetestResponseFile{
+				TestStatus: "FAIL",
+				Package:    fail.Task.Package,
+				RawOutput:  fail.Output,
+			})
+		}
+
+		response := RetestResponse{
+			Packages: req.Packages,
+			Files:    outFiles,
+		}
+
+		b, _ := json.Marshal(response)
 		var rm map[string]any
 		json.Unmarshal(b, &rm)
 
@@ -366,15 +409,6 @@ func newServer(rootDir string) *http.ServeMux {
 	}))
 
 	return mux
-}
-
-func getKeysFromMemory(m map[string]string, root string) []string {
-	var keys []string
-	for k := range m {
-		rel, _ := filepath.Rel(root, k)
-		keys = append(keys, filepath.ToSlash(rel))
-	}
-	return keys
 }
 
 func main() {

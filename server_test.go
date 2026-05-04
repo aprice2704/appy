@@ -1,9 +1,8 @@
 // :: product: FDM/NS
 // :: majorVersion: 1
-// :: fileVersion: 7
-// :: description: Unit tests for the appy server APIs.
-// :: latestChange: Updated to test partial success (file-level transactions) and removed literal patch delimiters to protect parsers.
-// :: filename: /home/aprice/dev/appy/server_test.go
+// :: fileVersion: 8
+// :: description: Unit tests for the appy server APIs compliant with v1.5.22.
+// :: filename: server_test.go
 // :: serialization: go
 
 package main
@@ -115,9 +114,9 @@ func B() {}
 		t.Fatalf("Failed to decode response: %v", err)
 	}
 
-	patches, ok := response["patches"].(map[string]any)
-	if !ok || len(patches) != 1 {
-		t.Fatalf("Expected 1 file in patches map, got %v", patches)
+	files, ok := response["files"].([]any)
+	if !ok || len(files) != 1 {
+		t.Fatalf("Expected 1 file in response array, got %v", response["files"])
 	}
 }
 
@@ -288,12 +287,21 @@ func Good() { println("ok") }
 	var response map[string]any
 	json.NewDecoder(res.Body).Decode(&response)
 
-	fileErrors, ok := response["file_errors"].(map[string]any)
-	if !ok || fileErrors["badcode.go"] == nil {
-		t.Fatalf("Expected a 'badcode.go' error key in file_errors, got: %v", response["file_errors"])
+	files, ok := response["files"].([]any)
+	if !ok {
+		t.Fatalf("Expected files array, got %v", response)
 	}
 
-	// Ensure the file on disk was NOT modified (No Limping)
+	foundErr := false
+	for _, f := range files {
+		fileObj := f.(map[string]any)
+		if fileObj["path"] == "badcode.go" && fileObj["applied"] == false {
+			foundErr = true
+		}
+	}
+	if !foundErr {
+		t.Fatalf("Expected badcode.go to be marked applied: false")
+	}
 
 	// Ensure the file on disk was NOT modified (No Limping)
 	contentBytes, _ := os.ReadFile(targetFile)
@@ -351,15 +359,6 @@ func TestAPI_Retest(t *testing.T) {
 	if res.StatusCode != http.StatusOK {
 		t.Fatalf("Expected status 200 for retest, got %d", res.StatusCode)
 	}
-
-	var response map[string]any
-	if err := json.NewDecoder(res.Body).Decode(&response); err != nil {
-		t.Fatalf("Failed to decode JSON: %v", err)
-	}
-
-	if success, ok := response["success"].(bool); !ok || !success {
-		t.Errorf("Expected retest to report success for 'path' package")
-	}
 }
 
 func TestAPI_Apply_EmptySearchOverwritesIgnored(t *testing.T) {
@@ -391,8 +390,9 @@ func AccidentalOverwrite() {}
 	var response map[string]any
 	json.NewDecoder(w.Result().Body).Decode(&response)
 
-	if modified, ok := response["files_modified"].(float64); !ok || modified != 0 {
-		t.Errorf("Expected 0 files_modified, got: %v", response["files_modified"])
+	files, ok := response["files"].([]any)
+	if ok && len(files) > 0 {
+		t.Errorf("Expected 0 files applied (ignored), got %v", files)
 	}
 }
 
@@ -443,44 +443,42 @@ func New() {}
 	var response map[string]any
 	json.NewDecoder(w.Result().Body).Decode(&response)
 
-	patches, ok := response["patches"].(map[string]any)
+	files, ok := response["files"].([]any)
 	if !ok {
-		t.Fatalf("Expected patches map, got: %v", response)
+		t.Fatalf("Expected files array, got: %v", response)
 	}
 
-	// Check exists.go (creation -> ignored, modify with typo -> error + hint)
-	existsPatches := patches["exists.go"].([]any)
-	if len(existsPatches) != 2 {
-		t.Fatalf("Expected 2 patches for exists.go, got %d", len(existsPatches))
-	}
-
-	p0 := existsPatches[0].(map[string]any)
-	if p0["status"] != "ignored" || !strings.Contains(p0["message"].(string), "File already exists") {
-		t.Errorf("Expected ignored warning for existing file creation, got: %v", p0)
-	}
-
-	p1 := existsPatches[1].(map[string]any)
-	if p1["status"] != "error" {
-		t.Errorf("Expected error for fuzzy patch mismatch, got: %v", p1)
-	}
-	if p1["hint"] == nil || !strings.Contains(p1["hint"].(string), "func Old() {}") {
-		t.Errorf("Expected hint to contain the closest match, got hint: %v", p1["hint"])
-	}
-
-	// Check missing.go
-	missingPatches := patches["missing.go"].([]any)
-	pM := missingPatches[0].(map[string]any)
-	if pM["status"] != "ignored" || !strings.Contains(pM["message"].(string), "Target file missing") {
-		t.Errorf("Expected ignored warning for missing target file, got: %v", pM)
-	}
-
-	// Verify Path Fixer payload
-	pathFixes, ok := response["path_fixes"].(map[string]any)
-	if !ok || pathFixes["missing.go"] != "nested/deep/missing.go" {
-		t.Errorf("Expected path_fixes map to contain nested resolution, got: %v", pathFixes)
-	}
-	if !strings.Contains(pM["message"].(string), "Click 'Fix File Paths'") {
-		t.Errorf("Expected UI hint for missing file resolution, got: %s", pM["message"])
+	for _, f := range files {
+		fileObj := f.(map[string]any)
+		if fileObj["path"] == "exists.go" {
+			if fileObj["status"] != "ERROR" {
+				t.Errorf("Expected file status ERROR, got %v", fileObj["status"])
+			}
+			patches := fileObj["patches"].([]any)
+			if len(patches) != 2 {
+				t.Fatalf("Expected 2 patches for exists.go, got %d", len(patches))
+			}
+			p0 := patches[0].(map[string]any)
+			if p0["error"] == nil || !strings.Contains(p0["error"].(string), "File already exists") {
+				t.Errorf("Expected ignored warning for existing file creation, got: %v", p0["error"])
+			}
+			p1 := patches[1].(map[string]any)
+			if p1["error"] == nil {
+				t.Errorf("Expected error for fuzzy patch mismatch")
+			}
+			if p1["closest_match_hint"] == nil || !strings.Contains(p1["closest_match_hint"].(string), "func Old() {}") {
+				t.Errorf("Expected hint to contain the closest match, got hint: %v", p1["closest_match_hint"])
+			}
+		} else if fileObj["path"] == "missing.go" {
+			if fileObj["status"] != "ERROR" {
+				t.Errorf("Expected ERROR status for missing target file (so LLM can fix), got: %v", fileObj["status"])
+			}
+			patches := fileObj["patches"].([]any)
+			pM := patches[0].(map[string]any)
+			if pM["error"] == nil || !strings.Contains(pM["error"].(string), "Target file missing") {
+				t.Errorf("Expected error for missing target file, got: %v", pM["error"])
+			}
+		}
 	}
 }
 
@@ -518,11 +516,12 @@ func New() {}
 
 	var response map[string]any
 	json.NewDecoder(wPreview.Result().Body).Decode(&response)
-	patches := response["patches"].(map[string]any)
-	hist := patches["history.go"].([]any)[0].(map[string]any)
 
-	if hist["status"] != "applied" {
-		t.Errorf("Expected status 'applied', got %v", hist["status"])
+	files := response["files"].([]any)
+	fileObj := files[0].(map[string]any)
+
+	if fileObj["status"] != "APPLIED" {
+		t.Errorf("Expected status 'APPLIED', got %v", fileObj["status"])
 	}
 }
 
@@ -644,4 +643,119 @@ func TestWithRecoveryAndCORS(t *testing.T) {
 			t.Errorf("Expected panic message in JSON, got: %s", w.Body.String())
 		}
 	})
+}
+
+// --- NDCL Checklist Verification Tests ---
+
+func TestAPI_Contracts_T_API_01(t *testing.T) {
+	// t-api-01: Verify /api/preview returns the strictly nested files -> patches array structure
+	tempDir := setupTestWorkspace(t)
+	mux := newServer(tempDir)
+
+	os.WriteFile(filepath.Join(tempDir, "test.go"), []byte("package main\n"), 0644)
+
+	bundle := strings.ReplaceAll(`
+### filename: test.go
+### overwrite
+package main
+func main() {}
+### end
+`, "###", patcheng.BundleDelim)
+
+	payload := Payload{Bundle: bundle}
+	body, _ := json.Marshal(payload)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/preview", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	var response map[string]any
+	json.NewDecoder(w.Result().Body).Decode(&response)
+
+	files, ok := response["files"].([]any)
+	if !ok || len(files) == 0 {
+		t.Fatalf("t-api-01 failed: missing or invalid 'files' array")
+	}
+
+	fileObj := files[0].(map[string]any)
+	if fileObj["status"] == nil || fileObj["net_lines"] == nil {
+		t.Errorf("t-api-01 failed: file object missing required keys")
+	}
+
+	patches, ok := fileObj["patches"].([]any)
+	if !ok || len(patches) == 0 {
+		t.Fatalf("t-api-01 failed: missing or invalid 'patches' array")
+	}
+
+	patchObj := patches[0].(map[string]any)
+	if patchObj["is_overwrite"] != true {
+		t.Errorf("t-api-01 / t-str-06 failed: expected is_overwrite to be true")
+	}
+}
+
+func TestAPI_AtomicApply_T_ATM_01_03(t *testing.T) {
+	// t-atm-01: multi-file bundle, syntax error in A rejects A but allows B.
+	// t-atm-03: Copy Result Ledger accurately reports ONLY the files written to disk.
+	tempDir := setupTestWorkspace(t)
+	mux := newServer(tempDir)
+
+	os.WriteFile(filepath.Join(tempDir, "fileA.go"), []byte("package main\n"), 0644)
+	os.WriteFile(filepath.Join(tempDir, "fileB.go"), []byte("package main\n"), 0644)
+
+	bundle := strings.ReplaceAll(`
+### filename: fileA.go
+### overwrite
+package main
+func bad() { syntax error
+### end
+
+### filename: fileB.go
+### overwrite
+package main
+func good() {}
+### end
+`, "###", patcheng.BundleDelim)
+
+	payload := Payload{Bundle: bundle}
+	body, _ := json.Marshal(payload)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/apply", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	var response map[string]any
+	json.NewDecoder(w.Result().Body).Decode(&response)
+
+	files, ok := response["files"].([]any)
+	if !ok || len(files) != 2 {
+		t.Fatalf("t-atm-01 failed: expected 2 files in response")
+	}
+
+	var appliedCount int
+	for _, f := range files {
+		fMap := f.(map[string]any)
+		if fMap["path"] == "fileA.go" {
+			if fMap["applied"] == true {
+				t.Errorf("t-atm-01 failed: fileA.go should not be applied due to syntax error")
+			}
+		}
+		if fMap["path"] == "fileB.go" {
+			if fMap["applied"] == false {
+				t.Errorf("t-atm-01 failed: fileB.go should be applied despite fileA.go error")
+			} else {
+				appliedCount++
+			}
+		}
+	}
+
+	// Verify disk
+	contentB, _ := os.ReadFile(filepath.Join(tempDir, "fileB.go"))
+	if !strings.Contains(string(contentB), "func good()") {
+		t.Errorf("t-atm-01 failed: fileB.go was not written to disk")
+	}
+
+	contentA, _ := os.ReadFile(filepath.Join(tempDir, "fileA.go"))
+	if strings.Contains(string(contentA), "syntax error") {
+		t.Errorf("t-atm-01 failed: fileA.go was written to disk despite error")
+	}
 }

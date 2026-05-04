@@ -1,8 +1,8 @@
 // :: product: FDM/NS
 // :: majorVersion: 1
-// :: fileVersion: 1
-// :: description: JS rendering logic for Appy UI.
-// :: filename: code/cmd/appy/ui_script_render.go
+// :: fileVersion: 3
+// :: description: JS rendering logic matched to new schema and DOM isolation rules.
+// :: filename: ui_script_render.go
 // :: serialization: go
 
 package main
@@ -10,36 +10,39 @@ package main
 const jsRender = `
 function renderResult(data, isCheck) {
     if (isCheck) {
-        if (data.successful_files_committed) {
-            data.successful_files_committed.forEach(f => {
-                const el = document.getElementById('file-block-' + f);
-                if (el) addDecorator(el, '🏅');
-            });
-        }
-        if (data.rejected_files) {
-            for (const [file, details] of Object.entries(data.rejected_files)) {
-                const el = document.getElementById('file-block-' + file);
-                if (el) {
+        if (!data.files) return;
+        let compilerErrorsReport = "**Appy Compiler Pre-Flight Errors**\n\n";
+        let hasFails = false;
+
+        data.files.forEach(f => {
+            const el = document.getElementById('file-block-' + escapeHtml(f.path));
+            if (el) {
+                if (f.compiler_status === 'PASS') {
+                    addDecorator(el, '🏅');
+                } else if (f.compiler_status === 'FAIL') {
+                    hasFails = true;
                     el.className = 'file-block status-error';
                     const badge = el.querySelector('.status-badge');
                     if (badge) {
                         badge.className = 'status-badge status-error';
                         badge.innerText = 'ERROR';
                     }
-                    addDecorator(el, '❌');
+                    addDecorator(el, '⚠️');
                     
-                    const content = el.querySelector('.file-content');
-                    if (content && !content.querySelector('.error-msg.compiler-err')) {
-                        let errHtml = '<div class="patch-block compiler-err" style="border-top: 2px solid #f44336; padding-top: 10px;">';
-                        errHtml += '<div class="error-msg"><strong>Compiler Rejected:</strong> ' + escapeHtml(details.reason) + '</div>';
-                        errHtml += '</div>';
-                        content.innerHTML += errHtml;
+                    compilerErrorsReport += "- " + bt + f.path + bt + "\n";
+                    if (f.raw_output) {
+                        compilerErrorsReport += "  Compiler Trace:\n  " + tbt + "go\n  " + f.raw_output.replace(/\n/g, "\n  ") + "\n  " + tbt + "\n\n";
                     }
                 }
             }
-        }
+        });
         
-        const anyOk = document.querySelectorAll('.file-block.status-ok').length > 0;
+        if (hasFails) {
+            window.tracePayload = compilerErrorsReport;
+            setExportMode('errors');
+        }
+
+        const anyOk = document.querySelectorAll('.file-block.status-ready').length > 0;
         applyBtn.disabled = !anyOk;
         if (anyOk) applyBtn.classList.add('ready');
         else applyBtn.classList.remove('ready');
@@ -48,66 +51,78 @@ function renderResult(data, isCheck) {
     }
 
     let ledger = "**Appy Result Ledger**\n\n";
-    if (data.successful_files_committed && data.successful_files_committed.length > 0) {
-        ledger += "Committed files:\n" + data.successful_files_committed.map(f => "- " + bt + f + bt).join('\n') + "\n\n";
+    let successfulFiles = [];
+    let rejectedFiles = [];
+    
+    if (data.files) {
+        data.files.forEach(f => {
+            if (f.applied) successfulFiles.push(f.path);
+            else rejectedFiles.push(f);
+        });
     }
-    if (data.rejected_files && Object.keys(data.rejected_files).length > 0) {
-        ledger += "Rejected files:\n";
-        for (const [file, details] of Object.entries(data.rejected_files)) {
-            ledger += "- " + bt + file + bt + " (file_commit_status: rejected)\n";
-            ledger += "  Issue: " + details.reason + "\n";
-            if (details.failed_patch && details.failed_patch.current_line) {
-                ledger += "  Current line echo: " + bt + details.failed_patch.current_line + bt + "\n";
-            }
-        }
-    }
-    window.lastLedgerText = ledger;
-    window.committedFiles = data.successful_files_committed;
 
-    if (data.successful_files_committed) {
-        data.successful_files_committed.forEach(f => {
-            const el = document.getElementById('file-block-' + f);
+    if (successfulFiles.length > 0) {
+        ledger += "Committed files:\n" + successfulFiles.map(f => "- " + bt + f + bt).join('\n') + "\n\n";
+    }
+    if (rejectedFiles.length > 0) {
+        ledger += "Rejected files:\n";
+        rejectedFiles.forEach(f => {
+            ledger += "- " + bt + f.path + bt + " (file_commit_status: rejected)\n";
+            ledger += "  Issue: " + (f.error || "Unknown error") + "\n";
+            if (f.failed_patch && f.failed_patch.current_line_echo) {
+                ledger += "  Current line echo: " + bt + f.failed_patch.current_line_echo + bt + "\n";
+            }
+            if (f.failed_patch && f.failed_patch.llm_fallback_hint) {
+                ledger += "  Fallback Strategy: " + f.failed_patch.llm_fallback_hint + "\n";
+            }
+        });
+    }
+    window.tracePayload = ledger;
+    window.committedFiles = successfulFiles;
+
+    if (data.files) {
+        data.files.forEach(f => {
+            const el = document.getElementById('file-block-' + escapeHtml(f.path));
             if (el) {
-                el.className = 'file-block status-applied';
-                const badge = el.querySelector('.status-badge');
-                if (badge) {
-                    badge.className = 'status-badge status-applied';
-                    badge.innerText = 'APPLIED';
+                if (f.applied) {
+                    el.className = 'file-block status-applied';
+                    const badge = el.querySelector('.status-badge');
+                    if (badge) {
+                        badge.className = 'status-badge status-applied';
+                        badge.innerText = 'APPLIED';
+                    }
+                } else {
+                    el.className = 'file-block status-error';
+                    const badge = el.querySelector('.status-badge');
+                    if (badge) {
+                        badge.className = 'status-badge status-error';
+                        badge.innerText = 'ERROR';
+                    }
+                    const content = el.querySelector('.file-content');
+                    if (content) {
+                        let errHtml = '<div class="patch-block" style="border-top: 2px solid #f44336; padding-top: 10px;">';
+                        errHtml += '<div class="error-msg"><strong>Rejected:</strong> ' + escapeHtml(f.error) + '</div>';
+                        if (f.failed_patch && f.failed_patch.current_line_echo) {
+                            errHtml += '<div class="hint-block"><strong>Matched Line Echo:</strong><pre>' + escapeHtml(f.failed_patch.current_line_echo) + '</pre></div>';
+                        }
+                        if (f.failed_patch && f.failed_patch.llm_fallback_hint) {
+                            errHtml += '<div class="hint-block" style="color:#2196f3; border-left: 3px solid #2196f3;"><strong>Advisory:</strong><br>' + escapeHtml(f.failed_patch.llm_fallback_hint) + '</div>';
+                        }
+                        errHtml += '</div>';
+                        content.innerHTML += errHtml;
+                    }
                 }
             }
         });
     }
 
-    if (data.rejected_files) {
-        for (const [file, details] of Object.entries(data.rejected_files)) {
-            const el = document.getElementById('file-block-' + file);
-            if (el) {
-                el.className = 'file-block status-error';
-                const badge = el.querySelector('.status-badge');
-                if (badge) {
-                    badge.className = 'status-badge status-error';
-                    badge.innerText = 'ERROR';
-                }
-                const content = el.querySelector('.file-content');
-                if (content) {
-                    let errHtml = '<div class="patch-block" style="border-top: 2px solid #f44336; padding-top: 10px;">';
-                    errHtml += '<div class="error-msg"><strong>Rejected:</strong> ' + escapeHtml(details.reason) + '</div>';
-                    if (details.failed_patch && details.failed_patch.current_line) {
-                        errHtml += '<div class="hint-block"><strong>Matched Line Echo:</strong><pre>' + escapeHtml(details.failed_patch.current_line) + '</pre></div>';
-                    }
-                    errHtml += '</div>';
-                    content.innerHTML += errHtml;
-                }
-            }
-        }
+    if (rejectedFiles.length > 0) {
+        setExportMode('errors');
+    } else {
+        setExportMode('ledger');
     }
 
-    copyLedgerBtn.innerText = "✅ Copy Result Ledger";
-    copyLedgerBtn.style.background = "";
-    copyLedgerBtn.style.borderColor = "";
-    copyLedgerBtn.style.display = 'inline-block';
-    copyErrorsBtn.style.display = 'none';
-    if (data.successful_files_committed && data.successful_files_committed.length > 0) {
+    if (successfulFiles.length > 0) {
         retestBtn.style.display = 'inline-block';
     }
     
@@ -118,11 +133,10 @@ function renderResult(data, isCheck) {
 }
 
 function renderPreview(data) {
-    if (!data.patches || Object.keys(data.patches).length === 0) {
+    if (!data.files || data.files.length === 0) {
         outputEl.innerHTML = "<em>No valid patches found in bundle.</em>";
         applyBtn.disabled = true;
-        copyLedgerBtn.style.display = 'none';
-        copyErrorsBtn.style.display = 'none';
+        setExportMode('none');
         retestBtn.style.display = 'none';
         return;
     }
@@ -132,57 +146,63 @@ function renderPreview(data) {
     let errorCount = 0;
     let errorReport = "**Appy Preview Errors**\n\nRejected files:\n";
     
-    for (const [file, patches] of Object.entries(data.patches)) {
-        let fileHasError = patches.some(p => p.status === 'error');
-        let fileHasIgnored = patches.some(p => p.status === 'ignored');
+    data.files.forEach(fileObj => {
+        const fileStatus = fileObj.status; 
         
-        if (!fileHasError && !fileHasIgnored) {
-            readyCount++;
-        } else if (fileHasError) {
+        if (fileStatus === 'ERROR') {
             errorCount++;
-            errorReport += "- " + bt + file + bt + "\n";
+            errorReport += "- " + bt + fileObj.path + bt + "\n";
+        } else if (fileStatus === 'READY') {
+            readyCount++;
         }
         
-        let statusClass = fileHasError ? 'status-error' : (fileHasIgnored ? 'status-ignored' : 'status-ok');
-        let chipText = fileHasError ? 'ERROR' : (fileHasIgnored ? 'IGNORED' : 'OK');
+                let statusClass = 'status-' + fileStatus.toLowerCase();
+        let chipText = fileStatus === 'READY' ? 'OK' : fileStatus;
+        let lineDeltaFmt = fileObj.net_lines > 0 ? ('+' + fileObj.net_lines) : fileObj.net_lines;
+        let isOverwrite = fileObj.patches && fileObj.patches.some(p => p.is_overwrite);
         
-        html += '<details id="file-block-' + escapeHtml(file) + '" class="file-block ' + statusClass + '">';
-        html += '<summary class="file-header" style="display: flex; align-items: center;">';
-        html += '<div style="flex: 1; display: flex; justify-content: space-between; align-items: center;">';
-        html += '<strong>' + escapeHtml(file) + '</strong>';
+        html += '<details id="file-block-' + escapeHtml(fileObj.path) + '" class="file-block ' + statusClass + '">';
+        html += '<summary class="file-header">';
+        html += '<div style="display: flex; align-items: center;">';
+        html += '<strong>' + escapeHtml(fileObj.path) + '</strong>';
+        html += '<span class="net-lines">' + lineDeltaFmt + '</span>';
+        html += '</div>';
+        html += '<div class="rhs-chips">';
+        if (isOverwrite) {
+            html += '<span class="decorator" style="font-size: 1.2em;">☢️</span>';
+        }
         html += '<span class="status-badge ' + statusClass + '">' + chipText + '</span>';
         html += '</div></summary>';
         
         html += '<div class="file-content">';
-        patches.forEach(p => {
-            if (p.status === 'error') {
-                errorReport += "  Issue: " + (p.message || "Unknown error") + "\n";
-                if (p.hint) {
-                    errorReport += "  Hint/Closest Match:\n  " + tbt + "\n  " + p.hint.replace(/\n/g, "\n  ") + "\n  " + tbt + "\n";
+        if (fileObj.patches) {
+            fileObj.patches.forEach(p => {
+                if (p.error) {
+                    errorReport += "  Issue: " + p.error + "\n";
+                    if (p.closest_match_hint) {
+                        errorReport += "  Closest Match (Use this for match_line):\n  " + tbt + "\n  " + p.closest_match_hint.replace(/\n/g, "\n  ") + "\n  " + tbt + "\n";
+                    }
+                    if (p.llm_fallback_hint) {
+                        errorReport += "  Fallback Strategy: " + p.llm_fallback_hint + "\n";
+                    }
                 }
-                if (p.advisory) {
-                    errorReport += "  Advisory: " + p.advisory + "\n";
+
+                html += '<div class="patch-block">';
+                if (p.error) html += '<div class="error-msg">' + escapeHtml(p.error) + '</div>';
+                if (p.closest_match_hint) html += '<div class="hint-block"><strong>Closest Match:</strong><pre>' + escapeHtml(p.closest_match_hint) + '</pre></div>';
+                if (p.llm_fallback_hint) html += '<div class="hint-block" style="color:#2196f3; border-left: 3px solid #2196f3;"><strong>Advisory:</strong><br>' + escapeHtml(p.llm_fallback_hint) + '</div>';
+                
+                if (p.search_block) {
+                     html += '<details style="margin-bottom: 8px; cursor: pointer; color: #94a3b8;"><summary style="font-size: 12px; margin-bottom: 4px;">View Search Block (Old Text)</summary><pre style="margin:0; white-space: pre-wrap; font-family: inherit; background: rgba(0,0,0,0.2); padding: 10px; border-left: 3px solid #475569;">' + escapeHtml(p.search_block) + '</pre></details>';
                 }
-            }
-
-            html += '<div class="patch-block">';
-            html += '<div style="display: flex; justify-content: space-between; margin-bottom: 8px;">';
-            html += '<span class="status-badge status-' + p.status + '">' + p.status + '</span>';
-            let delta = p.line_delta > 0 ? ('+' + p.line_delta) : p.line_delta;
-            html += '<span style="font-size:11px; color:#888;">Net lines: ' + delta + '</span>';
-            html += '</div>';
-
-            if (p.message) html += '<div class="error-msg">' + escapeHtml(p.message) + '</div>';
-            if (p.hint) html += '<div class="hint-block"><strong>Closest Match:</strong><pre>' + escapeHtml(p.hint) + '</pre></div>';
-            if (p.advisory) html += '<div class="hint-block" style="color:#2196f3; border-left: 3px solid #2196f3;"><strong>Advisory:</strong><br>' + escapeHtml(p.advisory) + '</div>';
-            
-            if (p.replace !== undefined) {
-                html += '<div class="replace-block"><pre style="margin:0; white-space: pre-wrap; font-family: inherit;">' + escapeHtml(p.replace) + '</pre></div>';
-            }
-            html += '</div>';
-        });
+                if (p.replace_block !== undefined) {
+                    html += '<div class="replace-block"><pre style="margin:0; white-space: pre-wrap; font-family: inherit;">' + escapeHtml(p.replace_block) + '</pre></div>';
+                }
+                html += '</div>';
+            });
+        }
         html += '</div></details>';
-    }
+    });
     
     outputEl.innerHTML = html;
     
@@ -198,14 +218,13 @@ function renderPreview(data) {
         fixPathsBtn.style.display = 'none';
     }
     
-    copyLedgerBtn.style.display = 'none';
     retestBtn.style.display = 'none';
 
     if (errorCount > 0) {
-        window.lastErrorText = errorReport;
-        copyErrorsBtn.style.display = 'inline-block';
+        window.tracePayload = errorReport;
+        setExportMode('errors');
     } else {
-        copyErrorsBtn.style.display = 'none';
+        setExportMode('none');
     }
 }
 `
