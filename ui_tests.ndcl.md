@@ -55,6 +55,7 @@ This checklist locks the implementation of Appy to the `ui_spec.md` behavioral c
 - | | 9. Code & Metadata Syntax #(test-meta-group)
   - [ ] Verify generated Go files place metadata at the absolute top followed by one blank line. #(t-meta-01)
   - [ ] Verify the UI correctly identifies uniformly armored input with `@@@` prefixes and refuses partial armor. #(t-meta-02)
+  - [ ] Verify the backend and frontend correctly strip leading whitespace from patch directives. #(t-meta-03)
 
 - | | 10. Interactive Edge Cases & Micro-Interactions #(test-edge-group)
   - [ ] Verify pasting junk/empty text gracefully displays "No valid patches found" and disables action buttons. #(t-edg-01)

@@ -45,7 +45,7 @@ func watchSelfForReload() {
 	}
 }
 
-const AppVersion = "v1.5.23"
+const AppVersion = "v1.5.27"
 
 func withRecoveryAndCORS(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {

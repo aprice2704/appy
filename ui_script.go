@@ -1,6 +1,6 @@
 // :: product: FDM/NS
 // :: majorVersion: 1
-// :: fileVersion: 10
+// :: fileVersion: 11
 // :: description: Core JS logic and state management for Appy UI.
 // :: filename: ui_script.go
 // :: serialization: go
@@ -45,14 +45,16 @@ function syncUIState() {
     const lines = inputEl.value.split('\n');
     let hasArmor = false;
     if (lines.length > 0) {
-        hasArmor = lines.every(line => {
-            const trimmed = line.trim();
-            return trimmed === '' || trimmed.startsWith('@@@');
-        });
-        if (hasArmor) {
-            hasArmor = lines.some(line => line.trim().startsWith('@@@'));
-        }
-    }
+hasArmor = lines.every(line => {
+const trimmed = line.trim();
+// Tolerate markdown code fences so they don't break the armor check
+if (trimmed.startsWith(tbt)) return true;
+return trimmed === '' || trimmed.startsWith('@@@');
+});
+if (hasArmor) {
+hasArmor = lines.some(line => line.trim().startsWith('@@@'));
+}
+}
 
     if (hasArmor) {
         unarmorBtn.classList.add('show');
@@ -64,7 +66,8 @@ function syncUIState() {
 }
 
 function unarmorText() {
-    inputEl.value = inputEl.value.replace(/^@@@/gm, '');
+    // Consume optional standard/non-breaking spaces left behind by LLMs
+    inputEl.value = inputEl.value.replace(/^@@@[ \t\u00A0]*/gm, '');
     syncUIState();
     sendRequest('/api/preview');
 }
@@ -111,7 +114,7 @@ async function sendRequest(endpoint, skipCompiler = false, checkOnly = false) {
         });
         const data = await res.json();
         
-                if (data.error) {
+        if (data.error) {
             outputEl.innerHTML = "<div class='error' style='margin-top:15px; padding: 15px; border: 1px solid #f44336; border-radius: 4px; background: rgba(244,67,54,0.1);'><strong>Server Error:</strong> " + escapeHtml(data.error) + "</div>";
             window.tracePayload = "**Appy Server Error**\n\n" + data.error;
             setExportMode('errors');
@@ -125,7 +128,7 @@ async function sendRequest(endpoint, skipCompiler = false, checkOnly = false) {
         } else {
             renderPreview(data);
         }
-        } catch (err) {
+    } catch (err) {
         outputEl.innerHTML = "<div class='error'>Error: " + err.message + "</div>";
         window.tracePayload = "**Appy Network/Client Error**\n\n" + err.message;
         setExportMode('errors');

@@ -177,6 +177,21 @@ func TestE2E_UI_ArmorLogic(t *testing.T) {
 	if display != "inline-block" {
 		t.Errorf("Expected unarmor button to be shown for strictly armored text, got %s", display)
 	}
+
+	// 3. Unarmor text handles LLM artifact leading spaces correctly
+	var inputVal string
+	err = chromedp.Run(ctx,
+		setInput("@@@ %%% filename: foo\n@@@ %%% replace\n@@@ %%% with\n@@@ %%% end"),
+		chromedp.Evaluate(`document.getElementById('unarmorBtn').click()`, nil),
+		chromedp.Evaluate(`document.getElementById('bundleInput').value`, &inputVal),
+	)
+	if err != nil {
+		t.Fatalf("Chromedp run failed: %v", err)
+	}
+	expectedUnarmored := "%%% filename: foo\n%%% replace\n%%% with\n%%% end"
+	if inputVal != expectedUnarmored {
+		t.Errorf("Unarmor logic failed to strip leading spaces. Expected:\n%s\nGot:\n%s", expectedUnarmored, inputVal)
+	}
 }
 
 func TestE2E_StalePreviewHandling(t *testing.T) {
@@ -318,6 +333,52 @@ func New() {}
 	}
 	if !strings.Contains(string(contentBytes), "func New() {}") {
 		t.Errorf("File on disk was not modified correctly. Content:\n%s", string(contentBytes))
+	}
+}
+
+func TestE2E_UI_MetaUpdate(t *testing.T) {
+	ts, ctx, cancel, tempDir := setupTestServer(t)
+	defer ts.Close()
+	defer cancel()
+
+	ctx, cancelTimeout := context.WithTimeout(ctx, 15*time.Second)
+	defer cancelTimeout()
+
+	os.WriteFile(filepath.Join(tempDir, "meta.md"), []byte("// :: fileVersion: 1\n\nBody"), 0644)
+
+	bundle := strings.ReplaceAll(`
+### filename: meta.md
+### meta_update
+:: fileVersion: 2
+:: addedKey: value
+### end
+`, "###", patcheng.BundleDelim)
+
+	err := chromedp.Run(ctx,
+		chromedp.Navigate(ts.URL),
+		chromedp.WaitVisible(`#bundleInput`, chromedp.ByQuery),
+		chromedp.Evaluate(fmt.Sprintf(`
+var el = document.getElementById('bundleInput');
+el.value = %q;
+el.dispatchEvent(new Event('input'));
+`, bundle), nil),
+		chromedp.WaitVisible(`.file-block.status-ready`, chromedp.ByQuery),
+		chromedp.Evaluate(`document.getElementById('applyBtn').click()`, nil),
+		chromedp.WaitVisible(`.file-block.status-applied`, chromedp.ByQuery),
+	)
+	if err != nil {
+		t.Fatalf("E2E MetaUpdate failed: %v", err)
+	}
+
+	contentBytes, _ := os.ReadFile(filepath.Join(tempDir, "meta.md"))
+	content := string(contentBytes)
+
+	// Verify it processed as a Native update and stripped embedded slashes
+	if !strings.Contains(content, ":: fileVersion: 2") || !strings.Contains(content, ":: addedKey: value") {
+		t.Errorf("meta_update failed to apply correctly. Content:\n%s", content)
+	}
+	if strings.Contains(content, "// :: fileVersion") {
+		t.Errorf("meta_update failed to strip embedded comments from native markdown metadata. Content:\n%s", content)
 	}
 }
 

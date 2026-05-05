@@ -44,6 +44,8 @@ Appy supports escalating patching strategies, selected automatically by the LLM 
 3.  **`match_line`**: Expands fuzzy searches to exact line boundaries (excellent for Markdown/NDCL checklists).
 4.  **`fuzzy_patch_agnostic`**: The workhorse. Replaces code while ignoring all whitespace, tabs, newlines, and language-specific comments.
 5.  **`strict_full_file` / `overwrite`**: Replaces the entire file contents.
+6.  **`ndcl_update`**: Surgically updates states and appends items in `.ndcl` semantic checklists.
+7.  **`meta_update`**: Surgically updates or appends NeuroScript/SDI metadata (`:: key: value` or `// :: key: value`) based on the host language profile.
 
 ## Running Appy
 Appy runs as a standalone Go binary.
@@ -51,3 +53,7 @@ Appy runs as a standalone Go binary.
 go run . -port 8085
 ```
 Navigate to `http://localhost:8085`. Appy will automatically watch its own executable for modifications and trigger a hot-reload if rebuilt.
+
+:: product: Appy
+:: fileroot: appy/
+:: filename: README.md

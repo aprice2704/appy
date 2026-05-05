@@ -149,3 +149,17 @@ go install .
 t
 go install .
 t
+x
+./run_appy.sh -port 8087
+x
+txtar c **/*.go **/*.js **/*.md  > appy.txtar
+./run_appy.sh 
+t
+go install .
+x
+./run_appy.sh -port 8087
+x
+t
+go install .
+t
+go install .

@@ -1,4 +1,4 @@
-# Appy UI Functional Specification v1.5.24
+# Appy UI Functional Specification v1.5.25
 
 ## 1. Top-Level Layout
 The UI is contained within a fixed-height flex container (`95vh`) and divided into three primary functional zones:
@@ -174,10 +174,12 @@ files:
 ## 10. Code & Metadata Syntax
 When Appy generates Go source files, metadata must be at the absolute top, one directive per line, followed by exactly one blank line. 
 
+The backend parser and frontend unarmor logic MUST tolerate optional leading whitespace (including non-breaking spaces) before patch directives (`%%%`) to gracefully handle LLM formatting artifacts.
+
 
 :: product: FDM/NS
 :: majorVersion: 1
-:: fileVersion: 24
-:: description: Added nuclear overwrite decorator and expanded API contracts.
+:: fileVersion: 25
+:: description: Added nuclear overwrite decorator and expanded API contracts, added whitespace tolerance to metadata directives.
 :: filename: ui_spec.md
 :: serialization: md
