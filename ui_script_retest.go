@@ -67,10 +67,13 @@ async function runRetest() {
             });
         }
 
-        window.tracePayload = reportMd;
-        setExportMode('test');
-        
-    } catch (err) {
+               window.tracePayload = reportMd;
+       if (hasFails) {
+           setExportMode('Test', 'error');
+       } else {
+           setExportMode('Test', 'success');
+       }
+} catch (err) {
         const loader = document.getElementById('testLoading');
         if (loader) loader.style.display = 'none';
         outputEl.innerHTML += "<div class='error' style='margin-top:15px;'>Test request failed: " + err.message + "</div>";

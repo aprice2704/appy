@@ -38,9 +38,9 @@ function renderResult(data, isCheck) {
         });
         
         if (hasFails) {
-            window.tracePayload = compilerErrorsReport;
-            setExportMode('errors');
-        }
+           window.tracePayload = compilerErrorsReport;
+           setExportMode('Compiler', 'error');
+}
 
         const anyOk = document.querySelectorAll('.file-block.status-ready').length > 0;
         applyBtn.disabled = !anyOk;
@@ -116,11 +116,13 @@ function renderResult(data, isCheck) {
         });
     }
 
-    if (rejectedFiles.length > 0) {
-        setExportMode('errors');
-    } else {
-        setExportMode('ledger');
-    }
+       if (rejectedFiles.length > 0 && successfulFiles.length > 0) {
+       setExportMode('Apply', 'mixed');
+   } else if (rejectedFiles.length > 0) {
+       setExportMode('Apply', 'error');
+   } else {
+       setExportMode('Ledger', 'success');
+   }
 
     if (successfulFiles.length > 0) {
         retestBtn.style.display = 'inline-block';
@@ -156,17 +158,23 @@ function renderPreview(data) {
             readyCount++;
         }
         
-                let statusClass = 'status-' + fileStatus.toLowerCase();
-        let chipText = fileStatus === 'READY' ? 'OK' : fileStatus;
-        let lineDeltaFmt = fileObj.net_lines > 0 ? ('+' + fileObj.net_lines) : fileObj.net_lines;
-        let isOverwrite = fileObj.patches && fileObj.patches.some(p => p.is_overwrite);
-        
-        html += '<details id="file-block-' + escapeHtml(fileObj.path) + '" class="file-block ' + statusClass + '">';
-        html += '<summary class="file-header">';
-        html += '<div style="display: flex; align-items: center;">';
-        html += '<strong>' + escapeHtml(fileObj.path) + '</strong>';
-        html += '<span class="net-lines">' + lineDeltaFmt + '</span>';
-        html += '</div>';
+                       let statusClass = 'status-' + fileStatus.toLowerCase();
+       let chipText = fileStatus === 'READY' ? 'OK' : fileStatus;
+       let lineDeltaFmt = fileObj.net_lines > 0 ? ('+' + fileObj.net_lines) : fileObj.net_lines;
+       let isOverwrite = fileObj.patches && fileObj.patches.some(p => p.is_overwrite);
+       
+       let fileTypeHtml = '';
+       if (fileObj.file_type) {
+           fileTypeHtml = '<span class="file-type-tag">' + escapeHtml(fileObj.file_icon) + ' ' + escapeHtml(fileObj.file_type) + '</span>';
+       }
+       
+      html += '<details id="file-block-' + escapeHtml(fileObj.path) + '" class="file-block ' + statusClass + '">';
+       html += '<summary class="file-header">';
+       html += '<div style="display: flex; align-items: center;">';
+       html += fileTypeHtml;
+       html += '<strong>' + escapeHtml(fileObj.path) + '</strong>';
+       html += '<span class="net-lines">' + lineDeltaFmt + '</span>';
+html += '</div>';
         html += '<div class="rhs-chips">';
         if (isOverwrite) {
             html += '<span class="decorator" style="font-size: 1.2em;">☢️</span>';
@@ -221,10 +229,10 @@ function renderPreview(data) {
     retestBtn.style.display = 'none';
 
     if (errorCount > 0) {
-        window.tracePayload = errorReport;
-        setExportMode('errors');
-    } else {
-        setExportMode('none');
-    }
+       window.tracePayload = errorReport;
+       setExportMode('Preview', 'error');
+} else {
+       setExportMode('none', 'none');
+}
 }
 `

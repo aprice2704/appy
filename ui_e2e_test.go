@@ -1,9 +1,10 @@
 // :: product: FDM/NS
 // :: majorVersion: 1
-// :: fileVersion: 6
+// :: fileVersion: 8
 // :: description: End-to-End browser tests for the Appy UI using chromedp.
 // :: filename: ui_e2e_test.go
 // :: serialization: go
+// :: latestChange: Obfuscated metadata syntax in TestE2E_UI_MetaUpdate to prevent patcheng collisions.
 
 package main
 
@@ -143,10 +144,10 @@ func TestE2E_UI_ArmorLogic(t *testing.T) {
 	// Helper to set textarea value and trigger input event
 	setInput := func(val string) chromedp.Action {
 		return chromedp.Evaluate(fmt.Sprintf(`
-			var el = document.getElementById('bundleInput');
-			el.value = %q;
-			el.dispatchEvent(new Event('input'));
-		`, val), nil)
+var el = document.getElementById('bundleInput');
+el.value = %q;
+el.dispatchEvent(new Event('input'));
+`, val), nil)
 	}
 
 	err := chromedp.Run(ctx,
@@ -190,7 +191,35 @@ func TestE2E_UI_ArmorLogic(t *testing.T) {
 	}
 	expectedUnarmored := "%%% filename: foo\n%%% replace\n%%% with\n%%% end"
 	if inputVal != expectedUnarmored {
-		t.Errorf("Unarmor logic failed to strip leading spaces. Expected:\n%s\nGot:\n%s", expectedUnarmored, inputVal)
+		t.Errorf("Unarmor logic failed to strip leading spaces.\nExpected:\n%s\nGot:\n%s", expectedUnarmored, inputVal)
+	}
+
+	// 4. Unarmor text preserves indentation for NDCL and code
+	err = chromedp.Run(ctx,
+		setInput("@@@ %%% replace\n@@@   - [ ] Item\n@@@     - [x] Subitem\n@@@ %%% end"),
+		chromedp.Evaluate(`document.getElementById('unarmorBtn').click()`, nil),
+		chromedp.Evaluate(`document.getElementById('bundleInput').value`, &inputVal),
+	)
+	if err != nil {
+		t.Fatalf("Chromedp run failed: %v", err)
+	}
+	expectedIndented := "%%% replace\n  - [ ] Item\n    - [x] Subitem\n%%% end"
+	if inputVal != expectedIndented {
+		t.Errorf("Unarmor logic failed to preserve indentation.\nExpected:\n%s\nGot:\n%s", expectedIndented, inputVal)
+	}
+
+	// 5. Unarmor text preserves tabs (crucial for Makefiles)
+	err = chromedp.Run(ctx,
+		setInput("@@@ %%% replace\n@@@\tbuild:\n@@@\t\tgo build .\n@@@ %%% end"),
+		chromedp.Evaluate(`document.getElementById('unarmorBtn').click()`, nil),
+		chromedp.Evaluate(`document.getElementById('bundleInput').value`, &inputVal),
+	)
+	if err != nil {
+		t.Fatalf("Chromedp run failed: %v", err)
+	}
+	expectedTabs := "%%% replace\n\tbuild:\n\t\tgo build .\n%%% end"
+	if inputVal != expectedTabs {
+		t.Errorf("Unarmor logic failed to preserve tabs.\nExpected:\n%q\nGot:\n%q", expectedTabs, inputVal)
 	}
 }
 
@@ -344,15 +373,17 @@ func TestE2E_UI_MetaUpdate(t *testing.T) {
 	ctx, cancelTimeout := context.WithTimeout(ctx, 15*time.Second)
 	defer cancelTimeout()
 
-	os.WriteFile(filepath.Join(tempDir, "meta.md"), []byte("// :: fileVersion: 1\n\nBody"), 0644)
+	// The file on disk is native markdown (no // comments)
+	os.WriteFile(filepath.Join(tempDir, "meta.md"), []byte(":: fileVersion: 1\n\nBody"), 0644)
 
-	bundle := strings.ReplaceAll(`
+	// The LLM hallucinated Go-style embedded comments into the bundle
+	bundle := strings.ReplaceAll(strings.ReplaceAll(`
 ### filename: meta.md
 ### meta_update
-:: fileVersion: 2
-:: addedKey: value
+// ++ fileVersion: 2
+// ++ addedKey: value
 ### end
-`, "###", patcheng.BundleDelim)
+`, "###", patcheng.BundleDelim), "++", "::")
 
 	err := chromedp.Run(ctx,
 		chromedp.Navigate(ts.URL),
@@ -374,7 +405,8 @@ el.dispatchEvent(new Event('input'));
 	content := string(contentBytes)
 
 	// Verify it processed as a Native update and stripped embedded slashes
-	if !strings.Contains(content, ":: fileVersion: 2") || !strings.Contains(content, ":: addedKey: value") {
+	if !strings.Contains(content, ":: fileVersion: 2") ||
+		!strings.Contains(content, ":: addedKey: value") {
 		t.Errorf("meta_update failed to apply correctly. Content:\n%s", content)
 	}
 	if strings.Contains(content, "// :: fileVersion") {
@@ -419,7 +451,7 @@ func Nuke() {}
 		chromedp.WaitVisible(`.file-block.status-applied`, chromedp.ByQuery),
 
 		// Check Button Matrix (t-mat-02)
-		chromedp.Evaluate(`document.getElementById('copyLedgerBtn').style.display`, &exportBtnDisplay),
+		chromedp.Evaluate(`document.getElementById('copyTraceBtn').style.display`, &exportBtnDisplay),
 	)
 	if err != nil {
 		t.Fatalf("E2E Nuclear test failed: %v", err)
@@ -591,14 +623,15 @@ func New() {}
 		chromedp.WaitVisible(`.file-block.status-applied`, chromedp.ByQuery),
 
 		// Wait for the ledger button to be unhidden by the UI state machine
-		chromedp.WaitVisible(`#copyLedgerBtn`, chromedp.ByID),
-		chromedp.Poll(`document.getElementById('copyLedgerBtn').style.display !== 'none'`, nil),
+		// Wait for the trace button to be unhidden by the UI state machine
+		chromedp.WaitVisible(`#copyTraceBtn`, chromedp.ByID),
+		chromedp.Poll(`document.getElementById('copyTraceBtn').style.display !== 'none'`, nil),
 
 		// Test t-edg-03: Copy button text changes to "Copied!"
-		chromedp.Evaluate(`document.getElementById('copyLedgerBtn').click()`, nil),
+		chromedp.Evaluate(`document.getElementById('copyTraceBtn').click()`, nil),
 		// Poll for the text change instead of reading immediately to prevent JS event loop races
-		chromedp.Poll(`document.getElementById('copyLedgerBtn').innerText === 'Copied!'`, nil),
-		chromedp.Text(`#copyLedgerBtn`, &btnText, chromedp.ByID),
+		chromedp.Poll(`document.getElementById('copyTraceBtn').innerText === 'Copied!'`, nil),
+		chromedp.Text(`#copyTraceBtn`, &btnText, chromedp.ByID),
 	)
 	if err != nil {
 		t.Fatalf("MicroInteractions setup phase failed: %v", err)

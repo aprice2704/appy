@@ -75,10 +75,11 @@ func TestRunCompilerPreFlight(t *testing.T) {
 -- main.go --
 // :: product: FDM/NS
 // :: majorVersion: 1
-// :: fileVersion: 28
-// :: description: v1.5.22 - API Contracts matched to UI Spec v1.5.22.
+// :: fileVersion: 30
+// :: description: v1.6.0    -- treesitter and many other updates
 // :: filename: main.go
 // :: serialization: go
+// :: latestChange: Bumped to 1.6.1.
 package main
 
 import (
@@ -95,6 +96,7 @@ import (
 
 	"github.com/aprice2704/fdm/code/patcheng"
 	"github.com/aprice2704/fdm/code/retest"
+	_ "github.com/aprice2704/fdm/code/treesitter"
 )
 
 func watchSelfForReload() {
@@ -120,7 +122,47 @@ func watchSelfForReload() {
 	}
 }
 
-const AppVersion = "v1.5.23"
+const AppVersion = "v1.6.2"
+
+func getFileMeta(prof *patcheng.LanguageProfile) (string, string) {
+	if prof == nil {
+		return "Text", "📄"
+	}
+	switch prof.ID {
+	case "golang":
+		return "Go", "🐹"
+	case "javascript":
+		return "JS", "🟨"
+	case "typescript":
+		return "TS", "🟦"
+	case "python":
+		return "Python", "🐍"
+	case "markdown":
+		return "Markdown", "📝"
+	case "neuroscript":
+		return "NeuroScript", "🧠"
+	case "html":
+		return "HTML", "🌐"
+	case "css":
+		return "CSS", "🎨"
+	case "json":
+		return "JSON", "📦"
+	case "yaml":
+		return "YAML", "⚙️"
+	case "shell":
+		return "Shell", "🐚"
+	case "java":
+		return "Java", "☕"
+	case "cpp":
+		return "C++", "⚙️"
+	case "astro":
+		return "Astro", "🚀"
+	case "antlr":
+		return "ANTLR", "🛠️"
+	default:
+		return prof.ID, "📄"
+	}
+}
 
 func withRecoveryAndCORS(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -194,6 +236,7 @@ func newServer(rootDir string) *http.ServeMux {
 			contentBytes, _ := os.ReadFile(absPath)
 			content := string(contentBytes)
 			prof := patcheng.DefaultRegistry.GetByExtension(filepath.Ext(rawFilename))
+			fType, fIcon := getFileMeta(prof)
 
 			var filePreviews []PreviewPatch
 			fileStatus := "READY"
@@ -253,6 +296,8 @@ func newServer(rootDir string) *http.ServeMux {
 				Path:     rawFilename,
 				Status:   fileStatus,
 				NetLines: fileNetLines,
+				FileType: fType,
+				FileIcon: fIcon,
 				Patches:  filePreviews,
 			})
 		}
@@ -299,6 +344,7 @@ func newServer(rootDir string) *http.ServeMux {
 			absPath := filepath.Join(absRootDir, rawFilename)
 			contentBytes, _ := os.ReadFile(absPath)
 			prof := patcheng.DefaultRegistry.GetByExtension(filepath.Ext(rawFilename))
+			fType, fIcon := getFileMeta(prof)
 
 			fileNetLines := 0
 			for _, p := range patches {
@@ -342,6 +388,8 @@ func newServer(rootDir string) *http.ServeMux {
 					Path:        rawFilename,
 					Applied:     false,
 					NetLines:    fileNetLines,
+					FileType:    fType,
+					FileIcon:    fIcon,
 					Error:       applyErr.Error(),
 					FailedPatch: failedBlock,
 				})
@@ -364,6 +412,8 @@ func newServer(rootDir string) *http.ServeMux {
 				Path:     rawFilename,
 				Applied:  true,
 				NetLines: fileNetLines,
+				FileType: fType,
+				FileIcon: fIcon,
 			})
 		}
 
@@ -1471,6 +1521,8 @@ type PreviewFile struct {
 	Path     string         `json:"path"`
 	Status   string         `json:"status"` // READY, ERROR, IGNORED
 	NetLines int            `json:"net_lines"`
+	FileType string         `json:"file_type,omitempty"`
+	FileIcon string         `json:"file_icon,omitempty"`
 	Patches  []PreviewPatch `json:"patches"`
 }
 
@@ -1487,6 +1539,8 @@ type ApplyFile struct {
 	Path        string       `json:"path"`
 	Applied     bool         `json:"applied"`
 	NetLines    int          `json:"net_lines"`
+	FileType    string       `json:"file_type,omitempty"`
+	FileIcon    string       `json:"file_icon,omitempty"`
 	HashBefore  string       `json:"hash_before,omitempty"`
 	HashAfter   string       `json:"hash_after,omitempty"`
 	LedgerEntry string       `json:"ledger_entry,omitempty"`
@@ -1618,17 +1672,6 @@ func TestSaveLedger_WriteError(t *testing.T) {
 	defer os.Remove(file.Name())
 	SaveLedger(file.Name()) // Should log warning but not crash
 }
--- ui.go --
-// :: product: FDM/NS
-// :: majorVersion: 1
-// :: fileVersion: 13
-// :: description: Assembles HTML/JS/CSS constants for Appy.
-// :: filename: ui.go
-// :: serialization: go
-
-package main
-
-const indexHTML = htmlTop + cssStyles + htmlMiddle + jsCore + jsRender + jsRetest + "\n// Initial state check\nsyncUIState();\n" + htmlBottom
 -- ui_css.go --
 // :: product: FDM/NS
 // :: majorVersion: 1
@@ -1654,7 +1697,9 @@ const cssStyles = `
         .action-group { justify-content: center; flex: 1; }
         .export-group { justify-content: flex-end; flex: 1; position: relative; }
         
-        button { padding: 10px 20px; border: none; border-radius: 4px; font-size: 14px; cursor: pointer; font-weight: 600; transition: all 0.2s ease; letter-spacing: 0.3px; display: flex; align-items: center; gap: 6px; }
+               button { padding: 0 16px; height: 38px; min-width: 145px; justify-content: center;
+border: none; border-radius: 4px; font-size: 14px; cursor: pointer; font-weight: 600; transition: all 0.2s ease; letter-spacing: 0.3px; display: flex; align-items: center;
+gap: 6px; white-space: nowrap; box-sizing: border-box; }
         button:hover { filter: brightness(1.15); transform: translateY(-1px); }
         button:active { transform: translateY(0); }
         button:disabled { opacity: 0.4; cursor: not-allowed; transform: none; filter: none; }
@@ -1668,7 +1713,13 @@ const cssStyles = `
         #fixPathsBtn { background: #0891b2; color: white; border: 1px solid #06b6d4; }
         #copyLedgerBtn { background: #475569; color: white; border: 1px solid #64748b; }
         #retestBtn { background: #0284c7; color: white; border: 1px solid #06b6d4; }
-        #cancelRetestBtn { background: #dc2626; color: white; border: 1px solid #ef4444; }
+               #cancelRetestBtn { background: #dc2626; color: white;
+border: 1px solid #ef4444; }
+       #autoBtn { background: #0f766e; color: white; border: 1px solid #06b6d4; }
+       
+       #copyTraceBtn.trace-blue { background: #0284c7; color: white; border: 1px solid #0ea5e9; }
+       #copyTraceBtn.trace-purple { background: #7c3aed; color: white; border: 1px solid #8b5cf6; }
+       #copyTraceBtn.trace-red { background: #dc2626; color: white; border: 1px solid #ef4444; }
 
         .output { flex: 1; background: #0f1420; border: 1px solid #2d3748; padding: 20px; overflow-y: auto; border-radius: 6px; font-family: 'Consolas', 'JetBrains Mono', monospace; font-size: 13.5px; line-height: 1.6; box-shadow: inset 0 2px 4px rgba(0,0,0,0.1); }
         
@@ -1701,7 +1752,10 @@ const cssStyles = `
         .status-ignored { background: rgba(245, 158, 11, 0.2); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.3); }
         .status-applied { background: rgba(100, 116, 139, 0.2); color: #94a3b8; border: 1px solid rgba(100, 116, 139, 0.3); }
         
-        .net-lines { font-family: 'Consolas', monospace; font-size: 11px; color: #94a3b8; margin-left: 12px; padding: 2px 6px; background: rgba(0,0,0,0.25); border-radius: 4px; border: 1px solid rgba(255,255,255,0.05); }
+               .net-lines { font-family: 'Consolas', monospace;
+font-size: 11px; color: #94a3b8; margin-left: 12px; padding: 2px 6px; background: rgba(0,0,0,0.25); border-radius: 4px; border: 1px solid rgba(255,255,255,0.05);
+}
+       .file-type-tag { font-family: -apple-system, BlinkMacSystemFont, sans-serif; font-size: 11px; padding: 2px 6px; background: rgba(0,0,0,0.25); border-radius: 4px; margin-right: 10px; display: inline-flex; align-items: center; gap: 4px; color: #cbd5e1; border: 1px solid rgba(255,255,255,0.05); letter-spacing: 0.3px;}
         .rhs-chips { display: flex; align-items: center; gap: 8px; }
         
         .error-msg { color: #f87171; margin-top: 8px; font-size: 13px; font-weight: 500; }
@@ -1862,10 +1916,10 @@ func TestE2E_UI_ArmorLogic(t *testing.T) {
 	// Helper to set textarea value and trigger input event
 	setInput := func(val string) chromedp.Action {
 		return chromedp.Evaluate(fmt.Sprintf(`
-			var el = document.getElementById('bundleInput');
-			el.value = %q;
-			el.dispatchEvent(new Event('input'));
-		`, val), nil)
+var el = document.getElementById('bundleInput');
+el.value = %q;
+el.dispatchEvent(new Event('input'));
+`, val), nil)
 	}
 
 	err := chromedp.Run(ctx,
@@ -1895,6 +1949,35 @@ func TestE2E_UI_ArmorLogic(t *testing.T) {
 	}
 	if display != "inline-block" {
 		t.Errorf("Expected unarmor button to be shown for strictly armored text, got %s", display)
+	}
+
+	// 3. Unarmor text handles LLM artifact leading spaces correctly
+	var inputVal string
+	err = chromedp.Run(ctx,
+		setInput("@@@ %%% filename: foo\n@@@ %%% replace\n@@@ %%% with\n@@@ %%% end"),
+		chromedp.Evaluate(`document.getElementById('unarmorBtn').click()`, nil),
+		chromedp.Evaluate(`document.getElementById('bundleInput').value`, &inputVal),
+	)
+	if err != nil {
+		t.Fatalf("Chromedp run failed: %v", err)
+	}
+	expectedUnarmored := "%%% filename: foo\n%%% replace\n%%% with\n%%% end"
+	if inputVal != expectedUnarmored {
+		t.Errorf("Unarmor logic failed to strip leading spaces.\nExpected:\n%s\nGot:\n%s", expectedUnarmored, inputVal)
+	}
+
+	// 4. Unarmor text preserves indentation for NDCL and code
+	err = chromedp.Run(ctx,
+		setInput("@@@ %%% replace\n@@@   - [ ] Item\n@@@     - [x] Subitem\n@@@ %%% end"),
+		chromedp.Evaluate(`document.getElementById('unarmorBtn').click()`, nil),
+		chromedp.Evaluate(`document.getElementById('bundleInput').value`, &inputVal),
+	)
+	if err != nil {
+		t.Fatalf("Chromedp run failed: %v", err)
+	}
+	expectedIndented := "%%% replace\n  - [ ] Item\n    - [x] Subitem\n%%% end"
+	if inputVal != expectedIndented {
+		t.Errorf("Unarmor logic failed to preserve indentation.\nExpected:\n%s\nGot:\n%s", expectedIndented, inputVal)
 	}
 }
 
@@ -2040,6 +2123,54 @@ func New() {}
 	}
 }
 
+func TestE2E_UI_MetaUpdate(t *testing.T) {
+	ts, ctx, cancel, tempDir := setupTestServer(t)
+	defer ts.Close()
+	defer cancel()
+
+	ctx, cancelTimeout := context.WithTimeout(ctx, 15*time.Second)
+	defer cancelTimeout()
+
+	// The file on disk is native markdown (no // comments)
+	os.WriteFile(filepath.Join(tempDir, "meta.md"), []byte(":: fileVersion: 1\n\nBody"), 0644)
+
+	// The LLM hallucinated Go-style embedded comments into the bundle
+	bundle := strings.ReplaceAll(`
+### filename: meta.md
+### meta_update
+// :: fileVersion: 2
+// :: addedKey: value
+### end
+`, "###", patcheng.BundleDelim)
+
+	err := chromedp.Run(ctx,
+		chromedp.Navigate(ts.URL),
+		chromedp.WaitVisible(`#bundleInput`, chromedp.ByQuery),
+		chromedp.Evaluate(fmt.Sprintf(`
+var el = document.getElementById('bundleInput');
+el.value = %q;
+el.dispatchEvent(new Event('input'));
+`, bundle), nil),
+		chromedp.WaitVisible(`.file-block.status-ready`, chromedp.ByQuery),
+		chromedp.Evaluate(`document.getElementById('applyBtn').click()`, nil),
+		chromedp.WaitVisible(`.file-block.status-applied`, chromedp.ByQuery),
+	)
+	if err != nil {
+		t.Fatalf("E2E MetaUpdate failed: %v", err)
+	}
+
+	contentBytes, _ := os.ReadFile(filepath.Join(tempDir, "meta.md"))
+	content := string(contentBytes)
+
+	// Verify it processed as a Native update and stripped embedded slashes
+	if !strings.Contains(content, ":: fileVersion: 2") || !strings.Contains(content, ":: addedKey: value") {
+		t.Errorf("meta_update failed to apply correctly. Content:\n%s", content)
+	}
+	if strings.Contains(content, "// :: fileVersion") {
+		t.Errorf("meta_update failed to strip embedded comments from native markdown metadata. Content:\n%s", content)
+	}
+}
+
 func TestE2E_NuclearOverwriteAndMatrix(t *testing.T) {
 	ts, ctx, cancel, _ := setupTestServer(t)
 	defer ts.Close()
@@ -2077,7 +2208,7 @@ func Nuke() {}
 		chromedp.WaitVisible(`.file-block.status-applied`, chromedp.ByQuery),
 
 		// Check Button Matrix (t-mat-02)
-		chromedp.Evaluate(`document.getElementById('copyLedgerBtn').style.display`, &exportBtnDisplay),
+		chromedp.Evaluate(`document.getElementById('copyTraceBtn').style.display`, &exportBtnDisplay),
 	)
 	if err != nil {
 		t.Fatalf("E2E Nuclear test failed: %v", err)
@@ -2249,14 +2380,15 @@ func New() {}
 		chromedp.WaitVisible(`.file-block.status-applied`, chromedp.ByQuery),
 
 		// Wait for the ledger button to be unhidden by the UI state machine
-		chromedp.WaitVisible(`#copyLedgerBtn`, chromedp.ByID),
-		chromedp.Poll(`document.getElementById('copyLedgerBtn').style.display !== 'none'`, nil),
+		// Wait for the trace button to be unhidden by the UI state machine
+		chromedp.WaitVisible(`#copyTraceBtn`, chromedp.ByID),
+		chromedp.Poll(`document.getElementById('copyTraceBtn').style.display !== 'none'`, nil),
 
 		// Test t-edg-03: Copy button text changes to "Copied!"
-		chromedp.Evaluate(`document.getElementById('copyLedgerBtn').click()`, nil),
+		chromedp.Evaluate(`document.getElementById('copyTraceBtn').click()`, nil),
 		// Poll for the text change instead of reading immediately to prevent JS event loop races
-		chromedp.Poll(`document.getElementById('copyLedgerBtn').innerText === 'Copied!'`, nil),
-		chromedp.Text(`#copyLedgerBtn`, &btnText, chromedp.ByID),
+		chromedp.Poll(`document.getElementById('copyTraceBtn').innerText === 'Copied!'`, nil),
+		chromedp.Text(`#copyTraceBtn`, &btnText, chromedp.ByID),
 	)
 	if err != nil {
 		t.Fatalf("MicroInteractions setup phase failed: %v", err)
@@ -2303,10 +2435,21 @@ func New() {}
 		t.Errorf("Expected retest button to be enabled after execution")
 	}
 }
+-- ui.go --
+// :: product: FDM/NS
+// :: majorVersion: 1
+// :: fileVersion: 13
+// :: description: Assembles HTML/JS/CSS constants for Appy.
+// :: filename: ui.go
+// :: serialization: go
+
+package main
+
+const indexHTML = htmlTop + cssStyles + htmlMiddle + jsCore + jsRender + jsRetest + "\n// Initial state check\nsyncUIState();\n" + htmlBottom
 -- ui_html.go --
 // :: product: FDM/NS
 // :: majorVersion: 1
-// :: fileVersion: 3
+// :: fileVersion: 4
 // :: description: Appy v1.5.22 UI Layout matching anti-shift spec.
 // :: filename: ui_html.go
 // :: serialization: go
@@ -2316,52 +2459,54 @@ package main
 const htmlTop = `<!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-        <link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">🚀</text></svg>'>
-    <title>{TITLE} | Appy</title>
-    <style>`
+   <meta charset="UTF-8">
+       <link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">🚀</text></svg>'>
+   <title>{TITLE} | Appy</title>
+   <style>`
 
 const htmlMiddle = `</style>
 </head>
 <body>
-    <div class="container">
-        <div class="header-zone">
-            <h2 style="margin: 0; display: flex; align-items: baseline; gap: 10px;">
-                {TITLE} | Appy 
-                <span style="font-size: 0.6em; color: #888; font-weight: normal;">{VERSION}</span>
-            </h2>
-            <div style="font-size: 13px; color: #64748b; margin-top: 5px; font-family: monospace;">
-                Sandboxed to: {ROOT_DIR}
-            </div>
-        </div>
+   <div class="container">
+       <div class="header-zone">
+           <h2 style="margin: 0; display: flex; align-items: baseline; gap: 10px;">
+               {TITLE} | Appy 
+               <span style="font-size: 0.6em; color: #888; font-weight: normal;">{VERSION}</span>
+           </h2>
+           <div style="font-size: 13px; color: #64748b; margin-top: 5px; font-family: monospace;">
+               Sandboxed to: {ROOT_DIR}
+           </div>
+       </div>
+      
         <textarea id="bundleInput" placeholder="Paste the raw LLM output here (including the markdown code blocks and %%% syntax)..." oninput="debouncePreview()"></textarea>
-        
-        <div class="controls">
-            <div class="control-group prep-group">
-                <button id="clearPasteBtn" onclick="clearAndPaste()">📋 Clear & Paste</button>
-                <button id="unarmorBtn" onclick="unarmorText()">🛡️ Remove @@@</button>
-                <button id="fixPathsBtn" onclick="fixFilePaths()" style="display: none;">🔧 Fix File Paths</button>
-            </div>
-            
-            <div class="control-group action-group">
-                <button id="checkBtn" onclick="checkSyntax()" disabled>🧪 Check Compiler</button>
-                <button id="applyBtn" onclick="applyBundle()" disabled>🚀 Apply to Disk</button>
-                <button id="retestBtn" onclick="runRetest()" style="display: none;">🔄 Retest Impacted</button>
-                <button id="cancelRetestBtn" onclick="cancelRetest()" style="display: none;">⏹️ Stop</button>
-            </div>
-            
-            <div class="control-group export-group">
-                <button id="copyErrorsBtn" onclick="copyTraceReport('errors')" style="display: none; background: #dc2626; color: white; border: 1px solid #ef4444;">📋 Copy Errors</button>
-                <button id="copyLedgerBtn" onclick="copyTraceReport('ledger')" style="display: none;">✅ Copy Ledger</button>
-                <button id="copyTestReportBtn" onclick="copyTraceReport('test')" style="display: none; background: #0284c7; color: white; border: 1px solid #0ea5e9;">📋 Copy Test Report</button>
-            </div>
-        </div>
-        
-        <div id="output" class="output">
-            <em>Waiting for input...</em>
-        </div>
-    </div>
-    <script>`
+       
+       <div class="controls">
+           <div class="control-group prep-group">
+               <button id="autoBtn" onclick="runAutoPilot()">🤖 Auto-Pilot</button>
+               <button id="clearPasteBtn" onclick="clearAndPaste()">📋 Clear & Paste</button>
+               <button id="unarmorBtn" onclick="unarmorText()">🛡️ Remove @@@</button>
+          
+     <button id="fixPathsBtn" onclick="fixFilePaths()" style="display: none;">🔧 Fix File Paths</button>
+           </div>
+           
+           <div class="control-group action-group">
+               <button id="checkBtn" onclick="checkSyntax()" disabled>🧪 Check Compiler</button>
+               <button id="applyBtn" onclick="applyBundle()" disabled>🚀 Apply to Disk</button>
+      
+               <button id="retestBtn" onclick="runRetest()" style="display: none;">🔄 Retest Impacted</button>
+               <button id="cancelRetestBtn" onclick="cancelRetest()" style="display: none;">⏹️ Stop</button>
+           </div>
+           
+           <div class="control-group export-group">
+               <button id="copyTraceBtn" onclick="copyTraceReport()" style="display: none;">📋 Copy Trace</button>
+           </div>
+       </div>
+       
+       <div id="output" class="output">
+           <em>Waiting for input...</em>
+       </div>
+   </div>
+   <script>`
 
 const htmlBottom = `</script>
 </body>
@@ -2369,7 +2514,7 @@ const htmlBottom = `</script>
 -- ui_script.go --
 // :: product: FDM/NS
 // :: majorVersion: 1
-// :: fileVersion: 10
+// :: fileVersion: 11
 // :: description: Core JS logic and state management for Appy UI.
 // :: filename: ui_script.go
 // :: serialization: go
@@ -2384,12 +2529,11 @@ const inputEl = document.getElementById('bundleInput');
 const outputEl = document.getElementById('output');
 const applyBtn = document.getElementById('applyBtn');
 const checkBtn = document.getElementById('checkBtn');
+const autoBtn = document.getElementById('autoBtn');
 const clearPasteBtn = document.getElementById('clearPasteBtn');
 const unarmorBtn = document.getElementById('unarmorBtn');
 const fixPathsBtn = document.getElementById('fixPathsBtn');
-const copyLedgerBtn = document.getElementById('copyLedgerBtn');
-const copyErrorsBtn = document.getElementById('copyErrorsBtn');
-const copyTestReportBtn = document.getElementById('copyTestReportBtn');
+const copyTraceBtn = document.getElementById('copyTraceBtn');
 const retestBtn = document.getElementById('retestBtn');
 let previewTimeout;
 window.tracePayload = ""; // Unified clipboard payload for current state
@@ -2411,17 +2555,16 @@ function syncUIState() {
     const hasContent = inputEl.value.trim().length > 0;
     checkBtn.disabled = !hasContent;
     
-    const lines = inputEl.value.split('\n');
-    let hasArmor = false;
-    if (lines.length > 0) {
-        hasArmor = lines.every(line => {
-            const trimmed = line.trim();
-            return trimmed === '' || trimmed.startsWith('@@@');
-        });
-        if (hasArmor) {
-            hasArmor = lines.some(line => line.trim().startsWith('@@@'));
-        }
-    }
+       const lines = inputEl.value.split('\n');
+   let hasArmor = false;
+   if (lines.length > 0) {
+       // Ignore a single trailing empty line caused by a final newline character
+             const checkLines = lines[lines.length - 1] === '' ? lines.slice(0, -1) : lines;
+      const nonEmpties = checkLines.filter(line => line.trim() !== '');
+      if (nonEmpties.length > 0) {
+          hasArmor = nonEmpties.every(line => line.startsWith('@@@'));
+      }
+   }
 
     if (hasArmor) {
         unarmorBtn.classList.add('show');
@@ -2433,9 +2576,11 @@ function syncUIState() {
 }
 
 function unarmorText() {
-    inputEl.value = inputEl.value.replace(/^@@@/gm, '');
-    syncUIState();
-    sendRequest('/api/preview');
+// Consume exactly ONE optional standard/non-breaking space left behind by LLMs
+// to preserve the structural indentation necessary for checklists and code.
+inputEl.value = inputEl.value.replace(/^@@@[ \t\u00A0]?/gm, '');
+syncUIState();
+sendRequest('/api/preview');
 }
 
 function debouncePreview() {
@@ -2454,10 +2599,24 @@ function debouncePreview() {
     }, 500);
 }
 
-function setExportMode(mode) {
-    copyErrorsBtn.style.display = mode === 'errors' ? 'inline-block' : 'none';
-    copyLedgerBtn.style.display = mode === 'ledger' ? 'inline-block' : 'none';
-    copyTestReportBtn.style.display = mode === 'test' ? 'inline-block' : 'none';
+function setExportMode(label, severity) {
+   if (label === 'none') {
+       copyTraceBtn.style.display = 'none';
+       return;
+   }
+   copyTraceBtn.style.display = 'inline-block';
+   copyTraceBtn.className = '';
+   
+   if (severity === 'success') {
+       copyTraceBtn.classList.add('trace-blue');
+       copyTraceBtn.innerText = "✅ " + label + " Log";
+   } else if (severity === 'mixed') {
+       copyTraceBtn.classList.add('trace-purple');
+       copyTraceBtn.innerText = "⚠️ " + label + " Log";
+   } else if (severity === 'error') {
+       copyTraceBtn.classList.add('trace-red');
+       copyTraceBtn.innerText = "❌ " + label + " Errors";
+   }
 }
 
 async function checkSyntax() {
@@ -2480,7 +2639,7 @@ async function sendRequest(endpoint, skipCompiler = false, checkOnly = false) {
         });
         const data = await res.json();
         
-                if (data.error) {
+        if (data.error) {
             outputEl.innerHTML = "<div class='error' style='margin-top:15px; padding: 15px; border: 1px solid #f44336; border-radius: 4px; background: rgba(244,67,54,0.1);'><strong>Server Error:</strong> " + escapeHtml(data.error) + "</div>";
             window.tracePayload = "**Appy Server Error**\n\n" + data.error;
             setExportMode('errors');
@@ -2494,7 +2653,7 @@ async function sendRequest(endpoint, skipCompiler = false, checkOnly = false) {
         } else {
             renderPreview(data);
         }
-        } catch (err) {
+    } catch (err) {
         outputEl.innerHTML = "<div class='error'>Error: " + err.message + "</div>";
         window.tracePayload = "**Appy Network/Client Error**\n\n" + err.message;
         setExportMode('errors');
@@ -2513,17 +2672,13 @@ function fixFilePaths() {
     debouncePreview();
 }
 
-async function copyTraceReport(mode) {
-    try {
-        await navigator.clipboard.writeText(window.tracePayload || "No data available.");
-        let btn = copyLedgerBtn;
-        if (mode === 'errors') btn = copyErrorsBtn;
-        if (mode === 'test') btn = copyTestReportBtn;
-        
-        const originalText = btn.innerText;
-        btn.innerText = "Copied!";
-        setTimeout(() => btn.innerText = originalText, 2000);
-    } catch (err) {
+async function copyTraceReport() {
+   try {
+       await navigator.clipboard.writeText(window.tracePayload || "No data available.");
+       const originalText = copyTraceBtn.innerText;
+       copyTraceBtn.innerText = "Copied!";
+       setTimeout(() => copyTraceBtn.innerText = originalText, 2000);
+} catch (err) {
         console.error("Failed to copy:", err);
     }
 }
@@ -2561,9 +2716,61 @@ function addDecorator(el, emoji) {
     }
 }
 
+async function runAutoPilot() {
+   autoBtn.disabled = true;
+   autoBtn.innerText = "🤖 Auto-Piloting...";
+   
+   try {
+       // 1. Paste
+       inputEl.value = await navigator.clipboard.readText();
+       syncUIState();
+       
+       // 2. Unarmor
+       if (unarmorBtn.classList.contains('show')) {
+           inputEl.value = inputEl.value.replace(/^@@@[ \t\u00A0]?/gm, '');
+           syncUIState();
+       }
+       
+       if (!inputEl.value.trim()) throw new Error("Clipboard empty");
+       
+       // 3. Preview
+       const previewRes = await fetch('/api/preview', {
+           method: 'POST', headers: { 'Content-Type': 'application/json' },
+           body: JSON.stringify({ bundle: inputEl.value, skip_compiler: false, check_only: false })
+       });
+       const previewData = await previewRes.json();
+       renderPreview(previewData);
+       
+       // Halt if preview found errors or had no ready files
+       if (applyBtn.disabled) throw new Error("Auto-Pilot halted: Preview yielded errors or no ready files.");
+       
+       // 4. Apply
+       const applyRes = await fetch('/api/apply', {
+           method: 'POST', headers: { 'Content-Type': 'application/json' },
+           body: JSON.stringify({ bundle: inputEl.value, skip_compiler: false, check_only: false })
+       });
+       const applyData = await applyRes.json();
+       renderResult(applyData, false);
+       
+       // Halt if apply failed on any file
+       if (!window.committedFiles || window.committedFiles.length === 0 || applyData.files.some(f => !f.applied)) {
+           throw new Error("Auto-Pilot halted: Errors occurred during disk application.");
+       }
+       
+       // 5. Retest
+       await retestImpacted();
+       
+   } catch (err) {
+       console.warn(err);
+   } finally {
+       autoBtn.disabled = false;
+       autoBtn.innerText = "🤖 Auto-Pilot";
+   }
+}
+
 function escapeHtml(unsafe) {
-    if (!unsafe) return "";
-    return unsafe.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+   if (!unsafe) return "";
+return unsafe.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 `
 -- ui_script_render.go --
@@ -2607,9 +2814,9 @@ function renderResult(data, isCheck) {
         });
         
         if (hasFails) {
-            window.tracePayload = compilerErrorsReport;
-            setExportMode('errors');
-        }
+           window.tracePayload = compilerErrorsReport;
+           setExportMode('Compiler', 'error');
+}
 
         const anyOk = document.querySelectorAll('.file-block.status-ready').length > 0;
         applyBtn.disabled = !anyOk;
@@ -2685,11 +2892,13 @@ function renderResult(data, isCheck) {
         });
     }
 
-    if (rejectedFiles.length > 0) {
-        setExportMode('errors');
-    } else {
-        setExportMode('ledger');
-    }
+       if (rejectedFiles.length > 0 && successfulFiles.length > 0) {
+       setExportMode('Apply', 'mixed');
+   } else if (rejectedFiles.length > 0) {
+       setExportMode('Apply', 'error');
+   } else {
+       setExportMode('Ledger', 'success');
+   }
 
     if (successfulFiles.length > 0) {
         retestBtn.style.display = 'inline-block';
@@ -2725,17 +2934,23 @@ function renderPreview(data) {
             readyCount++;
         }
         
-                let statusClass = 'status-' + fileStatus.toLowerCase();
-        let chipText = fileStatus === 'READY' ? 'OK' : fileStatus;
-        let lineDeltaFmt = fileObj.net_lines > 0 ? ('+' + fileObj.net_lines) : fileObj.net_lines;
-        let isOverwrite = fileObj.patches && fileObj.patches.some(p => p.is_overwrite);
-        
-        html += '<details id="file-block-' + escapeHtml(fileObj.path) + '" class="file-block ' + statusClass + '">';
-        html += '<summary class="file-header">';
-        html += '<div style="display: flex; align-items: center;">';
-        html += '<strong>' + escapeHtml(fileObj.path) + '</strong>';
-        html += '<span class="net-lines">' + lineDeltaFmt + '</span>';
-        html += '</div>';
+                       let statusClass = 'status-' + fileStatus.toLowerCase();
+       let chipText = fileStatus === 'READY' ? 'OK' : fileStatus;
+       let lineDeltaFmt = fileObj.net_lines > 0 ? ('+' + fileObj.net_lines) : fileObj.net_lines;
+       let isOverwrite = fileObj.patches && fileObj.patches.some(p => p.is_overwrite);
+       
+       let fileTypeHtml = '';
+       if (fileObj.file_type) {
+           fileTypeHtml = '<span class="file-type-tag">' + escapeHtml(fileObj.file_icon) + ' ' + escapeHtml(fileObj.file_type) + '</span>';
+       }
+       
+      html += '<details id="file-block-' + escapeHtml(fileObj.path) + '" class="file-block ' + statusClass + '">';
+       html += '<summary class="file-header">';
+       html += '<div style="display: flex; align-items: center;">';
+       html += fileTypeHtml;
+       html += '<strong>' + escapeHtml(fileObj.path) + '</strong>';
+       html += '<span class="net-lines">' + lineDeltaFmt + '</span>';
+html += '</div>';
         html += '<div class="rhs-chips">';
         if (isOverwrite) {
             html += '<span class="decorator" style="font-size: 1.2em;">☢️</span>';
@@ -2790,11 +3005,11 @@ function renderPreview(data) {
     retestBtn.style.display = 'none';
 
     if (errorCount > 0) {
-        window.tracePayload = errorReport;
-        setExportMode('errors');
-    } else {
-        setExportMode('none');
-    }
+       window.tracePayload = errorReport;
+       setExportMode('Preview', 'error');
+} else {
+       setExportMode('none', 'none');
+}
 }
 `
 -- ui_script_retest.go --
@@ -2867,10 +3082,13 @@ async function runRetest() {
             });
         }
 
-        window.tracePayload = reportMd;
-        setExportMode('test');
-        
-    } catch (err) {
+               window.tracePayload = reportMd;
+       if (hasFails) {
+           setExportMode('Test', 'error');
+       } else {
+           setExportMode('Test', 'success');
+       }
+} catch (err) {
         const loader = document.getElementById('testLoading');
         if (loader) loader.style.display = 'none';
         outputEl.innerHTML += "<div class='error' style='margin-top:15px;'>Test request failed: " + err.message + "</div>";
@@ -3091,12 +3309,85 @@ func sendError(w http.ResponseWriter, msg string, code int) {
 	w.WriteHeader(code)
 	json.NewEncoder(w).Encode(withND("appy/error", "HTTP error response from appy server", map[string]any{"error": msg}))
 }
--- testdata/fixtures/sample.go --
-package main
+-- backend_spec.md --
+# Appy Backend / PatchEng Functional Specification
 
-func Old() {
-	println("This is the old function.")
-}
+> **Status**: ACTIVE
+> **Applies To**: `patcheng` library and Appy backend routers.
+
+## 1. Core Philosophy: The Patch Airlock
+The patching engine (`patcheng`) enforces a strict airlock between LLM output and the filesystem. It operates on a **File-Atomic** basis: patches are gathered into memory, validated against target files, and optionally run through a compiler pre-flight. If *any* patch block for a file fails, the entire file is rejected, preventing partial/corrupt application.
+
+## 2. Patch Directives & Format
+The backend consumes bundles separated by the `%%%` directive. 
+
+### 2.1 The Directives
+* `%%% filename: <path>`: Initiates a patch sequence for a specific file. Must be the first directive for a file.
+* `%%% replace`, `%%% replace_symbol <name>`, `%%% replace_block <cond>`, `%%% replace_element <selector>`, `%%% replace_json_path <path>`: Opens a search or targeting block.
+* `%%% with`: Closes the search block and opens the replacement block.
+* `%%% overwrite`: Replaces the entire file. Must be the only directive for that file.
+* `%%% ndcl_update`: Opens a state-mutation block for `.ndcl` checklists.
+* `%%% meta_update`: Opens a state-mutation block for NeuroScript/SDI metadata.
+* `%%% end`: Closes the current operation.
+
+### 2.2 Whitespace Tolerance
+The bundle parser is designed to be forgiving of LLM hallucination artifacts. It will automatically tolerate and trim leading standard spaces, tabs, and non-breaking spaces (`\u00A0`) appearing immediately before a `%%%` directive.
+
+---
+
+## 3. Patching Strategies
+
+### 3.1 `fuzzy_patch_agnostic` (The Workhorse)
+**Targeting:** Text blocks.
+**Mechanism:** Extracts runes from the search block and the baseline file, completely ignoring all whitespace, tabs, and line breaks.
+**Blind Spot (Comments):** For specific languages (like Go), this strategy *also* strips `//` and `/* */` comments from the comparison buffer. This prevents patches from failing if documentation has drifted, but it means **you cannot use this strategy to target or replace comments.**
+**Elision:** Supports `...` on an isolated line within the search block to skip large chunks of unchanged code.
+
+### 3.2 `replace_symbol` (AST Aware)
+**Targeting:** Functions, Methods, Classes, Structs, Interfaces, Vars, and Consts. (Supports Go, JS, TS, Python, Java, C++).
+**Mechanism:** Uses `go/ast` (for Go) or the `gotreesitter` polyglot engine (for others) to find the exact byte boundaries of a symbol and replaces its entirety. For receiver methods, the format is `Receiver.MethodName` (the parser is forgiving of missing `*` pointers).
+
+### 3.3 `replace_block` (AST Aware)
+**Targeting:** Control flow blocks (`if`, `for`, `switch`, `while`).
+**Mechanism:** Uses `go/ast` or `gotreesitter` to find a control flow block matching a specific condition string.
+
+### 3.4 `replace_element` (DOM Aware)
+**Targeting:** HTML / Astro elements.
+**Mechanism:** Uses `golang.org/x/net/html` Tokenizer to find byte boundaries of elements by `#id`, `.class`, or `tag`.
+
+### 3.5 `replace_json_path`
+**Targeting:** JSON keys.
+**Mechanism:** Uses `tidwall/sjson` to surgically mutate or delete a specific key using dot-notation, preserving all surrounding formatting.
+
+### 3.6 `match_line`
+**Targeting:** Exact line matches.
+**Mechanism:** A hybrid of fuzzy patching that expands the matched boundary to the nearest newline `\n` characters. Essential for replacing specific lines in Markdown or configuration files where surrounding context is sparse.
+
+---
+
+## 4. Structural Updaters
+
+### 4.1 `ndcl_update`
+Evaluates NDCL checklists.
+* Updates item status via `#(id) <status>`. Enforces strict semantic vocabulary (`open`, `done`, `skipped`, `inprogress`, `blocked`, `question`).
+* Appends new items via `addkey #(id) <Full text of item>`.
+* Automatically triggers a topological bottom-up rollup of all `| |` automatic parent nodes in the file.
+
+### 4.2 `meta_update`
+Evaluates FDM/NeuroScript/SDI metadata blocks (`:: key: value`).
+* Automatically handles Native (`:: key: value`) and Embedded (`// :: key: value`) formats.
+* If the key exists, it mutates the value in-place.
+* If the key does not exist, it appends it to the bottom of the discovered metadata block, respecting the prefix of the block.
+* Fails safely if no existing metadata block is found.
+
+---
+
+## 5. LLM Interaction Directives
+
+* *LLM-Optimized Feedback:* Appy surfaces specific "Fallback Hints" and "Matched Line Echoes" designed to be copied directly back to the LLM to facilitate immediate self-correction.
+* *Auto-Pilot:* Operators can run the golden path (`Paste` -> `Unarmor` -> `Preview` -> `Apply` -> `Retest`) with a single click. The Auto-Pilot strictly enforces the airlock, halting immediately upon encountering any `ERROR` state.
+
+:: filename: code/patcheng/backend_spec.md
 -- README.md --
 # Appy: The Stateful Patch Console
 
@@ -3144,6 +3435,8 @@ Appy supports escalating patching strategies, selected automatically by the LLM 
 3.  **`match_line`**: Expands fuzzy searches to exact line boundaries (excellent for Markdown/NDCL checklists).
 4.  **`fuzzy_patch_agnostic`**: The workhorse. Replaces code while ignoring all whitespace, tabs, newlines, and language-specific comments.
 5.  **`strict_full_file` / `overwrite`**: Replaces the entire file contents.
+6.  **`ndcl_update`**: Surgically updates states and appends items in `.ndcl` semantic checklists.
+7.  **`meta_update`**: Surgically updates or appends NeuroScript/SDI metadata (`:: key: value` or `// :: key: value`) based on the host language profile.
 
 ## Running Appy
 Appy runs as a standalone Go binary.
@@ -3151,6 +3444,10 @@ Appy runs as a standalone Go binary.
 go run . -port 8085
 ```
 Navigate to `http://localhost:8085`. Appy will automatically watch its own executable for modifications and trigger a hot-reload if rebuilt.
+
+:: product: Appy
+:: fileroot: appy/
+:: filename: README.md
 -- TODO.md --
 // :: product: FDM/NS
 // :: majorVersion: 1
@@ -3622,17 +3919,17 @@ invariants
 
 That will give dev less room to “creatively comply” and turn appy into a haunted toaster.
 -- ui_spec.md --
-# Appy UI Functional Specification v1.5.24
+# Appy UI Functional Specification v1.6.2
 
 ## 1. Top-Level Layout
 The UI is contained within a fixed-height flex container (`95vh`) and divided into three primary functional zones:
-*   **Header Zone**: The top of the page MUST display:
-    *   The browser tab text and the primary page title set to the last element of the directory path from which Appy is run.
-    *   The current Appy version number explicitly displayed next to the title.
-    *   A subtitle indicating the absolute file root to which all operations are sandboxed.
-*   **Input Zone**: A large, unformatted textarea for pasting multi-file patch bundles (includes markdown blocks and `%%%` syntax).
-*   **Control Zone**: A horizontal button array for system actions, strictly grouped to prevent layout shift.
-*   **Output Zone**: A scrollable area rendering visual "File Block" stripes.
+* **Header Zone**: The top of the page MUST display:
+  * The browser tab text and the primary page title set to the last element of the directory path from which Appy is run.
+  * The current Appy version number explicitly displayed next to the title.
+  * A subtitle indicating the absolute file root to which all operations are sandboxed.
+* **Input Zone**: A large, unformatted textarea for pasting multi-file patch bundles (includes markdown blocks and `%%%` syntax).
+* **Control Zone**: A horizontal button array for system actions, strictly grouped to prevent layout shift.
+* **Output Zone**: A scrollable area rendering visual "File Block" stripes.
 
 ---
 
@@ -3644,8 +3941,8 @@ These rules are non-negotiable and dictate the core safety of the application:
 4. `Retest Impacted` MUST NOT alter primary file status; it only adds test decorators/reports.
 5. Any input edit after preview MUST invalidate the current preview and disable Apply until preview is recomputed.
 6. Status chips MUST remain visible at the RHS of each stripe header regardless of horizontal content length.
-7. Copy Preview Errors MUST contain enough information for an LLM to repair the patch without seeing the whole UI.
-8. Copy Result Ledger MUST only report files actually written to disk.
+7. Copy Trace MUST contain enough information for an LLM to repair the patch without seeing the whole UI.
+8. The Result Ledger MUST only report files actually written to disk.
 9. Partial success during Apply MUST be represented per file, not collapsed into one global success/failure banner.
 10. Raw JSON responses MUST never be rendered directly in the main output zone.
 
@@ -3655,10 +3952,11 @@ These rules are non-negotiable and dictate the core safety of the application:
 Every file parsed from the bundle is rendered as an expandable `<details>` element. Status is strictly decoupled into primary state and secondary verification decorators.
 
 ### 3.1 Stripe Header Layout
-The visual header of the stripe MUST contain three elements in this exact order (left-to-right):
-1.  **Filename**: The targeted file path.
-2.  **Net Lines Aggregate**: The total line delta for the file (e.g., `<span class="net-lines">+4</span>`), placed immediately after the filename for at-a-glance sanity checking.
-3.  **RHS Flex Container**: A right-aligned container holding the secondary decorators and the primary status chip.
+The visual header of the stripe MUST contain four elements in this exact order (left-to-right):
+1.  **File Type Tag**: A visual indicator of the language profile (e.g., `🐹 Go`) as determined by the patching engine.
+2.  **Filename**: The targeted file path.
+3.  **Net Lines Aggregate**: The total line delta for the file (e.g., `<span class="net-lines">+4</span>`), placed immediately after the filename for at-a-glance sanity checking.
+4.  **RHS Flex Container**: A right-aligned container holding the secondary decorators and the primary status chip.
 
 ### 3.2 Primary Status
 | Internal State | Stripe Header Color | RHS Chip Text | Logic |
@@ -3670,22 +3968,21 @@ The visual header of the stripe MUST contain three elements in this exact order 
 
 ### 3.3 Secondary Verification Decorators
 Verification passes and structural modifiers append specific emoji decorators. **These sigils MUST be placed on the RHS of the stripe, immediately to the left of the primary status chip.**
-*   **Overwrite Indicator**: ☢️ (Appears if the patch strategy is a full file overwrite).
-*   **Compiler Verified (`Check Compiler`)**: 🏅 PASS / ⚠️ FAIL
-*   **Test Verified (`Retest Impacted`)**: 🧪 PASS / 💥 FAIL
+* **Overwrite Indicator**: ☢️ (Appears if the patch strategy is a full file overwrite).
+* **Compiler Verified (`Check Compiler`)**: 🏅 PASS / ⚠️ FAIL
+* **Test Verified (`Retest Impacted`)**: 🧪 PASS / 💥 FAIL
 
 ---
 
 ## 4. Stale Preview Handling
 The preview model is valid **only** for the exact input string and repository snapshot used to produce it.
-
-*   **If the input textarea changes:**
-    *   All existing preview/apply buttons are disabled immediately.
-    *   Existing stripes are cleared or marked STALE.
-    *   Applying stale preview data is strictly forbidden.
-*   **If the repository changes between preview and apply:**
-    *   The backend MUST re-check search block matches before writing.
-    *   Any mismatch becomes `ERROR` and is not written.
+* **If the input textarea changes:**
+  * All existing preview/apply buttons are disabled immediately.
+  * Existing stripes are cleared or marked STALE.
+  * Applying stale preview data is strictly forbidden.
+* **If the repository changes between preview and apply:**
+  * The backend MUST re-check search block matches before writing.
+  * Any mismatch becomes `ERROR` and is not written.
 
 ---
 
@@ -3694,9 +3991,9 @@ To prevent frustrating UI jumping when states change, buttons MUST be rendered i
 
 | Group | Buttons (Strict Left-to-Right Order) | Visibility / Layout Rules |
 | :--- | :--- | :--- |
-| **1. Prep** | `Clear & Paste`, `Remove @@@`, `Fix File Paths` | Always grouped left. `Remove @@@` only visible if uniformly armored. |
+| **1. Prep** | `Auto-Pilot`, `Clear & Paste`, `Remove @@@`, `Fix File Paths` | Always grouped left. `Remove @@@` only visible if uniformly armored. |
 | **2. Action** | `Check Compiler`, `Apply to Disk`, `Retest Impacted` | Center grouped. `Retest` appears only after successful application. |
-| **3. Export** | `Copy Preview Errors` **OR** `Copy Result Ledger` **OR** `Copy Test Report` | Grouped right. These are mutually exclusive based on state and MUST swap in place to prevent the action buttons from shifting. |
+| **3. Export** | `Copy Trace` (Dynamic) | Grouped right. The button dynamically updates its color (Blue/Purple/Red) and label (`Copy Preview Errors`, `Copy Test Log`, etc.) based on the severity of the current active trace payload. |
 
 *Busy states MUST NOT erase existing stripes unless the action succeeds with a new preview model. Disable buttons rather than hiding them during processing.*
 
@@ -3705,26 +4002,26 @@ To prevent frustrating UI jumping when states change, buttons MUST be rendered i
 ## 6. Action Definitions & Semantics
 
 ### 6.1 Apply to Disk Semantics
-*   Operates **only** on files currently in `READY`. It MUST NOT apply `ERROR` or `IGNORED` files.
-*   Application is **partial/per-file**. If some files succeed and others fail, successful files become `APPLIED` and failed files become `ERROR`.
-*   Records per-file results in the ledger.
+* Operates **only** on files currently in `READY`. It MUST NOT apply `ERROR` or `IGNORED` files.
+* Application is **partial/per-file**. If some files succeed and others fail, successful files become `APPLIED` and failed files become `ERROR`.
+* Records per-file results in the ledger.
 
 ### 6.2 Check Compiler Semantics
-*   Uses the current filesystem as a base.
-*   Overlays all `READY` patches into an in-memory workspace.
-*   Validates the resulting files/packages.
-*   Must NOT mutate source files or leave scratch files in the repo.
+* Uses the current filesystem as a base.
+* Overlays all `READY` patches into an in-memory workspace.
+* Validates the resulting files/packages.
+* Must NOT mutate source files or leave scratch files in the repo.
 
 ### 6.3 Armor Removal Semantics
-*   If the input is uniformly armored (every non-empty line starts with `@@@`), the button appears.
-*   Strips exactly **one** leading `@@@` per line and immediately triggers a preview.
-*   *Warning*: If armor is partial, the button MUST NOT appear, and a small warning should display: *"Partial @@@ armor detected; refusing automatic strip."*
+* If the input is uniformly armored (every single line starts with `@@@`), the button appears.
+* Strips exactly **one** leading `@@@` per line and immediately triggers a preview.
+* *Warning*: If armor is partial, the button MUST NOT appear, and a small warning should display: *"Partial @@@ armor detected; refusing automatic strip."*
 
 ---
 
 ## 7. Preview & Patch Details
 To ensure operator trust, each patch block within an expanded file stripe MUST display:
-*   **Diff Preview**: Shows both the **Search Block** (old text, collapsible but inspectable) and the **Replacement Block** (new text, light green background). Showing only the replacement text weakens trust.
+* **Diff Preview**: Shows both the **Search Block** (old text, collapsible but inspectable) and the **Replacement Block** (new text, light green background). Showing only the replacement text weakens trust.
 
 *(Note: The `Net Lines` metric is aggregated and displayed at the File Stripe Header level, not buried inside the patch blocks).*
 
@@ -3734,8 +4031,8 @@ To ensure operator trust, each patch block within an expanded file stripe MUST d
 When a patch fails during preview, application, compiler checks, or testing, the UI MUST surface detailed, LLM-friendly diagnostic data:
 1.  **Matched Line Echo**: Reports must echo the exact state of the target line(s) to allow easy recovery using `%%% match_line`.
 2.  **LLM Hints & Fallbacks**: The error feedback MUST include explicit instructions delivering the suggested fallback patching sequence for the targeted language profile so the LLM knows how to recover.
-3.  **Trace Output (Clipboard Only)**: If a failure occurs during `Check Compiler` or `Retest Impacted`, the exact standard output/error trace MUST NOT be injected into the visual DOM stripes (to prevent UI bloat/lag). Instead, it MUST be appended exclusively to the clipboard payload of the `Copy Errors` or `Copy Test Report` buttons.
-4.  **Global Error Routing**: Top-level server or network errors (e.g., malformed bundle parsing failures) MUST NOT bypass the export mechanisms. They must populate the clipboard payload and force the `Copy Preview Errors` button to appear.
+3.  **Trace Output (Clipboard Only)**: If a failure occurs during `Check Compiler` or `Retest Impacted`, the exact standard output/error trace MUST NOT be injected into the visual DOM stripes (to prevent UI bloat/lag). Instead, it MUST be appended exclusively to the clipboard payload of the `Copy Trace` button.
+4.  **Global Error Routing**: Top-level server or network errors (e.g., malformed bundle parsing failures) MUST NOT bypass the export mechanisms. They must populate the clipboard payload and force the `Copy Trace` button to appear.
 
 ---
 
@@ -3745,64 +4042,67 @@ The backend MUST adhere to these conceptual payload shapes to prevent UI spaghet
 **PreviewResponse:**
 ```yaml
 files:
-  - path: string
-    status: string (READY|ERROR|IGNORED)
-    net_lines: int
-    patches:
-      - search_block: string
-        replace_block: string
-        is_overwrite: bool
-        error: string
-        closest_match_hint: string
-        llm_fallback_hint: string
+- path: string
+  status: string (READY|ERROR|IGNORED)
+  net_lines: int
+  file_type: string
+  file_icon: string
+  patches:
+    - search_block: string
+      replace_block: string
+      is_overwrite: bool
+      error: string
+      closest_match_hint: string
+      llm_fallback_hint: string
 ```
 
 **ApplyResponse:**
 ```yaml
 files:
-  - path: string
-    applied: bool
-    net_lines: int
-    hash_before: string
-    hash_after: string
-    ledger_entry: string
-    error: string
-    failed_patch:
-      current_line_echo: string
-      llm_fallback_hint: string
+- path: string
+  applied: bool
+  net_lines: int
+  file_type: string
+  file_icon: string
+  hash_before: string
+  hash_after: string
+  ledger_entry: string
+  error: string
+  failed_patch:
+    current_line_echo: string
+    llm_fallback_hint: string
 ```
 
 **CompilerCheckResponse:**
 ```yaml
 files:
-  - path: string
-    compiler_status: string (PASS|FAIL)
-    diagnostics: []string
-    raw_output: string
+- path: string
+  compiler_status: string (PASS|FAIL)
+  diagnostics: []string
+  raw_output: string
 ```
 
 **RetestResponse:**
 ```yaml
 packages: []string
 files:
-  - path: string
-    test_status: string (PASS|FAIL)
-    package: string
-    summary: string
-    failure_excerpt: string
-    raw_output: string
+- path: string
+  test_status: string (PASS|FAIL)
+  package: string
+  summary: string
+  failure_excerpt: string
+  raw_output: string
 ```
 
 ---
 
 ## 10. Code & Metadata Syntax
-When Appy generates Go source files, metadata must be at the absolute top, one directive per line, followed by exactly one blank line. 
-
+When Appy generates Go source files, metadata must be at the absolute top, one directive per line, followed by exactly one blank line. The backend parser and frontend unarmor logic MUST tolerate optional leading whitespace (including non-breaking spaces) before patch directives (`%%%`) to gracefully handle LLM formatting artifacts.
 
 :: product: FDM/NS
 :: majorVersion: 1
-:: fileVersion: 24
-:: description: Added nuclear overwrite decorator and expanded API contracts.
+:: fileVersion: 27
+:: description: Fixed armor logic specification and added unified trace exports + auto-pilot logic.
 :: filename: ui_spec.md
 :: serialization: md
 -- ui_tests.ndcl.md --
@@ -3811,69 +4111,70 @@ When Appy generates Go source files, metadata must be at the absolute top, one d
 This checklist locks the implementation of Appy to the `ui_spec.md` behavioral contracts. These tests MUST pass to certify an Appy release.
 
 - | | 1. Top-Level Layout #(test-layout-group)
-  - [ ] Verify browser tab text matches the last element of the sandbox path. #(t-lay-01)
-  - [ ] Verify Appy version is explicitly displayed next to the title. #(t-lay-02)
-  - [ ] Verify sandbox root subtitle is displayed. #(t-lay-03)
+ - [ ] Verify browser tab text matches the last element of the sandbox path. #(t-lay-01)
+ - [ ] Verify Appy version is explicitly displayed next to the title. #(t-lay-02)
+ - [ ] Verify sandbox root subtitle is displayed. #(t-lay-03)
 
 - | | 2. UI Behaviour Invariants #(test-invariants-group)
-  - [ ] Verify Apply to Disk is disabled when NO files are in the READY state. #(t-inv-01)
-  - [ ] Verify Apply to Disk completely ignores files in ERROR or IGNORED states. #(t-inv-02)
-  - [ ] Verify Apply to Disk can be clicked BEFORE Check Compiler is run. #(t-inv-03)
-  - [ ] Verify Check Compiler does not write to the filesystem or leave temp files in the repo root. #(t-inv-04)
-  - [ ] Verify Retest Impacted does not alter the primary file status (APPLIED). #(t-inv-05)
-  - [ ] Verify Retest Impacted correctly adds test decorators (🧪 or 💥) to the RHS of applied stripes. #(t-inv-06)
-  - [ ] Verify raw JSON responses are never rendered directly in the main output zone. #(t-inv-07)
+ - [ ] Verify Apply to Disk is disabled when NO files are in the READY state. #(t-inv-01)
+ - [ ] Verify Apply to Disk completely ignores files in ERROR or IGNORED states. #(t-inv-02)
+ - [ ] Verify Apply to Disk can be clicked BEFORE Check Compiler is run. #(t-inv-03)
+ - [ ] Verify Check Compiler does not write to the filesystem or leave temp files in the repo root. #(t-inv-04)
+ - [ ] Verify Retest Impacted does not alter the primary file status (APPLIED). #(t-inv-05)
+ - [ ] Verify Retest Impacted correctly adds test decorators (🧪 or 💥) to the RHS of applied stripes. #(t-inv-06)
+ - [ ] Verify raw JSON responses are never rendered directly in the main output zone. #(t-inv-07)
 
 - | | 3. Stale Preview Handling #(test-stale-group)
-  - [ ] Verify editing the input textarea immediately disables Apply and Check Compiler buttons. #(t-sta-01)
-  - [ ] Verify editing the input textarea clears existing stripes to prevent applying stale data. #(t-sta-02)
-  - [ ] Verify an out-of-band repository change between preview and apply triggers a backend safety rejection (ERROR state). #(t-sta-03)
+ - [ ] Verify editing the input textarea immediately disables Apply and Check Compiler buttons. #(t-sta-01)
+ - [ ] Verify editing the input textarea clears existing stripes to prevent applying stale data. #(t-sta-02)
+ - [ ] Verify an out-of-band repository change between preview and apply triggers a backend safety rejection (ERROR state). #(t-sta-03)
 
 - | | 4. Stripe Visualization & Layout #(test-stripe-group)
-  - [ ] Verify the stripe header order is exactly: Filename -> Net Lines -> RHS Flex Container. #(t-str-01)
-  - [ ] Verify Net Lines aggregate is visible at the header level. #(t-str-02)
-  - [ ] Verify primary status chips (OK, ERROR, APPLIED, IGNORED) are pinned to the RHS. #(t-str-03)
-  - [ ] Verify secondary decorators (🏅, ⚠️, 🧪, 💥) appear immediately to the left of the primary status chip in the RHS container. #(t-str-04)
-  - [ ] Verify the Diff Preview shows both the old Search Block (collapsible) and the new Replacement Block. #(t-str-05)
-  - [ ] Verify the ☢️ icon appears on the stripe RHS when a file is patched using the full file overwrite strategy. #(t-str-06)
+ - [ ] Verify the stripe header order is exactly: File Type Tag -> Filename -> Net Lines -> RHS Flex Container. #(t-str-01)
+ - [ ] Verify Net Lines aggregate is visible at the header level. #(t-str-02)
+ - [ ] Verify primary status chips (OK, ERROR, APPLIED, IGNORED) are pinned to the RHS. #(t-str-03)
+ - [ ] Verify secondary decorators (🏅, ⚠️, 🧪, 💥) appear immediately to the left of the primary status chip in the RHS container. #(t-str-04)
+ - [ ] Verify the Diff Preview shows both the old Search Block (collapsible) and the new Replacement Block. #(t-str-05)
+ - [ ] Verify the ☢️ icon appears on the stripe RHS when a file is patched using the full file overwrite strategy. #(t-str-06)
 
 - | | 5. Control Plane Button Matrix (Anti-Shift) #(test-matrix-group)
-  - [ ] Verify buttons are logically grouped into Prep (Left), Action (Center), and Export (Right). #(t-mat-01)
-  - [ ] Verify "Copy Preview Errors", "Copy Result Ledger", and "Copy Test Report" occupy the same spatial slot and swap seamlessly without shifting action buttons. #(t-mat-02)
-  - [ ] Verify "Remove @@@" ONLY appears if the input is uniformly armored (every non-empty line starts with @@@). #(t-mat-03)
-  - [ ] Verify "Remove @@@" correctly strips exactly one level of @@@ per line and triggers a preview. #(t-mat-04)
+ - [ ] Verify buttons are logically grouped into Prep (Left), Action (Center), and Export (Right). #(t-mat-01)
+ - [ ] Verify the unified "Copy Trace" button occupies a fixed spatial slot and dynamically updates color/text without shifting action buttons. #(t-mat-02)
+ - [ ] Verify "Remove @@@" ONLY appears if the input is uniformly armored (every non-empty line starts with @@@). #(t-mat-03)
+ - [ ] Verify "Remove @@@" correctly strips exactly one level of @@@ per line and triggers a preview. #(t-mat-04)
+ - [ ] Verify "Auto-Pilot" halts immediately upon encountering an ERROR during Preview or Apply. #(t-mat-05)
 
 - | | 6. Failure & Recovery Reporting #(test-recovery-group)
-  - [ ] Verify a failed preview populates the "Copy Preview Errors" payload with a Matched Line Echo. #(t-rec-01)
-  - [ ] Verify a failed preview populates the "Copy Preview Errors" payload with LLM Fallback Hints based on LanguageProfile. #(t-rec-02)
-  - [ ] Verify a failed Check Compiler run appends the raw compiler trace to the clipboard payload, NOT the DOM stripe. #(t-rec-03)
-  - [ ] Verify a failed Retest Impacted run appends the raw test trace to the clipboard payload, NOT the DOM stripe. #(t-rec-04)
-  - [ ] Verify top-level server errors (e.g., malformed bundle `unexpected EOF`) display the "Copy Preview Errors" button and populate the clipboard payload. #(t-rec-05)
+ - [ ] Verify a failed preview populates the "Copy Trace" payload with a Matched Line Echo. #(t-rec-01)
+ - [ ] Verify a failed preview populates the "Copy Trace" payload with LLM Fallback Hints based on LanguageProfile. #(t-rec-02)
+ - [ ] Verify a failed Check Compiler run appends the raw compiler trace to the clipboard payload, NOT the DOM stripe. #(t-rec-03)
+ - [ ] Verify a failed Retest Impacted run appends the raw test trace to the clipboard payload, NOT the DOM stripe. #(t-rec-04)
+ - [ ] Verify top-level server errors (e.g., malformed bundle `unexpected EOF`) display the "Copy Trace" button and populate the clipboard payload. #(t-rec-05)
 
 - | | 7. File-Atomic Apply Semantics #(test-atomic-group)
-  - [ ] Verify that in a multi-file bundle, a syntax error in file A correctly rejects file A but allows the successful application of file B. #(t-atm-01)
-  - [ ] Verify that partial application surfaces distinct APPLIED and ERROR stripes simultaneously. #(t-atm-02)
-  - [ ] Verify the Copy Result Ledger accurately reports ONLY the files that were written to disk. #(t-atm-03)
+ - [ ] Verify that in a multi-file bundle, a syntax error in file A correctly rejects file A but allows the successful application of file B. #(t-atm-01)
+ - [ ] Verify that partial application surfaces distinct APPLIED and ERROR stripes simultaneously. #(t-atm-02)
+ - [ ] Verify the Copy Trace Ledger accurately reports ONLY the files that were written to disk. #(t-atm-03)
 
 - | | 8. API Response Contracts #(test-api-group)
-  - [ ] Verify `/api/preview` returns the strictly nested `files` -> `patches` array structure. #(t-api-01)
-  - [ ] Verify `/api/apply` returns file-level applied status, net lines, and properly structured `failed_patch` blocks. #(t-api-02)
-  - [ ] Verify `/api/retest` isolates error traces to the `raw_output` field of the `files` array. #(t-api-03)
+ - [ ] Verify `/api/preview` returns the strictly nested `files` -> `patches` array structure. #(t-api-01)
+ - [ ] Verify `/api/apply` returns file-level applied status, net lines, and properly structured `failed_patch` blocks. #(t-api-02)
+ - [ ] Verify `/api/retest` isolates error traces to the `raw_output` field of the `files` array. #(t-api-03)
 
 - | | 9. Code & Metadata Syntax #(test-meta-group)
-  - [ ] Verify generated Go files place metadata at the absolute top followed by one blank line. #(t-meta-01)
-  - [ ] Verify the UI correctly identifies uniformly armored input with `@@@` prefixes and refuses partial armor. #(t-meta-02)
+ - [ ] Verify generated Go files place metadata at the absolute top followed by one blank line. #(t-meta-01)
+ - [ ] Verify the UI correctly identifies uniformly armored input with `@@@` prefixes and refuses partial armor. #(t-meta-02)
+ - [ ] Verify the backend and frontend correctly strip leading whitespace from patch directives. #(t-meta-03)
 
 - | | 10. Interactive Edge Cases & Micro-Interactions #(test-edge-group)
-  - [ ] Verify pasting junk/empty text gracefully displays "No valid patches found" and disables action buttons. #(t-edg-01)
-  - [ ] Verify the "Fix File Paths" button successfully rewrites the textarea and triggers a re-preview. #(t-edg-02)
-  - [ ] Verify Export buttons temporarily change text to "Copied!" to provide visual feedback. #(t-edg-03)
-  - [ ] Verify the "Retest" button disables and shows "Running Tests..." during execution. #(t-edg-04)
-
+ - [ ] Verify pasting junk/empty text gracefully displays "No valid patches found" and disables action buttons. #(t-edg-01)
+ - [ ] Verify the "Fix File Paths" button successfully rewrites the textarea and triggers a re-preview. #(t-edg-02)
+ - [ ] Verify Export buttons temporarily change text to "Copied!" to provide visual feedback. #(t-edg-03)
+ - [ ] Verify the "Retest" button disables and shows "Running Tests..." during execution. #(t-edg-04)
 
 :: product: FDM/NS
 :: majorVersion: 1
-:: fileVersion: 2
-:: description: E2E and Unit Test definitions derived strictly from the Appy UI Spec. Added API Contract and Metadata checks.
+:: fileVersion: 3
+:: description: E2E and Unit Test definitions derived strictly from the Appy UI Spec. Added API Contract, Metadata checks, Auto-Pilot, and Unified Trace validations.
 :: filename: ui_tests.ndcl.md
 :: serialization: md

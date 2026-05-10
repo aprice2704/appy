@@ -29,6 +29,8 @@ type PreviewFile struct {
 	Path     string         `json:"path"`
 	Status   string         `json:"status"` // READY, ERROR, IGNORED
 	NetLines int            `json:"net_lines"`
+	FileType string         `json:"file_type,omitempty"`
+	FileIcon string         `json:"file_icon,omitempty"`
 	Patches  []PreviewPatch `json:"patches"`
 }
 
@@ -45,6 +47,8 @@ type ApplyFile struct {
 	Path        string       `json:"path"`
 	Applied     bool         `json:"applied"`
 	NetLines    int          `json:"net_lines"`
+	FileType    string       `json:"file_type,omitempty"`
+	FileIcon    string       `json:"file_icon,omitempty"`
 	HashBefore  string       `json:"hash_before,omitempty"`
 	HashAfter   string       `json:"hash_after,omitempty"`
 	LedgerEntry string       `json:"ledger_entry,omitempty"`

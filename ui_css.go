@@ -22,7 +22,9 @@ const cssStyles = `
         .action-group { justify-content: center; flex: 1; }
         .export-group { justify-content: flex-end; flex: 1; position: relative; }
         
-        button { padding: 10px 20px; border: none; border-radius: 4px; font-size: 14px; cursor: pointer; font-weight: 600; transition: all 0.2s ease; letter-spacing: 0.3px; display: flex; align-items: center; gap: 6px; }
+               button { padding: 0 16px; height: 38px; min-width: 145px; justify-content: center;
+border: none; border-radius: 4px; font-size: 14px; cursor: pointer; font-weight: 600; transition: all 0.2s ease; letter-spacing: 0.3px; display: flex; align-items: center;
+gap: 6px; white-space: nowrap; box-sizing: border-box; }
         button:hover { filter: brightness(1.15); transform: translateY(-1px); }
         button:active { transform: translateY(0); }
         button:disabled { opacity: 0.4; cursor: not-allowed; transform: none; filter: none; }
@@ -36,7 +38,13 @@ const cssStyles = `
         #fixPathsBtn { background: #0891b2; color: white; border: 1px solid #06b6d4; }
         #copyLedgerBtn { background: #475569; color: white; border: 1px solid #64748b; }
         #retestBtn { background: #0284c7; color: white; border: 1px solid #06b6d4; }
-        #cancelRetestBtn { background: #dc2626; color: white; border: 1px solid #ef4444; }
+               #cancelRetestBtn { background: #dc2626; color: white;
+border: 1px solid #ef4444; }
+       #autoBtn { background: #0f766e; color: white; border: 1px solid #06b6d4; }
+       
+       #copyTraceBtn.trace-blue { background: #0284c7; color: white; border: 1px solid #0ea5e9; }
+       #copyTraceBtn.trace-purple { background: #7c3aed; color: white; border: 1px solid #8b5cf6; }
+       #copyTraceBtn.trace-red { background: #dc2626; color: white; border: 1px solid #ef4444; }
 
         .output { flex: 1; background: #0f1420; border: 1px solid #2d3748; padding: 20px; overflow-y: auto; border-radius: 6px; font-family: 'Consolas', 'JetBrains Mono', monospace; font-size: 13.5px; line-height: 1.6; box-shadow: inset 0 2px 4px rgba(0,0,0,0.1); }
         
@@ -69,7 +77,10 @@ const cssStyles = `
         .status-ignored { background: rgba(245, 158, 11, 0.2); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.3); }
         .status-applied { background: rgba(100, 116, 139, 0.2); color: #94a3b8; border: 1px solid rgba(100, 116, 139, 0.3); }
         
-        .net-lines { font-family: 'Consolas', monospace; font-size: 11px; color: #94a3b8; margin-left: 12px; padding: 2px 6px; background: rgba(0,0,0,0.25); border-radius: 4px; border: 1px solid rgba(255,255,255,0.05); }
+               .net-lines { font-family: 'Consolas', monospace;
+font-size: 11px; color: #94a3b8; margin-left: 12px; padding: 2px 6px; background: rgba(0,0,0,0.25); border-radius: 4px; border: 1px solid rgba(255,255,255,0.05);
+}
+       .file-type-tag { font-family: -apple-system, BlinkMacSystemFont, sans-serif; font-size: 11px; padding: 2px 6px; background: rgba(0,0,0,0.25); border-radius: 4px; margin-right: 10px; display: inline-flex; align-items: center; gap: 4px; color: #cbd5e1; border: 1px solid rgba(255,255,255,0.05); letter-spacing: 0.3px;}
         .rhs-chips { display: flex; align-items: center; gap: 8px; }
         
         .error-msg { color: #f87171; margin-top: 8px; font-size: 13px; font-weight: 500; }

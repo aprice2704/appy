@@ -163,3 +163,44 @@ t
 go install .
 t
 go install .
+./run_appy.sh -port 8087
+x
+txtar *.go > appy.txtar
+txtar *.go *.js *.md  > appy.txtar
+cls
+./run_appy.sh 
+t
+go install .
+txtar *.go *.js *.md  > appy.txtar
+t
+go install .
+go mod tidy
+t
+go install .
+t
+go install .
+t
+go install .
+txtar *.go *.js *.md  > appy.txtar
+t
+go get github.com/aprice2704/fdm/code/treesitter@v0.0.0-00010101000000-000000000000
+t
+go install .
+x
+t
+go install .
+m
+./run_appy.sh -port 8082
+x
+x
+txtar *.go *.js *.md  > appy.txtar
+./run_appy.sh 
+./run_appy.sh -port 8082
+..
+t
+go install .
+t
+go install .
+txtar *.go *.js *.md  > appy.txtar
+t
+go install .

@@ -1,9 +1,10 @@
 // :: product: FDM/NS
 // :: majorVersion: 1
-// :: fileVersion: 28
-// :: description: v1.5.22 - API Contracts matched to UI Spec v1.5.22.
+// :: fileVersion: 31
+// :: description: v1.6.0    -- treesitter and many other updates
 // :: filename: main.go
 // :: serialization: go
+// :: latestChange: Bumped to 1.6.3 and fixed Makefile tab stripping in unarmorText.
 package main
 
 import (
@@ -20,6 +21,7 @@ import (
 
 	"github.com/aprice2704/fdm/code/patcheng"
 	"github.com/aprice2704/fdm/code/retest"
+	_ "github.com/aprice2704/fdm/code/treesitter"
 )
 
 func watchSelfForReload() {
@@ -45,7 +47,47 @@ func watchSelfForReload() {
 	}
 }
 
-const AppVersion = "v1.5.27"
+const AppVersion = "v1.6.3"
+
+func getFileMeta(prof *patcheng.LanguageProfile) (string, string) {
+	if prof == nil {
+		return "Text", "📄"
+	}
+	switch prof.ID {
+	case "golang":
+		return "Go", "🐹"
+	case "javascript":
+		return "JS", "🟨"
+	case "typescript":
+		return "TS", "🟦"
+	case "python":
+		return "Python", "🐍"
+	case "markdown":
+		return "Markdown", "📝"
+	case "neuroscript":
+		return "NeuroScript", "🧠"
+	case "html":
+		return "HTML", "🌐"
+	case "css":
+		return "CSS", "🎨"
+	case "json":
+		return "JSON", "📦"
+	case "yaml":
+		return "YAML", "⚙️"
+	case "shell":
+		return "Shell", "🐚"
+	case "java":
+		return "Java", "☕"
+	case "cpp":
+		return "C++", "⚙️"
+	case "astro":
+		return "Astro", "🚀"
+	case "antlr":
+		return "ANTLR", "🛠️"
+	default:
+		return prof.ID, "📄"
+	}
+}
 
 func withRecoveryAndCORS(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -119,6 +161,7 @@ func newServer(rootDir string) *http.ServeMux {
 			contentBytes, _ := os.ReadFile(absPath)
 			content := string(contentBytes)
 			prof := patcheng.DefaultRegistry.GetByExtension(filepath.Ext(rawFilename))
+			fType, fIcon := getFileMeta(prof)
 
 			var filePreviews []PreviewPatch
 			fileStatus := "READY"
@@ -178,6 +221,8 @@ func newServer(rootDir string) *http.ServeMux {
 				Path:     rawFilename,
 				Status:   fileStatus,
 				NetLines: fileNetLines,
+				FileType: fType,
+				FileIcon: fIcon,
 				Patches:  filePreviews,
 			})
 		}
@@ -224,6 +269,7 @@ func newServer(rootDir string) *http.ServeMux {
 			absPath := filepath.Join(absRootDir, rawFilename)
 			contentBytes, _ := os.ReadFile(absPath)
 			prof := patcheng.DefaultRegistry.GetByExtension(filepath.Ext(rawFilename))
+			fType, fIcon := getFileMeta(prof)
 
 			fileNetLines := 0
 			for _, p := range patches {
@@ -267,6 +313,8 @@ func newServer(rootDir string) *http.ServeMux {
 					Path:        rawFilename,
 					Applied:     false,
 					NetLines:    fileNetLines,
+					FileType:    fType,
+					FileIcon:    fIcon,
 					Error:       applyErr.Error(),
 					FailedPatch: failedBlock,
 				})
@@ -289,6 +337,8 @@ func newServer(rootDir string) *http.ServeMux {
 				Path:     rawFilename,
 				Applied:  true,
 				NetLines: fileNetLines,
+				FileType: fType,
+				FileIcon: fIcon,
 			})
 		}
 

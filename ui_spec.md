@@ -1,14 +1,14 @@
-# Appy UI Functional Specification v1.5.25
+# Appy UI Functional Specification v1.6.2
 
 ## 1. Top-Level Layout
 The UI is contained within a fixed-height flex container (`95vh`) and divided into three primary functional zones:
-*   **Header Zone**: The top of the page MUST display:
-    *   The browser tab text and the primary page title set to the last element of the directory path from which Appy is run.
-    *   The current Appy version number explicitly displayed next to the title.
-    *   A subtitle indicating the absolute file root to which all operations are sandboxed.
-*   **Input Zone**: A large, unformatted textarea for pasting multi-file patch bundles (includes markdown blocks and `%%%` syntax).
-*   **Control Zone**: A horizontal button array for system actions, strictly grouped to prevent layout shift.
-*   **Output Zone**: A scrollable area rendering visual "File Block" stripes.
+* **Header Zone**: The top of the page MUST display:
+  * The browser tab text and the primary page title set to the last element of the directory path from which Appy is run.
+  * The current Appy version number explicitly displayed next to the title.
+  * A subtitle indicating the absolute file root to which all operations are sandboxed.
+* **Input Zone**: A large, unformatted textarea for pasting multi-file patch bundles (includes markdown blocks and `%%%` syntax).
+* **Control Zone**: A horizontal button array for system actions, strictly grouped to prevent layout shift.
+* **Output Zone**: A scrollable area rendering visual "File Block" stripes.
 
 ---
 
@@ -20,8 +20,8 @@ These rules are non-negotiable and dictate the core safety of the application:
 4. `Retest Impacted` MUST NOT alter primary file status; it only adds test decorators/reports.
 5. Any input edit after preview MUST invalidate the current preview and disable Apply until preview is recomputed.
 6. Status chips MUST remain visible at the RHS of each stripe header regardless of horizontal content length.
-7. Copy Preview Errors MUST contain enough information for an LLM to repair the patch without seeing the whole UI.
-8. Copy Result Ledger MUST only report files actually written to disk.
+7. Copy Trace MUST contain enough information for an LLM to repair the patch without seeing the whole UI.
+8. The Result Ledger MUST only report files actually written to disk.
 9. Partial success during Apply MUST be represented per file, not collapsed into one global success/failure banner.
 10. Raw JSON responses MUST never be rendered directly in the main output zone.
 
@@ -31,10 +31,11 @@ These rules are non-negotiable and dictate the core safety of the application:
 Every file parsed from the bundle is rendered as an expandable `<details>` element. Status is strictly decoupled into primary state and secondary verification decorators.
 
 ### 3.1 Stripe Header Layout
-The visual header of the stripe MUST contain three elements in this exact order (left-to-right):
-1.  **Filename**: The targeted file path.
-2.  **Net Lines Aggregate**: The total line delta for the file (e.g., `<span class="net-lines">+4</span>`), placed immediately after the filename for at-a-glance sanity checking.
-3.  **RHS Flex Container**: A right-aligned container holding the secondary decorators and the primary status chip.
+The visual header of the stripe MUST contain four elements in this exact order (left-to-right):
+1.  **File Type Tag**: A visual indicator of the language profile (e.g., `🐹 Go`) as determined by the patching engine.
+2.  **Filename**: The targeted file path.
+3.  **Net Lines Aggregate**: The total line delta for the file (e.g., `<span class="net-lines">+4</span>`), placed immediately after the filename for at-a-glance sanity checking.
+4.  **RHS Flex Container**: A right-aligned container holding the secondary decorators and the primary status chip.
 
 ### 3.2 Primary Status
 | Internal State | Stripe Header Color | RHS Chip Text | Logic |
@@ -46,22 +47,21 @@ The visual header of the stripe MUST contain three elements in this exact order 
 
 ### 3.3 Secondary Verification Decorators
 Verification passes and structural modifiers append specific emoji decorators. **These sigils MUST be placed on the RHS of the stripe, immediately to the left of the primary status chip.**
-*   **Overwrite Indicator**: ☢️ (Appears if the patch strategy is a full file overwrite).
-*   **Compiler Verified (`Check Compiler`)**: 🏅 PASS / ⚠️ FAIL
-*   **Test Verified (`Retest Impacted`)**: 🧪 PASS / 💥 FAIL
+* **Overwrite Indicator**: ☢️ (Appears if the patch strategy is a full file overwrite).
+* **Compiler Verified (`Check Compiler`)**: 🏅 PASS / ⚠️ FAIL
+* **Test Verified (`Retest Impacted`)**: 🧪 PASS / 💥 FAIL
 
 ---
 
 ## 4. Stale Preview Handling
 The preview model is valid **only** for the exact input string and repository snapshot used to produce it.
-
-*   **If the input textarea changes:**
-    *   All existing preview/apply buttons are disabled immediately.
-    *   Existing stripes are cleared or marked STALE.
-    *   Applying stale preview data is strictly forbidden.
-*   **If the repository changes between preview and apply:**
-    *   The backend MUST re-check search block matches before writing.
-    *   Any mismatch becomes `ERROR` and is not written.
+* **If the input textarea changes:**
+  * All existing preview/apply buttons are disabled immediately.
+  * Existing stripes are cleared or marked STALE.
+  * Applying stale preview data is strictly forbidden.
+* **If the repository changes between preview and apply:**
+  * The backend MUST re-check search block matches before writing.
+  * Any mismatch becomes `ERROR` and is not written.
 
 ---
 
@@ -70,9 +70,9 @@ To prevent frustrating UI jumping when states change, buttons MUST be rendered i
 
 | Group | Buttons (Strict Left-to-Right Order) | Visibility / Layout Rules |
 | :--- | :--- | :--- |
-| **1. Prep** | `Clear & Paste`, `Remove @@@`, `Fix File Paths` | Always grouped left. `Remove @@@` only visible if uniformly armored. |
+| **1. Prep** | `Auto-Pilot`, `Clear & Paste`, `Remove @@@`, `Fix File Paths` | Always grouped left. `Remove @@@` only visible if uniformly armored. |
 | **2. Action** | `Check Compiler`, `Apply to Disk`, `Retest Impacted` | Center grouped. `Retest` appears only after successful application. |
-| **3. Export** | `Copy Preview Errors` **OR** `Copy Result Ledger` **OR** `Copy Test Report` | Grouped right. These are mutually exclusive based on state and MUST swap in place to prevent the action buttons from shifting. |
+| **3. Export** | `Copy Trace` (Dynamic) | Grouped right. The button dynamically updates its color (Blue/Purple/Red) and label (`Copy Preview Errors`, `Copy Test Log`, etc.) based on the severity of the current active trace payload. |
 
 *Busy states MUST NOT erase existing stripes unless the action succeeds with a new preview model. Disable buttons rather than hiding them during processing.*
 
@@ -81,26 +81,26 @@ To prevent frustrating UI jumping when states change, buttons MUST be rendered i
 ## 6. Action Definitions & Semantics
 
 ### 6.1 Apply to Disk Semantics
-*   Operates **only** on files currently in `READY`. It MUST NOT apply `ERROR` or `IGNORED` files.
-*   Application is **partial/per-file**. If some files succeed and others fail, successful files become `APPLIED` and failed files become `ERROR`.
-*   Records per-file results in the ledger.
+* Operates **only** on files currently in `READY`. It MUST NOT apply `ERROR` or `IGNORED` files.
+* Application is **partial/per-file**. If some files succeed and others fail, successful files become `APPLIED` and failed files become `ERROR`.
+* Records per-file results in the ledger.
 
 ### 6.2 Check Compiler Semantics
-*   Uses the current filesystem as a base.
-*   Overlays all `READY` patches into an in-memory workspace.
-*   Validates the resulting files/packages.
-*   Must NOT mutate source files or leave scratch files in the repo.
+* Uses the current filesystem as a base.
+* Overlays all `READY` patches into an in-memory workspace.
+* Validates the resulting files/packages.
+* Must NOT mutate source files or leave scratch files in the repo.
 
 ### 6.3 Armor Removal Semantics
-*   If the input is uniformly armored (every non-empty line starts with `@@@`), the button appears.
-*   Strips exactly **one** leading `@@@` per line and immediately triggers a preview.
-*   *Warning*: If armor is partial, the button MUST NOT appear, and a small warning should display: *"Partial @@@ armor detected; refusing automatic strip."*
+* If the input is uniformly armored (every single line starts with `@@@`), the button appears.
+* Strips exactly **one** leading `@@@` per line and immediately triggers a preview.
+* *Warning*: If armor is partial, the button MUST NOT appear, and a small warning should display: *"Partial @@@ armor detected; refusing automatic strip."*
 
 ---
 
 ## 7. Preview & Patch Details
 To ensure operator trust, each patch block within an expanded file stripe MUST display:
-*   **Diff Preview**: Shows both the **Search Block** (old text, collapsible but inspectable) and the **Replacement Block** (new text, light green background). Showing only the replacement text weakens trust.
+* **Diff Preview**: Shows both the **Search Block** (old text, collapsible but inspectable) and the **Replacement Block** (new text, light green background). Showing only the replacement text weakens trust.
 
 *(Note: The `Net Lines` metric is aggregated and displayed at the File Stripe Header level, not buried inside the patch blocks).*
 
@@ -110,8 +110,8 @@ To ensure operator trust, each patch block within an expanded file stripe MUST d
 When a patch fails during preview, application, compiler checks, or testing, the UI MUST surface detailed, LLM-friendly diagnostic data:
 1.  **Matched Line Echo**: Reports must echo the exact state of the target line(s) to allow easy recovery using `%%% match_line`.
 2.  **LLM Hints & Fallbacks**: The error feedback MUST include explicit instructions delivering the suggested fallback patching sequence for the targeted language profile so the LLM knows how to recover.
-3.  **Trace Output (Clipboard Only)**: If a failure occurs during `Check Compiler` or `Retest Impacted`, the exact standard output/error trace MUST NOT be injected into the visual DOM stripes (to prevent UI bloat/lag). Instead, it MUST be appended exclusively to the clipboard payload of the `Copy Errors` or `Copy Test Report` buttons.
-4.  **Global Error Routing**: Top-level server or network errors (e.g., malformed bundle parsing failures) MUST NOT bypass the export mechanisms. They must populate the clipboard payload and force the `Copy Preview Errors` button to appear.
+3.  **Trace Output (Clipboard Only)**: If a failure occurs during `Check Compiler` or `Retest Impacted`, the exact standard output/error trace MUST NOT be injected into the visual DOM stripes (to prevent UI bloat/lag). Instead, it MUST be appended exclusively to the clipboard payload of the `Copy Trace` button.
+4.  **Global Error Routing**: Top-level server or network errors (e.g., malformed bundle parsing failures) MUST NOT bypass the export mechanisms. They must populate the clipboard payload and force the `Copy Trace` button to appear.
 
 ---
 
@@ -121,65 +121,66 @@ The backend MUST adhere to these conceptual payload shapes to prevent UI spaghet
 **PreviewResponse:**
 ```yaml
 files:
-  - path: string
-    status: string (READY|ERROR|IGNORED)
-    net_lines: int
-    patches:
-      - search_block: string
-        replace_block: string
-        is_overwrite: bool
-        error: string
-        closest_match_hint: string
-        llm_fallback_hint: string
+- path: string
+  status: string (READY|ERROR|IGNORED)
+  net_lines: int
+  file_type: string
+  file_icon: string
+  patches:
+    - search_block: string
+      replace_block: string
+      is_overwrite: bool
+      error: string
+      closest_match_hint: string
+      llm_fallback_hint: string
 ```
 
 **ApplyResponse:**
 ```yaml
 files:
-  - path: string
-    applied: bool
-    net_lines: int
-    hash_before: string
-    hash_after: string
-    ledger_entry: string
-    error: string
-    failed_patch:
-      current_line_echo: string
-      llm_fallback_hint: string
+- path: string
+  applied: bool
+  net_lines: int
+  file_type: string
+  file_icon: string
+  hash_before: string
+  hash_after: string
+  ledger_entry: string
+  error: string
+  failed_patch:
+    current_line_echo: string
+    llm_fallback_hint: string
 ```
 
 **CompilerCheckResponse:**
 ```yaml
 files:
-  - path: string
-    compiler_status: string (PASS|FAIL)
-    diagnostics: []string
-    raw_output: string
+- path: string
+  compiler_status: string (PASS|FAIL)
+  diagnostics: []string
+  raw_output: string
 ```
 
 **RetestResponse:**
 ```yaml
 packages: []string
 files:
-  - path: string
-    test_status: string (PASS|FAIL)
-    package: string
-    summary: string
-    failure_excerpt: string
-    raw_output: string
+- path: string
+  test_status: string (PASS|FAIL)
+  package: string
+  summary: string
+  failure_excerpt: string
+  raw_output: string
 ```
 
 ---
 
 ## 10. Code & Metadata Syntax
-When Appy generates Go source files, metadata must be at the absolute top, one directive per line, followed by exactly one blank line. 
-
-The backend parser and frontend unarmor logic MUST tolerate optional leading whitespace (including non-breaking spaces) before patch directives (`%%%`) to gracefully handle LLM formatting artifacts.
-
+When Appy generates Go source files, metadata must be at the absolute top, one directive per line, followed by exactly one blank line. The backend parser and frontend unarmor logic MUST tolerate optional leading whitespace (including non-breaking spaces) before patch directives (`%%%`) to gracefully handle LLM formatting artifacts.
 
 :: product: FDM/NS
 :: majorVersion: 1
-:: fileVersion: 25
-:: description: Added nuclear overwrite decorator and expanded API contracts, added whitespace tolerance to metadata directives.
+:: fileVersion: 27
+:: description: Fixed armor logic specification and added unified trace exports + auto-pilot logic.
 :: filename: ui_spec.md
 :: serialization: md
