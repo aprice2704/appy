@@ -70,7 +70,7 @@ To prevent frustrating UI jumping when states change, buttons MUST be rendered i
 
 | Group | Buttons (Strict Left-to-Right Order) | Visibility / Layout Rules |
 | :--- | :--- | :--- |
-| **1. Prep** | `Auto-Pilot`, `Clear & Paste`, `Remove @@@`, `Fix File Paths` | Always grouped left. `Remove @@@` only visible if uniformly armored. |
+| **1. Prep** | `Auto-Pilot`, `Clear & Paste`, `Remove @@@`, `Fix File Paths` | Always grouped left. `Remove @@@` only visible if ≥ 2 lines are armored. |
 | **2. Action** | `Check Compiler`, `Apply to Disk`, `Retest Impacted` | Center grouped. `Retest` appears only after successful application. |
 | **3. Export** | `Copy Trace` (Dynamic) | Grouped right. The button dynamically updates its color (Blue/Purple/Red) and label (`Copy Preview Errors`, `Copy Test Log`, etc.) based on the severity of the current active trace payload. |
 
@@ -92,9 +92,9 @@ To prevent frustrating UI jumping when states change, buttons MUST be rendered i
 * Must NOT mutate source files or leave scratch files in the repo.
 
 ### 6.3 Armor Removal Semantics
-* If the input is uniformly armored (every single line starts with `@@@`), the button appears.
+* If the input contains 2 or more instances of `@@@` at the start of a line, the button appears.
 * Strips exactly **one** leading `@@@` per line and immediately triggers a preview.
-* *Warning*: If armor is partial, the button MUST NOT appear, and a small warning should display: *"Partial @@@ armor detected; refusing automatic strip."*
+* Operates safely on partially armored text, only stripping from lines that begin with the prefix.
 
 ---
 

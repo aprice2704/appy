@@ -525,6 +525,36 @@ func New() {}
 	}
 }
 
+func TestAPI_Apply_DeleteFile(t *testing.T) {
+	tempDir := setupTestWorkspace(t)
+	mux := newServer(tempDir)
+
+	targetFile := filepath.Join(tempDir, "goner.go")
+	os.WriteFile(targetFile, []byte("package mypkg\nfunc Old() {}\n"), 0644)
+
+	payload := Payload{
+		Bundle: strings.ReplaceAll(`
+### filename: goner.go
+### delete_file
+CONFIRM
+### end
+`, "###", patcheng.BundleDelim),
+	}
+	body, _ := json.Marshal(payload)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/apply", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Result().StatusCode != http.StatusOK {
+		t.Fatalf("Expected 200 OK for delete_file, got %d", w.Result().StatusCode)
+	}
+
+	if _, err := os.Stat(targetFile); !os.IsNotExist(err) {
+		t.Errorf("Expected file to be deleted from disk, but it still exists")
+	}
+}
+
 func TestAPI_Apply_DeleteBlock(t *testing.T) {
 	tempDir := setupTestWorkspace(t)
 	mux := newServer(tempDir)
@@ -562,10 +592,9 @@ func TestAPI_Apply_EmptyFileDeletion(t *testing.T) {
 	payload := Payload{
 		Bundle: strings.ReplaceAll(`
 ### filename: delete_me.go
-### replace
+### delete
 package mypkg
 func Old() {}
-### with
 ### end
 `, "###", patcheng.BundleDelim),
 	}

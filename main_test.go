@@ -82,15 +82,6 @@ func TestFindTextAnchor(t *testing.T) {
 	})
 }
 
-func TestPreprocessDeleteBlocks(t *testing.T) {
-	input := "### delete\nold code\n### end\n"
-	expected := "### replace\nold code\n### with\n### end\n"
-	got := preprocessDeleteBlocks(input, "###")
-	if got != expected {
-		t.Errorf("Expected %q, got %q", expected, got)
-	}
-}
-
 func TestFindUniquePathSuffix(t *testing.T) {
 	dir := t.TempDir()
 	// Setup mock filesystem

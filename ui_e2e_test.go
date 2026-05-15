@@ -155,6 +155,7 @@ el.dispatchEvent(new Event('input'));
 		chromedp.WaitVisible(`#bundleInput`, chromedp.ByQuery),
 
 		// 1. Mixed text (should hide)
+		// 1. Mixed text with < 2 armors (should hide)
 		setInput("@@@line 1\nline 2"),
 		chromedp.Sleep(100*time.Millisecond),
 		chromedp.Evaluate(`document.getElementById('unarmorBtn').style.display || "none"`, &display),
@@ -163,12 +164,12 @@ el.dispatchEvent(new Event('input'));
 		t.Fatalf("Chromedp run failed: %v", err)
 	}
 	if display != "none" {
-		t.Errorf("Expected unarmor button to be hidden for mixed text, got %s", display)
+		t.Errorf("Expected unarmor button to be hidden for < 2 armors, got %s", display)
 	}
 
 	err = chromedp.Run(ctx,
-		// 2. Strict armored text (should show)
-		setInput("@@@line 1\n@@@line 2\n\n@@@line 3"),
+		// 2. Mixed text with >= 2 armors (should show)
+		setInput("@@@line 1\nline 2\n\n@@@line 3"),
 		chromedp.Sleep(100*time.Millisecond),
 		chromedp.Evaluate(`document.getElementById('unarmorBtn').style.display`, &display),
 	)
@@ -176,7 +177,7 @@ el.dispatchEvent(new Event('input'));
 		t.Fatalf("Chromedp run failed: %v", err)
 	}
 	if display != "inline-block" {
-		t.Errorf("Expected unarmor button to be shown for strictly armored text, got %s", display)
+		t.Errorf("Expected unarmor button to be shown for >= 2 armors, got %s", display)
 	}
 
 	// 3. Unarmor text handles LLM artifact leading spaces correctly

@@ -42,16 +42,17 @@ function syncUIState() {
    const hasContent = inputEl.value.trim().length > 0;
    checkBtn.disabled = !hasContent;
    
-   const lines = inputEl.value.split('\n');
-   let hasArmor = false;
-   if (lines.length > 0) {
-       // Ignore a single trailing empty line caused by a final newline character
-       const checkLines = lines[lines.length - 1] === '' ? lines.slice(0, -1) : lines;
-       const nonEmpties = checkLines.filter(line => line.trim() !== '');
-       if (nonEmpties.length > 0) {
-           hasArmor = nonEmpties.every(line => line.startsWith('@@@'));
-       }
-   }
+     const lines = inputEl.value.split('\n');
+  let hasArmor = false;
+  let armorCount = 0;
+  for (let i = 0; i < lines.length; i++) {
+      if (lines[i].trim().startsWith('@@@')) {
+          armorCount++;
+      }
+  }
+  if (armorCount >= 2) {
+      hasArmor = true;
+  }
 
    if (hasArmor) {
        unarmorBtn.classList.add('show');

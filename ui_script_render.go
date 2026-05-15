@@ -158,10 +158,11 @@ function renderPreview(data) {
             readyCount++;
         }
         
-                       let statusClass = 'status-' + fileStatus.toLowerCase();
+                              let statusClass = 'status-' + fileStatus.toLowerCase();
        let chipText = fileStatus === 'READY' ? 'OK' : fileStatus;
        let lineDeltaFmt = fileObj.net_lines > 0 ? ('+' + fileObj.net_lines) : fileObj.net_lines;
        let isOverwrite = fileObj.patches && fileObj.patches.some(p => p.is_overwrite);
+       let isDelete = fileObj.patches && fileObj.patches.some(p => p.is_delete_file);
        
        let fileTypeHtml = '';
        if (fileObj.file_type) {
@@ -175,9 +176,12 @@ function renderPreview(data) {
        html += '<strong>' + escapeHtml(fileObj.path) + '</strong>';
        html += '<span class="net-lines">' + lineDeltaFmt + '</span>';
 html += '</div>';
-        html += '<div class="rhs-chips">';
+                html += '<div class="rhs-chips">';
         if (isOverwrite) {
             html += '<span class="decorator" style="font-size: 1.2em;">☢️</span>';
+        }
+        if (isDelete) {
+            html += '<span class="decorator" style="font-size: 1.2em;">🗑️</span>';
         }
         html += '<span class="status-badge ' + statusClass + '">' + chipText + '</span>';
         html += '</div></summary>';
@@ -200,10 +204,12 @@ html += '</div>';
                 if (p.closest_match_hint) html += '<div class="hint-block"><strong>Closest Match:</strong><pre>' + escapeHtml(p.closest_match_hint) + '</pre></div>';
                 if (p.llm_fallback_hint) html += '<div class="hint-block" style="color:#2196f3; border-left: 3px solid #2196f3;"><strong>Advisory:</strong><br>' + escapeHtml(p.llm_fallback_hint) + '</div>';
                 
-                if (p.search_block) {
+                                if (p.search_block) {
                      html += '<details style="margin-bottom: 8px; cursor: pointer; color: #94a3b8;"><summary style="font-size: 12px; margin-bottom: 4px;">View Search Block (Old Text)</summary><pre style="margin:0; white-space: pre-wrap; font-family: inherit; background: rgba(0,0,0,0.2); padding: 10px; border-left: 3px solid #475569;">' + escapeHtml(p.search_block) + '</pre></details>';
                 }
-                if (p.replace_block !== undefined) {
+                if (p.is_delete_file) {
+                    html += '<div class="replace-block" style="border-left: 3px solid #ef4444; background: rgba(239, 68, 68, 0.08); color: #fca5a5;"><strong>FILE MARKED FOR DELETION</strong></div>';
+                } else if (p.replace_block !== undefined) {
                     html += '<div class="replace-block"><pre style="margin:0; white-space: pre-wrap; font-family: inherit;">' + escapeHtml(p.replace_block) + '</pre></div>';
                 }
                 html += '</div>';

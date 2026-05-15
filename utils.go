@@ -168,25 +168,6 @@ func generateLLMFallbackHint(prof *patcheng.LanguageProfile) string {
 	return ""
 }
 
-func preprocessDeleteBlocks(bundle, delim string) string {
-	lines := strings.Split(bundle, "\n")
-	var out []string
-	inDelete := false
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, delim+" delete") {
-			inDelete = true
-			out = append(out, delim+" replace"+strings.TrimPrefix(trimmed, delim+" delete"))
-		} else if inDelete && trimmed == delim+" end" {
-			out = append(out, delim+" with", line)
-			inDelete = false
-		} else {
-			out = append(out, line)
-		}
-	}
-	return strings.Join(out, "\n")
-}
-
 func withND(schema, desc string, payload map[string]any) map[string]any {
 	if payload == nil {
 		payload = make(map[string]any)

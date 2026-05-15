@@ -204,3 +204,28 @@ go install .
 txtar *.go *.js *.md  > appy.txtar
 t
 go install .
+t
+txtar *.go *.js *.md  > appy.txtar
+./run_appy.sh 
+./run_appy.sh -port 8082
+./run_appy.sh -port 8087
+t
+go install .
+./run_appy.sh -port 8087
+t
+./run_appy.sh -port 8087
+go install .
+./run_appy.sh -port 8082
+x
+txtar *.go *.js *.md  > appy.txtar
+./run_appy.sh -port 8082
+..
+t
+txtar *.go *.js *.md  > appy.txtar
+cls
+txtar *.go *.js *.md  > appy.txtar
+t
+t -quick -run '^(TestAPI_Apply_DeleteFile)$' .
+t
+go install .
+x

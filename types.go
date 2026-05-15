@@ -38,6 +38,7 @@ type PreviewPatch struct {
 	SearchBlock      string `json:"search_block,omitempty"`
 	ReplaceBlock     string `json:"replace_block"`
 	IsOverwrite      bool   `json:"is_overwrite,omitempty"`
+	IsDeleteFile     bool   `json:"is_delete_file,omitempty"`
 	Error            string `json:"error,omitempty"`
 	ClosestMatchHint string `json:"closest_match_hint,omitempty"`
 	LLMFallbackHint  string `json:"llm_fallback_hint,omitempty"`

@@ -32,8 +32,8 @@ This checklist locks the implementation of Appy to the `ui_spec.md` behavioral c
 - | | 5. Control Plane Button Matrix (Anti-Shift) #(test-matrix-group)
  - [ ] Verify buttons are logically grouped into Prep (Left), Action (Center), and Export (Right). #(t-mat-01)
  - [ ] Verify the unified "Copy Trace" button occupies a fixed spatial slot and dynamically updates color/text without shifting action buttons. #(t-mat-02)
- - [ ] Verify "Remove @@@" ONLY appears if the input is uniformly armored (every non-empty line starts with @@@). #(t-mat-03)
- - [ ] Verify "Remove @@@" correctly strips exactly one level of @@@ per line and triggers a preview. #(t-mat-04)
+- [ ] Verify "Remove @@@" appears if the input contains 2 or more instances of @@@ at the start of a line. #(t-mat-03)
+- [ ] Verify "Remove @@@" safely strips exactly one level of @@@ per line, even on partial armor, and triggers a preview. #(t-mat-04)
  - [ ] Verify "Auto-Pilot" halts immediately upon encountering an ERROR during Preview or Apply. #(t-mat-05)
 
 - | | 6. Failure & Recovery Reporting #(test-recovery-group)
@@ -55,7 +55,7 @@ This checklist locks the implementation of Appy to the `ui_spec.md` behavioral c
 
 - | | 9. Code & Metadata Syntax #(test-meta-group)
  - [ ] Verify generated Go files place metadata at the absolute top followed by one blank line. #(t-meta-01)
- - [ ] Verify the UI correctly identifies uniformly armored input with `@@@` prefixes and refuses partial armor. #(t-meta-02)
+- [ ] Verify the UI correctly identifies input with `@@@` prefixes and allows the unarmor operation if ≥ 2 lines match. #(t-meta-02)
  - [ ] Verify the backend and frontend correctly strip leading whitespace from patch directives. #(t-meta-03)
 
 - | | 10. Interactive Edge Cases & Micro-Interactions #(test-edge-group)

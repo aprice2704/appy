@@ -47,7 +47,7 @@ func watchSelfForReload() {
 	}
 }
 
-const AppVersion = "v1.6.3"
+const AppVersion = "v1.6.4"
 
 func getFileMeta(prof *patcheng.LanguageProfile) (string, string) {
 	if prof == nil {
@@ -141,8 +141,6 @@ func newServer(rootDir string) *http.ServeMux {
 			return
 		}
 
-		req.Bundle = preprocessDeleteBlocks(req.Bundle, patcheng.BundleDelim)
-
 		parsed, err := patcheng.ParseTextBundle(req.Bundle, patcheng.DefaultRegistry)
 		if err != nil {
 			sendError(w, err.Error(), http.StatusBadRequest)
@@ -171,6 +169,8 @@ func newServer(rootDir string) *http.ServeMux {
 				delta := 0
 				if p.FullOverwrite {
 					delta = countLines(p.Replace) - countLines(content)
+				} else if p.IsDeleteFile {
+					delta = -countLines(content)
 				} else {
 					delta = countLines(p.Replace) - countLines(p.Search)
 				}
@@ -246,8 +246,6 @@ func newServer(rootDir string) *http.ServeMux {
 			return
 		}
 
-		req.Bundle = preprocessDeleteBlocks(req.Bundle, patcheng.BundleDelim)
-
 		parsed, err := patcheng.ParseTextBundle(req.Bundle, patcheng.DefaultRegistry)
 		if err != nil {
 			sendError(w, err.Error(), http.StatusBadRequest)
@@ -255,6 +253,7 @@ func newServer(rootDir string) *http.ServeMux {
 		}
 
 		memoryResults := make(map[string]string)
+		filesToDelete := make(map[string]bool)
 		appliedInThisBatch := make(map[string]bool)
 
 		var applyFiles []ApplyFile
@@ -272,9 +271,13 @@ func newServer(rootDir string) *http.ServeMux {
 			fType, fIcon := getFileMeta(prof)
 
 			fileNetLines := 0
+			isDeleteFile := false
 			for _, p := range patches {
 				if p.FullOverwrite {
 					fileNetLines += countLines(p.Replace) - countLines(string(contentBytes))
+				} else if p.IsDeleteFile {
+					isDeleteFile = true
+					fileNetLines -= countLines(string(contentBytes))
 				} else {
 					fileNetLines += countLines(p.Replace) - countLines(p.Search)
 				}
@@ -321,14 +324,18 @@ func newServer(rootDir string) *http.ServeMux {
 				continue
 			}
 
-			if prof != nil && prof.Formatter != nil {
+			if prof != nil && prof.Formatter != nil && !isDeleteFile {
 				formatted, _, err := prof.Formatter(context.Background(), []byte(newContent))
 				if err == nil {
 					newContent = string(formatted)
 				}
 			}
 
-			memoryResults[absPath] = newContent
+			if isDeleteFile {
+				filesToDelete[absPath] = true
+			} else {
+				memoryResults[absPath] = newContent
+			}
 			for _, p := range patches {
 				appliedInThisBatch[hashPatch(rawFilename, p.Search, p.Replace)] = true
 			}
@@ -377,6 +384,13 @@ func newServer(rootDir string) *http.ServeMux {
 						CompilerStatus: "PASS",
 					})
 				}
+				for p := range filesToDelete {
+					rel, _ := filepath.Rel(absRootDir, p)
+					checkFiles = append(checkFiles, CompilerCheckFile{
+						Path:           filepath.ToSlash(rel),
+						CompilerStatus: "PASS",
+					})
+				}
 			}
 		}
 
@@ -393,9 +407,12 @@ func newServer(rootDir string) *http.ServeMux {
 				os.MkdirAll(filepath.Dir(path), 0755)
 				os.WriteFile(path, []byte(content), 0644)
 			}
+			for path := range filesToDelete {
+				os.Remove(path)
+			}
 		}
 
-		if len(memoryResults) > 0 {
+		if len(memoryResults) > 0 || len(filesToDelete) > 0 {
 			appliedPatchesMu.Lock()
 			for h := range appliedInThisBatch {
 				appliedPatches[h] = true
