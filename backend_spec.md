@@ -11,7 +11,7 @@ The backend consumes bundles separated by the `%%%` directive.
 
 ### 2.1 The Directives
 * `%%% filename: <path>`: Initiates a patch sequence for a specific file. Must be the first directive for a file.
-* `%%% replace`, `%%% replace_symbol <name>`, `%%% replace_block <cond>`, `%%% replace_element <selector>`, `%%% replace_json_path <path>`: Opens a search or targeting block.
+* `%%% replace`, `%%% replace_anchored`, `%%% replace_symbol <name>`, `%%% replace_block <cond>`, `%%% replace_element <selector>`, `%%% replace_json_path <path>`: Opens a search or targeting block.
 * `%%% with`: Closes the search block and opens the replacement block.
 * `%%% overwrite`: Replaces the entire file. Must be the only directive for that file.
 * `%%% ndcl_update`: Opens a state-mutation block for `.ndcl` checklists.

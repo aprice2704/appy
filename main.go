@@ -1,10 +1,24 @@
 // :: product: FDM/NS
 // :: majorVersion: 1
-// :: fileVersion: 31
-// :: description: v1.6.0    -- treesitter and many other updates
+// :: fileVersion: 32
+// :: description: v1.6.14    -- treesitter and many other updates
 // :: filename: main.go
 // :: serialization: go
-// :: latestChange: Bumped to 1.6.3 and fixed Makefile tab stripping in unarmorText.
+// :: latestChange: Bumped to 1.6.4 and added strict timeouts and verbose debug logging to prevent UI lockups.
+// :: product: FDM/NS
+// :: majorVersion: 1
+// :: fileVersion: 33
+// :: description: v1.6.15    -- Fix ledger pollution for failed compiler checks.
+// :: filename: main.go
+// :: serialization: go
+// :: latestChange: Bumped to 1.6.15 and enforced strict per-file ledger commits.
+// :: product: FDM/NS
+// :: majorVersion: 1
+// :: fileVersion: 34
+// :: description: v1.6.16    -- Graceful skip of already-applied files.
+// :: filename: main.go
+// :: serialization: go
+// :: latestChange: Bumped to 1.6.16 and added ledger check to gracefully skip files that are already fully applied.
 package main
 
 import (
@@ -47,7 +61,7 @@ func watchSelfForReload() {
 	}
 }
 
-const AppVersion = "v1.6.4"
+const AppVersion = "v1.7.0"
 
 func getFileMeta(prof *patcheng.LanguageProfile) (string, string) {
 	if prof == nil {
@@ -105,7 +119,10 @@ func withRecoveryAndCORS(h http.HandlerFunc) http.HandlerFunc {
 				log.Printf("PANIC: %v", rec)
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusInternalServerError)
-				json.NewEncoder(w).Encode(map[string]string{"error": fmt.Sprintf("Server Panic: %v", rec)})
+				err := json.NewEncoder(w).Encode(map[string]string{"error": fmt.Sprintf("Server Panic: %v", rec)})
+				if err != nil {
+					log.Printf("[DEBUG] Failed to encode panic response: %v", err)
+				}
 			}
 		}()
 		h(w, r)
@@ -114,7 +131,10 @@ func withRecoveryAndCORS(h http.HandlerFunc) http.HandlerFunc {
 
 func newServer(rootDir string) *http.ServeMux {
 	mux := http.NewServeMux()
-	absRootDir, _ := filepath.Abs(rootDir)
+	absRootDir, err := filepath.Abs(rootDir)
+	if err != nil {
+		log.Fatalf("Failed to resolve absolute root dir: %v", err)
+	}
 	LoadLedger(absRootDir)
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -126,10 +146,14 @@ func newServer(rootDir string) *http.ServeMux {
 		html = strings.ReplaceAll(html, "{VERSION}", AppVersion)
 		html = strings.ReplaceAll(html, "{ROOT_DIR}", absRootDir)
 		w.Header().Set("Content-Type", "text/html")
-		w.Write([]byte(html))
+		_, writeErr := w.Write([]byte(html))
+		if writeErr != nil {
+			log.Printf("[DEBUG] Failed to write index.html response: %v", writeErr)
+		}
 	})
 
 	mux.HandleFunc("/api/preview", withRecoveryAndCORS(func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("[DEBUG] /api/preview request received")
 		if r.Method != http.MethodPost {
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
@@ -137,26 +161,33 @@ func newServer(rootDir string) *http.ServeMux {
 
 		var req Payload
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			log.Printf("[DEBUG] /api/preview: Invalid JSON payload: %v", err)
 			sendError(w, "Invalid JSON", http.StatusBadRequest)
 			return
 		}
 
 		parsed, err := patcheng.ParseTextBundle(req.Bundle, patcheng.DefaultRegistry)
 		if err != nil {
+			log.Printf("[DEBUG] /api/preview: ParseTextBundle failed: %v", err)
 			sendError(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		log.Printf("[DEBUG] /api/preview: successfully parsed %d files", len(parsed))
 
 		var responseFiles []PreviewFile
 		pathFixes := make(map[string]string)
 
 		for rawFilename, patches := range parsed {
 			if !isPathSafe(absRootDir, rawFilename) {
+				log.Printf("[DEBUG] /api/preview: unsafe path rejected: %s", rawFilename)
 				continue
 			}
 
 			absPath := filepath.Join(absRootDir, rawFilename)
-			contentBytes, _ := os.ReadFile(absPath)
+			contentBytes, readErr := os.ReadFile(absPath)
+			if readErr != nil && !os.IsNotExist(readErr) {
+				log.Printf("[DEBUG] /api/preview: failed to read %s: %v", absPath, readErr)
+			}
 			content := string(contentBytes)
 			prof := patcheng.DefaultRegistry.GetByExtension(filepath.Ext(rawFilename))
 			fType, fIcon := getFileMeta(prof)
@@ -167,19 +198,20 @@ func newServer(rootDir string) *http.ServeMux {
 
 			for _, p := range patches {
 				delta := 0
-				if p.FullOverwrite {
-					delta = countLines(p.Replace) - countLines(content)
-				} else if p.IsDeleteFile {
-					delta = -countLines(content)
-				} else {
-					delta = countLines(p.Replace) - countLines(p.Search)
-				}
-				fileNetLines += delta
-
 				pp := PreviewPatch{
 					SearchBlock:  p.Search,
 					ReplaceBlock: p.Replace,
 					IsOverwrite:  p.FullOverwrite,
+					IsDeleteFile: p.IsDeleteFile,
+					IsAnchored:   p.IsAnchored,
+				}
+				fileNetLines += delta
+
+				pp = PreviewPatch{
+					SearchBlock:  p.Search,
+					ReplaceBlock: p.Replace,
+					IsOverwrite:  p.FullOverwrite,
+					IsDeleteFile: p.IsDeleteFile,
 				}
 
 				patchHash := hashPatch(rawFilename, p.Search, p.Replace)
@@ -194,6 +226,7 @@ func newServer(rootDir string) *http.ServeMux {
 				} else {
 					_, pErr := patcheng.ApplyFuzzyPatchesAgnostic(prof, content, []patcheng.FuzzyPatch{p})
 					if pErr != nil {
+						log.Printf("[DEBUG] /api/preview: ApplyFuzzyPatchesAgnostic failed for patch in %s: %v", rawFilename, pErr)
 						errMsg := pErr.Error()
 						if strings.Contains(errMsg, "refusing to overwrite existing file") {
 							pp.Error = "File already exists. Use '%%% overwrite' to replace it."
@@ -228,13 +261,17 @@ func newServer(rootDir string) *http.ServeMux {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(withND("appy/preview", "Simulation results", map[string]any{
+		encErr := json.NewEncoder(w).Encode(withND("appy/preview", "Simulation results", map[string]any{
 			"files":      responseFiles,
 			"path_fixes": pathFixes,
 		}))
+		if encErr != nil {
+			log.Printf("[DEBUG] /api/preview: failed to encode response: %v", encErr)
+		}
 	}))
 
 	mux.HandleFunc("/api/apply", withRecoveryAndCORS(func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("[DEBUG] /api/apply request received")
 		if r.Method != http.MethodPost {
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
@@ -242,19 +279,23 @@ func newServer(rootDir string) *http.ServeMux {
 
 		var req Payload
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			log.Printf("[DEBUG] /api/apply: Invalid JSON payload: %v", err)
 			sendError(w, "Invalid JSON", http.StatusBadRequest)
 			return
 		}
 
 		parsed, err := patcheng.ParseTextBundle(req.Bundle, patcheng.DefaultRegistry)
 		if err != nil {
+			log.Printf("[DEBUG] /api/apply: ParseTextBundle failed: %v", err)
 			sendError(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		log.Printf("[DEBUG] /api/apply: successfully parsed %d files", len(parsed))
 
 		memoryResults := make(map[string]string)
 		filesToDelete := make(map[string]bool)
-		appliedInThisBatch := make(map[string]bool)
+		fileHashes := make(map[string][]string)
+		originalFiles := make(map[string]*[]byte)
 
 		var applyFiles []ApplyFile
 		var checkFiles []CompilerCheckFile
@@ -262,13 +303,43 @@ func newServer(rootDir string) *http.ServeMux {
 
 		for rawFilename, patches := range parsed {
 			if !isPathSafe(absRootDir, rawFilename) {
+				log.Printf("[DEBUG] /api/apply: unsafe path rejected: %s", rawFilename)
 				sendError(w, "Path traversal denied", http.StatusBadRequest)
 				return
 			}
 			absPath := filepath.Join(absRootDir, rawFilename)
-			contentBytes, _ := os.ReadFile(absPath)
+			contentBytes, errRead := os.ReadFile(absPath)
+			if errRead == nil {
+				cbCopy := make([]byte, len(contentBytes))
+				copy(cbCopy, contentBytes)
+				originalFiles[absPath] = &cbCopy
+			} else {
+				originalFiles[absPath] = nil
+			}
 			prof := patcheng.DefaultRegistry.GetByExtension(filepath.Ext(rawFilename))
 			fType, fIcon := getFileMeta(prof)
+
+			allApplied := true
+			appliedPatchesMu.RLock()
+			for _, p := range patches {
+				if !appliedPatches[hashPatch(rawFilename, p.Search, p.Replace)] {
+					allApplied = false
+					break
+				}
+			}
+			appliedPatchesMu.RUnlock()
+
+			if len(patches) > 0 && allApplied {
+				log.Printf("[DEBUG] /api/apply: all patches for %s already in ledger, skipping gracefully", rawFilename)
+				applyFiles = append(applyFiles, ApplyFile{
+					Path:     rawFilename,
+					Applied:  true,
+					NetLines: 0,
+					FileType: fType,
+					FileIcon: fIcon,
+				})
+				continue
+			}
 
 			fileNetLines := 0
 			isDeleteFile := false
@@ -285,6 +356,7 @@ func newServer(rootDir string) *http.ServeMux {
 
 			newContent, applyErr := patcheng.ApplyFuzzyPatchesAgnostic(prof, string(contentBytes), patches)
 			if applyErr != nil {
+				log.Printf("[DEBUG] /api/apply: ApplyFuzzyPatchesAgnostic batch failed for %s: %v", rawFilename, applyErr)
 				if strings.Contains(applyErr.Error(), "refusing to overwrite existing file") {
 					continue // Safety ignores don't count as failures
 				}
@@ -309,6 +381,7 @@ func newServer(rootDir string) *http.ServeMux {
 							CurrentLineEcho: cur,
 							LLMFallbackHint: generateLLMFallbackHint(prof),
 						}
+						log.Printf("[DEBUG] /api/apply: individual patch failed for %s: %v", rawFilename, pErr)
 					}
 				}
 
@@ -325,9 +398,15 @@ func newServer(rootDir string) *http.ServeMux {
 			}
 
 			if prof != nil && prof.Formatter != nil && !isDeleteFile {
-				formatted, _, err := prof.Formatter(context.Background(), []byte(newContent))
+				log.Printf("[DEBUG] /api/apply: running formatter for %s", rawFilename)
+				ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+				formatted, _, err := prof.Formatter(ctx, []byte(newContent))
+				cancel()
 				if err == nil {
 					newContent = string(formatted)
+					log.Printf("[DEBUG] /api/apply: formatter succeeded for %s", rawFilename)
+				} else {
+					log.Printf("[DEBUG] /api/apply: formatter failed for %s (continuing anyway): %v", rawFilename, err)
 				}
 			}
 
@@ -337,7 +416,7 @@ func newServer(rootDir string) *http.ServeMux {
 				memoryResults[absPath] = newContent
 			}
 			for _, p := range patches {
-				appliedInThisBatch[hashPatch(rawFilename, p.Search, p.Replace)] = true
+				fileHashes[absPath] = append(fileHashes[absPath], hashPatch(rawFilename, p.Search, p.Replace))
 			}
 
 			applyFiles = append(applyFiles, ApplyFile{
@@ -350,9 +429,14 @@ func newServer(rootDir string) *http.ServeMux {
 		}
 
 		if len(memoryResults) > 0 && !req.SkipCompiler {
+			log.Printf("[DEBUG] /api/apply: running compiler preflight")
 			compErrs := runCompilerPreFlight(patcheng.DefaultRegistry, memoryResults, false)
 			for p, e := range compErrs {
-				rel, _ := filepath.Rel(absRootDir, p)
+				rel, errRel := filepath.Rel(absRootDir, p)
+				if errRel != nil {
+					log.Printf("[DEBUG] /api/apply: Rel failed for path %s: %v", p, errRel)
+					rel = p
+				}
 				hasErrors = true
 
 				if req.CheckOnly {
@@ -378,14 +462,20 @@ func newServer(rootDir string) *http.ServeMux {
 
 			if req.CheckOnly {
 				for p := range memoryResults {
-					rel, _ := filepath.Rel(absRootDir, p)
+					rel, errRel := filepath.Rel(absRootDir, p)
+					if errRel != nil {
+						rel = p
+					}
 					checkFiles = append(checkFiles, CompilerCheckFile{
 						Path:           filepath.ToSlash(rel),
 						CompilerStatus: "PASS",
 					})
 				}
 				for p := range filesToDelete {
-					rel, _ := filepath.Rel(absRootDir, p)
+					rel, errRel := filepath.Rel(absRootDir, p)
+					if errRel != nil {
+						rel = p
+					}
 					checkFiles = append(checkFiles, CompilerCheckFile{
 						Path:           filepath.ToSlash(rel),
 						CompilerStatus: "PASS",
@@ -396,26 +486,45 @@ func newServer(rootDir string) *http.ServeMux {
 
 		if req.CheckOnly {
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(withND("appy/compiler-check", "Compiler pre-flight results", map[string]any{
+			encErr := json.NewEncoder(w).Encode(withND("appy/compiler-check", "Compiler pre-flight results", map[string]any{
 				"files": checkFiles,
 			}))
+			if encErr != nil {
+				log.Printf("[DEBUG] /api/apply: CheckOnly response encoding failed: %v", encErr)
+			}
 			return
 		}
 
 		if !req.CheckOnly {
+			if err := saveHistory(absRootDir, originalFiles); err != nil {
+				log.Printf("Warning: failed to save history: %v", err)
+			}
 			for path, content := range memoryResults {
-				os.MkdirAll(filepath.Dir(path), 0755)
-				os.WriteFile(path, []byte(content), 0644)
+				if errMk := os.MkdirAll(filepath.Dir(path), 0755); errMk != nil {
+					log.Printf("[DEBUG] /api/apply: MkdirAll failed for %s: %v", path, errMk)
+				}
+				if errW := os.WriteFile(path, []byte(content), 0644); errW != nil {
+					log.Printf("[DEBUG] /api/apply: WriteFile failed for %s: %v", path, errW)
+				}
 			}
 			for path := range filesToDelete {
-				os.Remove(path)
+				if errRm := os.Remove(path); errRm != nil {
+					log.Printf("[DEBUG] /api/apply: Remove failed for %s: %v", path, errRm)
+				}
 			}
 		}
 
 		if len(memoryResults) > 0 || len(filesToDelete) > 0 {
 			appliedPatchesMu.Lock()
-			for h := range appliedInThisBatch {
-				appliedPatches[h] = true
+			for path := range memoryResults {
+				for _, h := range fileHashes[path] {
+					appliedPatches[h] = true
+				}
+			}
+			for path := range filesToDelete {
+				for _, h := range fileHashes[path] {
+					appliedPatches[h] = true
+				}
 			}
 			appliedPatchesMu.Unlock()
 			SaveLedger(absRootDir)
@@ -424,16 +533,23 @@ func newServer(rootDir string) *http.ServeMux {
 		status := http.StatusOK
 		if hasErrors {
 			status = http.StatusMultiStatus
+			log.Printf("[DEBUG] /api/apply: Returning StatusMultiStatus due to errors")
+		} else {
+			log.Printf("[DEBUG] /api/apply: Returning StatusOK")
 		}
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
-		json.NewEncoder(w).Encode(withND("appy/apply-success", "Result", map[string]any{
+		encErr := json.NewEncoder(w).Encode(withND("appy/apply-success", "Result", map[string]any{
 			"files": applyFiles,
 		}))
+		if encErr != nil {
+			log.Printf("[DEBUG] /api/apply: Final response encoding failed: %v", encErr)
+		}
 	}))
 
 	mux.HandleFunc("/api/retest", withRecoveryAndCORS(func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("[DEBUG] /api/retest request received")
 		if r.Method != http.MethodPost {
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
@@ -441,6 +557,7 @@ func newServer(rootDir string) *http.ServeMux {
 
 		var req RetestPayload
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			log.Printf("[DEBUG] /api/retest: Invalid JSON payload: %v", err)
 			sendError(w, "Invalid JSON", http.StatusBadRequest)
 			return
 		}
@@ -448,6 +565,7 @@ func newServer(rootDir string) *http.ServeMux {
 		opts := retest.Options{JSONMode: true, Args: req.Packages}
 		report, err := retest.Run(r.Context(), opts)
 		if err != nil {
+			log.Printf("[DEBUG] /api/retest: retest.Run failed: %v", err)
 			sendError(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -467,12 +585,71 @@ func newServer(rootDir string) *http.ServeMux {
 			Files:    outFiles,
 		}
 
-		b, _ := json.Marshal(response)
+		b, errMarsh := json.Marshal(response)
+		if errMarsh != nil {
+			log.Printf("[DEBUG] /api/retest: JSON marshal failed: %v", errMarsh)
+			sendError(w, "Failed to encode response", http.StatusInternalServerError)
+			return
+		}
 		var rm map[string]any
-		json.Unmarshal(b, &rm)
+		if errUnmarsh := json.Unmarshal(b, &rm); errUnmarsh != nil {
+			log.Printf("[DEBUG] /api/retest: JSON unmarshal failed: %v", errUnmarsh)
+			sendError(w, "Failed to decode response structure", http.StatusInternalServerError)
+			return
+		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(withND("appy/retest", "Test execution report", rm))
+		encErr := json.NewEncoder(w).Encode(withND("appy/retest", "Test execution report", rm))
+		if encErr != nil {
+			log.Printf("[DEBUG] /api/retest: Final response encoding failed: %v", encErr)
+		}
+	}))
+
+	mux.HandleFunc("/api/history", withRecoveryAndCORS(func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("[DEBUG] /api/history request received")
+		if r.Method != http.MethodGet {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		hist, err := listHistory(absRootDir)
+		if err != nil {
+			log.Printf("[DEBUG] /api/history: listHistory failed: %v", err)
+			sendError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		encErr := json.NewEncoder(w).Encode(withND("appy/history", "Patch transaction history", map[string]any{
+			"history": hist,
+		}))
+		if encErr != nil {
+			log.Printf("[DEBUG] /api/history: Final response encoding failed: %v", encErr)
+		}
+	}))
+
+	mux.HandleFunc("/api/revert", withRecoveryAndCORS(func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("[DEBUG] /api/revert request received")
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		var req RevertPayload
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			log.Printf("[DEBUG] /api/revert: Invalid JSON payload: %v", err)
+			sendError(w, "Invalid JSON", http.StatusBadRequest)
+			return
+		}
+		if err := revertTransaction(absRootDir, req.TxID); err != nil {
+			log.Printf("[DEBUG] /api/revert: revertTransaction failed for %s: %v", req.TxID, err)
+			sendError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		encErr := json.NewEncoder(w).Encode(withND("appy/revert", "Revert completed", map[string]any{
+			"reverted": true,
+		}))
+		if encErr != nil {
+			log.Printf("[DEBUG] /api/revert: Final response encoding failed: %v", encErr)
+		}
 	}))
 
 	return mux
@@ -484,8 +661,11 @@ func main() {
 
 	go watchSelfForReload()
 
-	cwd, _ := os.Getwd()
+	cwd, err := os.Getwd()
+	if err != nil {
+		log.Fatalf("Failed to get current working directory: %v", err)
+	}
 	fmt.Printf("Appy %s on http://localhost:%s\n", AppVersion, *port)
 
-	http.ListenAndServe(":"+*port, newServer(cwd))
+	log.Fatal(http.ListenAndServe(":"+*port, newServer(cwd)))
 }

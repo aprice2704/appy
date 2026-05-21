@@ -32,31 +32,30 @@ const htmlMiddle = `</style>
         <textarea id="bundleInput" placeholder="Paste the raw LLM output here (including the markdown code blocks and %%% syntax)..." oninput="debouncePreview()"></textarea>
        
        <div class="controls">
-           <div class="control-group prep-group">
-               <button id="autoBtn" onclick="runAutoPilot()">🤖 Auto-Pilot</button>
-               <button id="clearPasteBtn" onclick="clearAndPaste()">📋 Clear & Paste</button>
-               <button id="unarmorBtn" onclick="unarmorText()">🛡️ Remove @@@</button>
+                               <div class="control-group prep-group">
+              <button id="autoBtn" onclick="runAutoPilot()">🤖 Auto</button>
+              <button id="clearPasteBtn" onclick="clearAndPaste()">📋 Paste</button>
+              <button id="fixPathsBtn" onclick="fixFilePaths()" style="display: none;">🔧 Fix Paths</button>
+              <button id="historyBtn" onclick="toggleHistory()">⏪ History</button>
+          </div>
           
-     <button id="fixPathsBtn" onclick="fixFilePaths()" style="display: none;">🔧 Fix File Paths</button>
-           </div>
-           
-           <div class="control-group action-group">
-               <button id="checkBtn" onclick="checkSyntax()" disabled>🧪 Check Compiler</button>
-               <button id="applyBtn" onclick="applyBundle()" disabled>🚀 Apply to Disk</button>
-      
-               <button id="retestBtn" onclick="runRetest()" style="display: none;">🔄 Retest Impacted</button>
-               <button id="cancelRetestBtn" onclick="cancelRetest()" style="display: none;">⏹️ Stop</button>
-           </div>
-           
-           <div class="control-group export-group">
-               <button id="copyTraceBtn" onclick="copyTraceReport()" style="display: none;">📋 Copy Trace</button>
-           </div>
+          <div class="control-group action-group">
+              <button id="checkBtn" onclick="checkSyntax()" disabled>🧪 Check</button>
+              <button id="applyBtn" onclick="applyBundle()" disabled>🚀 Apply</button>
+              <button id="retestBtn" onclick="runRetest()" style="display: none;">🔄 Retest</button>
+              <button id="cancelRetestBtn" onclick="cancelRetest()" style="display: none;">⏹️ Stop</button>
+          </div>
+          
+          <div class="control-group export-group">
+              <button id="copyTraceBtn" onclick="copyTraceReport()" style="display: none;">📋 Copy</button>
+          </div>
        </div>
        
-       <div id="output" class="output">
-           <em>Waiting for input...</em>
-       </div>
-   </div>
+             <div id="output" class="output">
+          <em>Waiting for input...</em>
+      </div>
+      <div id="historyOutput" class="output" style="display: none;"></div>
+  </div>
    <script>`
 
 const htmlBottom = `</script>

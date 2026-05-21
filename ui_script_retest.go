@@ -17,7 +17,7 @@ async function runRetest() {
         return "./" + (parts.length > 0 ? parts.join('/') : '.');
     }))];
     
-    retestBtn.innerText = "Running Tests...";
+       retestBtn.innerText = "Running...";
     retestBtn.disabled = true;
     
     const loadingHtml = "<div id='testLoading' class='patch-block' style='margin-top: 15px; border-top: 1px solid #555; padding-top: 15px;'><em>Running tests for " + packages.join(', ') + " ...</em></div>";
@@ -78,7 +78,7 @@ async function runRetest() {
         if (loader) loader.style.display = 'none';
         outputEl.innerHTML += "<div class='error' style='margin-top:15px;'>Test request failed: " + err.message + "</div>";
     } finally {
-        retestBtn.innerText = "🔄 Retest Impacted";
+               retestBtn.innerText = "🔄 Retest";
         retestBtn.disabled = false;
     }
 }

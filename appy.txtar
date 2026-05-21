@@ -2,7 +2,7 @@ FDM Context Bundle
 -- compiler.go --
 // :: product: FDM/NS
 // :: majorVersion: 1
-// :: fileVersion: 5
+// :: fileVersion: 6
 // :: description: Compiler pre-flight and formatting via patcheng registry.
 // :: filename: /home/aprice/dev/appy/compiler.go
 // :: serialization: go
@@ -11,28 +11,43 @@ package main
 
 import (
 	"context"
+	"log"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/aprice2704/fdm/code/patcheng"
 )
 
 func runCompilerPreFlight(registry *patcheng.ProfileRegistry, memoryResults map[string]string, skipSlow bool) map[string]string {
 	compilerErrors := make(map[string]string)
+	log.Printf("[DEBUG] runCompilerPreFlight: starting for %d files", len(memoryResults))
 	for path, content := range memoryResults {
 		if strings.TrimSpace(content) == "" {
+			log.Printf("[DEBUG] runCompilerPreFlight: skipping empty file %s", path)
 			continue
 		}
 		prof := registry.GetByExtension(filepath.Ext(path))
 		if prof != nil && prof.Validator != nil {
 			if skipSlow && !prof.FastValidator {
+				log.Printf("[DEBUG] runCompilerPreFlight: skipping slow validator for %s", path)
 				continue
 			}
-			if err := prof.Validator(context.Background(), []byte(content)); err != nil {
+			log.Printf("[DEBUG] runCompilerPreFlight: validating %s", path)
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			err := prof.Validator(ctx, []byte(content))
+			cancel()
+			if err != nil {
+				log.Printf("[DEBUG] runCompilerPreFlight: validation failed for %s: %v", path, err)
 				compilerErrors[path] = err.Error()
+			} else {
+				log.Printf("[DEBUG] runCompilerPreFlight: validation passed for %s", path)
 			}
+		} else {
+			log.Printf("[DEBUG] runCompilerPreFlight: no validator found for %s", path)
 		}
 	}
+	log.Printf("[DEBUG] runCompilerPreFlight: finished with %d errors", len(compilerErrors))
 	return compilerErrors
 }
 -- compiler_test.go --
@@ -72,14 +87,199 @@ func TestRunCompilerPreFlight(t *testing.T) {
 		}
 	})
 }
+-- history.go --
+// :: product: FDM/NS
+// :: majorVersion: 1
+// :: fileVersion: 1
+// :: description: Manages patch transaction history and reversions.
+// :: filename: history.go
+// :: serialization: go
+
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"time"
+)
+
+const historyDirName = ".appy_history"
+const maxHistory = 10
+
+func saveHistory(rootDir string, originalFiles map[string]*[]byte) error {
+	historyDir := filepath.Join(rootDir, historyDirName)
+	if err := os.MkdirAll(historyDir, 0755); err != nil {
+		return fmt.Errorf("failed to create history dir: %v", err)
+	}
+
+	txID := fmt.Sprintf("tx_%d", time.Now().UnixNano())
+	txDir := filepath.Join(historyDir, txID+"_files")
+
+	tx := HistoryTx{
+		TxID:      txID,
+		Timestamp: time.Now().Unix(),
+		Files:     []HistoryFileOp{},
+	}
+
+	for path, contentPtr := range originalFiles {
+		relPath, err := filepath.Rel(rootDir, path)
+		if err != nil {
+			continue // Skip paths we can't make relative
+		}
+
+		op := HistoryFileOp{
+			Path:    filepath.ToSlash(relPath),
+			Existed: contentPtr != nil,
+		}
+		tx.Files = append(tx.Files, op)
+
+		if op.Existed {
+			destPath := filepath.Join(txDir, relPath+".bak")
+			if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
+				return fmt.Errorf("failed to make history tx dir: %v", err)
+			}
+			if err := os.WriteFile(destPath, *contentPtr, 0644); err != nil {
+				return fmt.Errorf("failed to write history file backup: %v", err)
+			}
+		}
+	}
+
+	txBytes, err := json.MarshalIndent(tx, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal history tx: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(historyDir, txID+".json"), txBytes, 0644); err != nil {
+		return fmt.Errorf("failed to write history tx file: %v", err)
+	}
+
+	pruneHistory(historyDir)
+	return nil
+}
+
+func pruneHistory(historyDir string) {
+	entries, err := os.ReadDir(historyDir)
+	if err != nil {
+		return
+	}
+
+	var txFiles []string
+	for _, e := range entries {
+		if !e.IsDir() && filepath.Ext(e.Name()) == ".json" && e.Name() != ledgerFilename {
+			txFiles = append(txFiles, e.Name())
+		}
+	}
+
+	if len(txFiles) <= maxHistory {
+		return
+	}
+
+	sort.Strings(txFiles) // tx_ timestamp sorts naturally
+	for i := 0; i < len(txFiles)-maxHistory; i++ {
+		oldTx := txFiles[i]
+		base := oldTx[:len(oldTx)-5]
+		_ = os.Remove(filepath.Join(historyDir, oldTx))
+		_ = os.RemoveAll(filepath.Join(historyDir, base+"_files"))
+	}
+}
+
+func listHistory(rootDir string) ([]HistoryTx, error) {
+	historyDir := filepath.Join(rootDir, historyDirName)
+	entries, err := os.ReadDir(historyDir)
+	if err != nil {
+		return []HistoryTx{}, nil
+	}
+
+	var history []HistoryTx
+	for _, e := range entries {
+		if !e.IsDir() && filepath.Ext(e.Name()) == ".json" && e.Name() != ledgerFilename {
+			b, err := os.ReadFile(filepath.Join(historyDir, e.Name()))
+			if err == nil {
+				var tx HistoryTx
+				if err := json.Unmarshal(b, &tx); err == nil {
+					history = append(history, tx)
+				}
+			}
+		}
+	}
+
+	sort.Slice(history, func(i, j int) bool {
+		return history[i].Timestamp > history[j].Timestamp
+	})
+
+	if history == nil {
+		history = []HistoryTx{}
+	}
+	return history, nil
+}
+
+func revertTransaction(rootDir, txID string) error {
+	historyDir := filepath.Join(rootDir, historyDirName)
+	txFile := filepath.Join(historyDir, txID+".json")
+
+	b, err := os.ReadFile(txFile)
+	if err != nil {
+		return fmt.Errorf("transaction not found: %s", txID)
+	}
+
+	var tx HistoryTx
+	if err := json.Unmarshal(b, &tx); err != nil {
+		return fmt.Errorf("corrupt transaction file: %s", txID)
+	}
+
+	txDir := filepath.Join(historyDir, txID+"_files")
+
+	for _, op := range tx.Files {
+		targetPath := filepath.Join(rootDir, filepath.FromSlash(op.Path))
+		if !isPathSafe(rootDir, targetPath) {
+			continue
+		}
+
+		if op.Existed {
+			srcPath := filepath.Join(txDir, filepath.FromSlash(op.Path)+".bak")
+			content, err := os.ReadFile(srcPath)
+			if err != nil {
+				return fmt.Errorf("failed to read backup for %s: %v", op.Path, err)
+			}
+
+			if err := os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
+				return fmt.Errorf("failed to make target dir for %s: %v", op.Path, err)
+			}
+			if err := os.WriteFile(targetPath, content, 0644); err != nil {
+				return fmt.Errorf("failed to restore file %s: %v", op.Path, err)
+			}
+		} else {
+			_ = os.Remove(targetPath)
+		}
+	}
+
+	return nil
+}
 -- main.go --
 // :: product: FDM/NS
 // :: majorVersion: 1
-// :: fileVersion: 31
-// :: description: v1.6.0    -- treesitter and many other updates
+// :: fileVersion: 32
+// :: description: v1.6.14    -- treesitter and many other updates
 // :: filename: main.go
 // :: serialization: go
-// :: latestChange: Bumped to 1.6.3 and fixed Makefile tab stripping in unarmorText.
+// :: latestChange: Bumped to 1.6.4 and added strict timeouts and verbose debug logging to prevent UI lockups.
+// :: product: FDM/NS
+// :: majorVersion: 1
+// :: fileVersion: 33
+// :: description: v1.6.15    -- Fix ledger pollution for failed compiler checks.
+// :: filename: main.go
+// :: serialization: go
+// :: latestChange: Bumped to 1.6.15 and enforced strict per-file ledger commits.
+// :: product: FDM/NS
+// :: majorVersion: 1
+// :: fileVersion: 34
+// :: description: v1.6.16    -- Graceful skip of already-applied files.
+// :: filename: main.go
+// :: serialization: go
+// :: latestChange: Bumped to 1.6.16 and added ledger check to gracefully skip files that are already fully applied.
 package main
 
 import (
@@ -122,7 +322,7 @@ func watchSelfForReload() {
 	}
 }
 
-const AppVersion = "v1.6.4"
+const AppVersion = "v1.6.16"
 
 func getFileMeta(prof *patcheng.LanguageProfile) (string, string) {
 	if prof == nil {
@@ -180,7 +380,10 @@ func withRecoveryAndCORS(h http.HandlerFunc) http.HandlerFunc {
 				log.Printf("PANIC: %v", rec)
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusInternalServerError)
-				json.NewEncoder(w).Encode(map[string]string{"error": fmt.Sprintf("Server Panic: %v", rec)})
+				err := json.NewEncoder(w).Encode(map[string]string{"error": fmt.Sprintf("Server Panic: %v", rec)})
+				if err != nil {
+					log.Printf("[DEBUG] Failed to encode panic response: %v", err)
+				}
 			}
 		}()
 		h(w, r)
@@ -189,7 +392,10 @@ func withRecoveryAndCORS(h http.HandlerFunc) http.HandlerFunc {
 
 func newServer(rootDir string) *http.ServeMux {
 	mux := http.NewServeMux()
-	absRootDir, _ := filepath.Abs(rootDir)
+	absRootDir, err := filepath.Abs(rootDir)
+	if err != nil {
+		log.Fatalf("Failed to resolve absolute root dir: %v", err)
+	}
 	LoadLedger(absRootDir)
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -201,10 +407,14 @@ func newServer(rootDir string) *http.ServeMux {
 		html = strings.ReplaceAll(html, "{VERSION}", AppVersion)
 		html = strings.ReplaceAll(html, "{ROOT_DIR}", absRootDir)
 		w.Header().Set("Content-Type", "text/html")
-		w.Write([]byte(html))
+		_, writeErr := w.Write([]byte(html))
+		if writeErr != nil {
+			log.Printf("[DEBUG] Failed to write index.html response: %v", writeErr)
+		}
 	})
 
 	mux.HandleFunc("/api/preview", withRecoveryAndCORS(func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("[DEBUG] /api/preview request received")
 		if r.Method != http.MethodPost {
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
@@ -212,26 +422,33 @@ func newServer(rootDir string) *http.ServeMux {
 
 		var req Payload
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			log.Printf("[DEBUG] /api/preview: Invalid JSON payload: %v", err)
 			sendError(w, "Invalid JSON", http.StatusBadRequest)
 			return
 		}
 
 		parsed, err := patcheng.ParseTextBundle(req.Bundle, patcheng.DefaultRegistry)
 		if err != nil {
+			log.Printf("[DEBUG] /api/preview: ParseTextBundle failed: %v", err)
 			sendError(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		log.Printf("[DEBUG] /api/preview: successfully parsed %d files", len(parsed))
 
 		var responseFiles []PreviewFile
 		pathFixes := make(map[string]string)
 
 		for rawFilename, patches := range parsed {
 			if !isPathSafe(absRootDir, rawFilename) {
+				log.Printf("[DEBUG] /api/preview: unsafe path rejected: %s", rawFilename)
 				continue
 			}
 
 			absPath := filepath.Join(absRootDir, rawFilename)
-			contentBytes, _ := os.ReadFile(absPath)
+			contentBytes, readErr := os.ReadFile(absPath)
+			if readErr != nil && !os.IsNotExist(readErr) {
+				log.Printf("[DEBUG] /api/preview: failed to read %s: %v", absPath, readErr)
+			}
 			content := string(contentBytes)
 			prof := patcheng.DefaultRegistry.GetByExtension(filepath.Ext(rawFilename))
 			fType, fIcon := getFileMeta(prof)
@@ -244,6 +461,8 @@ func newServer(rootDir string) *http.ServeMux {
 				delta := 0
 				if p.FullOverwrite {
 					delta = countLines(p.Replace) - countLines(content)
+				} else if p.IsDeleteFile {
+					delta = -countLines(content)
 				} else {
 					delta = countLines(p.Replace) - countLines(p.Search)
 				}
@@ -253,6 +472,7 @@ func newServer(rootDir string) *http.ServeMux {
 					SearchBlock:  p.Search,
 					ReplaceBlock: p.Replace,
 					IsOverwrite:  p.FullOverwrite,
+					IsDeleteFile: p.IsDeleteFile,
 				}
 
 				patchHash := hashPatch(rawFilename, p.Search, p.Replace)
@@ -267,6 +487,7 @@ func newServer(rootDir string) *http.ServeMux {
 				} else {
 					_, pErr := patcheng.ApplyFuzzyPatchesAgnostic(prof, content, []patcheng.FuzzyPatch{p})
 					if pErr != nil {
+						log.Printf("[DEBUG] /api/preview: ApplyFuzzyPatchesAgnostic failed for patch in %s: %v", rawFilename, pErr)
 						errMsg := pErr.Error()
 						if strings.Contains(errMsg, "refusing to overwrite existing file") {
 							pp.Error = "File already exists. Use '%%% overwrite' to replace it."
@@ -301,13 +522,17 @@ func newServer(rootDir string) *http.ServeMux {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(withND("appy/preview", "Simulation results", map[string]any{
+		encErr := json.NewEncoder(w).Encode(withND("appy/preview", "Simulation results", map[string]any{
 			"files":      responseFiles,
 			"path_fixes": pathFixes,
 		}))
+		if encErr != nil {
+			log.Printf("[DEBUG] /api/preview: failed to encode response: %v", encErr)
+		}
 	}))
 
 	mux.HandleFunc("/api/apply", withRecoveryAndCORS(func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("[DEBUG] /api/apply request received")
 		if r.Method != http.MethodPost {
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
@@ -315,18 +540,23 @@ func newServer(rootDir string) *http.ServeMux {
 
 		var req Payload
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			log.Printf("[DEBUG] /api/apply: Invalid JSON payload: %v", err)
 			sendError(w, "Invalid JSON", http.StatusBadRequest)
 			return
 		}
 
 		parsed, err := patcheng.ParseTextBundle(req.Bundle, patcheng.DefaultRegistry)
 		if err != nil {
+			log.Printf("[DEBUG] /api/apply: ParseTextBundle failed: %v", err)
 			sendError(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		log.Printf("[DEBUG] /api/apply: successfully parsed %d files", len(parsed))
 
 		memoryResults := make(map[string]string)
-		appliedInThisBatch := make(map[string]bool)
+		filesToDelete := make(map[string]bool)
+		fileHashes := make(map[string][]string)
+		originalFiles := make(map[string]*[]byte)
 
 		var applyFiles []ApplyFile
 		var checkFiles []CompilerCheckFile
@@ -334,18 +564,52 @@ func newServer(rootDir string) *http.ServeMux {
 
 		for rawFilename, patches := range parsed {
 			if !isPathSafe(absRootDir, rawFilename) {
+				log.Printf("[DEBUG] /api/apply: unsafe path rejected: %s", rawFilename)
 				sendError(w, "Path traversal denied", http.StatusBadRequest)
 				return
 			}
 			absPath := filepath.Join(absRootDir, rawFilename)
-			contentBytes, _ := os.ReadFile(absPath)
+			contentBytes, errRead := os.ReadFile(absPath)
+			if errRead == nil {
+				cbCopy := make([]byte, len(contentBytes))
+				copy(cbCopy, contentBytes)
+				originalFiles[absPath] = &cbCopy
+			} else {
+				originalFiles[absPath] = nil
+			}
 			prof := patcheng.DefaultRegistry.GetByExtension(filepath.Ext(rawFilename))
 			fType, fIcon := getFileMeta(prof)
 
+			allApplied := true
+			appliedPatchesMu.RLock()
+			for _, p := range patches {
+				if !appliedPatches[hashPatch(rawFilename, p.Search, p.Replace)] {
+					allApplied = false
+					break
+				}
+			}
+			appliedPatchesMu.RUnlock()
+
+			if len(patches) > 0 && allApplied {
+				log.Printf("[DEBUG] /api/apply: all patches for %s already in ledger, skipping gracefully", rawFilename)
+				applyFiles = append(applyFiles, ApplyFile{
+					Path:     rawFilename,
+					Applied:  true,
+					NetLines: 0,
+					FileType: fType,
+					FileIcon: fIcon,
+				})
+				continue
+			}
+
 			fileNetLines := 0
+			isDeleteFile := false
 			for _, p := range patches {
 				if p.FullOverwrite {
 					fileNetLines += countLines(p.Replace) - countLines(string(contentBytes))
+				} else if p.IsDeleteFile {
+					isDeleteFile = true
+					fileNetLines -= countLines(string(contentBytes))
 				} else {
 					fileNetLines += countLines(p.Replace) - countLines(p.Search)
 				}
@@ -353,6 +617,7 @@ func newServer(rootDir string) *http.ServeMux {
 
 			newContent, applyErr := patcheng.ApplyFuzzyPatchesAgnostic(prof, string(contentBytes), patches)
 			if applyErr != nil {
+				log.Printf("[DEBUG] /api/apply: ApplyFuzzyPatchesAgnostic batch failed for %s: %v", rawFilename, applyErr)
 				if strings.Contains(applyErr.Error(), "refusing to overwrite existing file") {
 					continue // Safety ignores don't count as failures
 				}
@@ -377,6 +642,7 @@ func newServer(rootDir string) *http.ServeMux {
 							CurrentLineEcho: cur,
 							LLMFallbackHint: generateLLMFallbackHint(prof),
 						}
+						log.Printf("[DEBUG] /api/apply: individual patch failed for %s: %v", rawFilename, pErr)
 					}
 				}
 
@@ -392,16 +658,26 @@ func newServer(rootDir string) *http.ServeMux {
 				continue
 			}
 
-			if prof != nil && prof.Formatter != nil {
-				formatted, _, err := prof.Formatter(context.Background(), []byte(newContent))
+			if prof != nil && prof.Formatter != nil && !isDeleteFile {
+				log.Printf("[DEBUG] /api/apply: running formatter for %s", rawFilename)
+				ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+				formatted, _, err := prof.Formatter(ctx, []byte(newContent))
+				cancel()
 				if err == nil {
 					newContent = string(formatted)
+					log.Printf("[DEBUG] /api/apply: formatter succeeded for %s", rawFilename)
+				} else {
+					log.Printf("[DEBUG] /api/apply: formatter failed for %s (continuing anyway): %v", rawFilename, err)
 				}
 			}
 
-			memoryResults[absPath] = newContent
+			if isDeleteFile {
+				filesToDelete[absPath] = true
+			} else {
+				memoryResults[absPath] = newContent
+			}
 			for _, p := range patches {
-				appliedInThisBatch[hashPatch(rawFilename, p.Search, p.Replace)] = true
+				fileHashes[absPath] = append(fileHashes[absPath], hashPatch(rawFilename, p.Search, p.Replace))
 			}
 
 			applyFiles = append(applyFiles, ApplyFile{
@@ -414,9 +690,14 @@ func newServer(rootDir string) *http.ServeMux {
 		}
 
 		if len(memoryResults) > 0 && !req.SkipCompiler {
+			log.Printf("[DEBUG] /api/apply: running compiler preflight")
 			compErrs := runCompilerPreFlight(patcheng.DefaultRegistry, memoryResults, false)
 			for p, e := range compErrs {
-				rel, _ := filepath.Rel(absRootDir, p)
+				rel, errRel := filepath.Rel(absRootDir, p)
+				if errRel != nil {
+					log.Printf("[DEBUG] /api/apply: Rel failed for path %s: %v", p, errRel)
+					rel = p
+				}
 				hasErrors = true
 
 				if req.CheckOnly {
@@ -442,7 +723,20 @@ func newServer(rootDir string) *http.ServeMux {
 
 			if req.CheckOnly {
 				for p := range memoryResults {
-					rel, _ := filepath.Rel(absRootDir, p)
+					rel, errRel := filepath.Rel(absRootDir, p)
+					if errRel != nil {
+						rel = p
+					}
+					checkFiles = append(checkFiles, CompilerCheckFile{
+						Path:           filepath.ToSlash(rel),
+						CompilerStatus: "PASS",
+					})
+				}
+				for p := range filesToDelete {
+					rel, errRel := filepath.Rel(absRootDir, p)
+					if errRel != nil {
+						rel = p
+					}
 					checkFiles = append(checkFiles, CompilerCheckFile{
 						Path:           filepath.ToSlash(rel),
 						CompilerStatus: "PASS",
@@ -453,23 +747,45 @@ func newServer(rootDir string) *http.ServeMux {
 
 		if req.CheckOnly {
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(withND("appy/compiler-check", "Compiler pre-flight results", map[string]any{
+			encErr := json.NewEncoder(w).Encode(withND("appy/compiler-check", "Compiler pre-flight results", map[string]any{
 				"files": checkFiles,
 			}))
+			if encErr != nil {
+				log.Printf("[DEBUG] /api/apply: CheckOnly response encoding failed: %v", encErr)
+			}
 			return
 		}
 
 		if !req.CheckOnly {
+			if err := saveHistory(absRootDir, originalFiles); err != nil {
+				log.Printf("Warning: failed to save history: %v", err)
+			}
 			for path, content := range memoryResults {
-				os.MkdirAll(filepath.Dir(path), 0755)
-				os.WriteFile(path, []byte(content), 0644)
+				if errMk := os.MkdirAll(filepath.Dir(path), 0755); errMk != nil {
+					log.Printf("[DEBUG] /api/apply: MkdirAll failed for %s: %v", path, errMk)
+				}
+				if errW := os.WriteFile(path, []byte(content), 0644); errW != nil {
+					log.Printf("[DEBUG] /api/apply: WriteFile failed for %s: %v", path, errW)
+				}
+			}
+			for path := range filesToDelete {
+				if errRm := os.Remove(path); errRm != nil {
+					log.Printf("[DEBUG] /api/apply: Remove failed for %s: %v", path, errRm)
+				}
 			}
 		}
 
-		if len(memoryResults) > 0 {
+		if len(memoryResults) > 0 || len(filesToDelete) > 0 {
 			appliedPatchesMu.Lock()
-			for h := range appliedInThisBatch {
-				appliedPatches[h] = true
+			for path := range memoryResults {
+				for _, h := range fileHashes[path] {
+					appliedPatches[h] = true
+				}
+			}
+			for path := range filesToDelete {
+				for _, h := range fileHashes[path] {
+					appliedPatches[h] = true
+				}
 			}
 			appliedPatchesMu.Unlock()
 			SaveLedger(absRootDir)
@@ -478,16 +794,23 @@ func newServer(rootDir string) *http.ServeMux {
 		status := http.StatusOK
 		if hasErrors {
 			status = http.StatusMultiStatus
+			log.Printf("[DEBUG] /api/apply: Returning StatusMultiStatus due to errors")
+		} else {
+			log.Printf("[DEBUG] /api/apply: Returning StatusOK")
 		}
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
-		json.NewEncoder(w).Encode(withND("appy/apply-success", "Result", map[string]any{
+		encErr := json.NewEncoder(w).Encode(withND("appy/apply-success", "Result", map[string]any{
 			"files": applyFiles,
 		}))
+		if encErr != nil {
+			log.Printf("[DEBUG] /api/apply: Final response encoding failed: %v", encErr)
+		}
 	}))
 
 	mux.HandleFunc("/api/retest", withRecoveryAndCORS(func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("[DEBUG] /api/retest request received")
 		if r.Method != http.MethodPost {
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
@@ -495,6 +818,7 @@ func newServer(rootDir string) *http.ServeMux {
 
 		var req RetestPayload
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			log.Printf("[DEBUG] /api/retest: Invalid JSON payload: %v", err)
 			sendError(w, "Invalid JSON", http.StatusBadRequest)
 			return
 		}
@@ -502,6 +826,7 @@ func newServer(rootDir string) *http.ServeMux {
 		opts := retest.Options{JSONMode: true, Args: req.Packages}
 		report, err := retest.Run(r.Context(), opts)
 		if err != nil {
+			log.Printf("[DEBUG] /api/retest: retest.Run failed: %v", err)
 			sendError(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -521,12 +846,71 @@ func newServer(rootDir string) *http.ServeMux {
 			Files:    outFiles,
 		}
 
-		b, _ := json.Marshal(response)
+		b, errMarsh := json.Marshal(response)
+		if errMarsh != nil {
+			log.Printf("[DEBUG] /api/retest: JSON marshal failed: %v", errMarsh)
+			sendError(w, "Failed to encode response", http.StatusInternalServerError)
+			return
+		}
 		var rm map[string]any
-		json.Unmarshal(b, &rm)
+		if errUnmarsh := json.Unmarshal(b, &rm); errUnmarsh != nil {
+			log.Printf("[DEBUG] /api/retest: JSON unmarshal failed: %v", errUnmarsh)
+			sendError(w, "Failed to decode response structure", http.StatusInternalServerError)
+			return
+		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(withND("appy/retest", "Test execution report", rm))
+		encErr := json.NewEncoder(w).Encode(withND("appy/retest", "Test execution report", rm))
+		if encErr != nil {
+			log.Printf("[DEBUG] /api/retest: Final response encoding failed: %v", encErr)
+		}
+	}))
+
+	mux.HandleFunc("/api/history", withRecoveryAndCORS(func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("[DEBUG] /api/history request received")
+		if r.Method != http.MethodGet {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		hist, err := listHistory(absRootDir)
+		if err != nil {
+			log.Printf("[DEBUG] /api/history: listHistory failed: %v", err)
+			sendError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		encErr := json.NewEncoder(w).Encode(withND("appy/history", "Patch transaction history", map[string]any{
+			"history": hist,
+		}))
+		if encErr != nil {
+			log.Printf("[DEBUG] /api/history: Final response encoding failed: %v", encErr)
+		}
+	}))
+
+	mux.HandleFunc("/api/revert", withRecoveryAndCORS(func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("[DEBUG] /api/revert request received")
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		var req RevertPayload
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			log.Printf("[DEBUG] /api/revert: Invalid JSON payload: %v", err)
+			sendError(w, "Invalid JSON", http.StatusBadRequest)
+			return
+		}
+		if err := revertTransaction(absRootDir, req.TxID); err != nil {
+			log.Printf("[DEBUG] /api/revert: revertTransaction failed for %s: %v", req.TxID, err)
+			sendError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		encErr := json.NewEncoder(w).Encode(withND("appy/revert", "Revert completed", map[string]any{
+			"reverted": true,
+		}))
+		if encErr != nil {
+			log.Printf("[DEBUG] /api/revert: Final response encoding failed: %v", encErr)
+		}
 	}))
 
 	return mux
@@ -538,10 +922,13 @@ func main() {
 
 	go watchSelfForReload()
 
-	cwd, _ := os.Getwd()
+	cwd, err := os.Getwd()
+	if err != nil {
+		log.Fatalf("Failed to get current working directory: %v", err)
+	}
 	fmt.Printf("Appy %s on http://localhost:%s\n", AppVersion, *port)
 
-	http.ListenAndServe(":"+*port, newServer(cwd))
+	log.Fatal(http.ListenAndServe(":"+*port, newServer(cwd)))
 }
 -- main_test.go --
 // :: product: FDM/NS
@@ -1263,6 +1650,10 @@ CONFIRM
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
 
+	if w.Result().StatusCode != http.StatusOK {
+		t.Fatalf("Expected 200 OK for delete_file, got %d", w.Result().StatusCode)
+	}
+
 	if _, err := os.Stat(targetFile); !os.IsNotExist(err) {
 		t.Errorf("Expected file to be deleted from disk, but it still exists")
 	}
@@ -1529,6 +1920,21 @@ type RetestPayload struct {
 	Packages []string `json:"packages"`
 }
 
+type HistoryTx struct {
+	TxID      string          `json:"tx_id"`
+	Timestamp int64           `json:"timestamp"`
+	Files     []HistoryFileOp `json:"files"`
+}
+
+type HistoryFileOp struct {
+	Path    string `json:"path"`
+	Existed bool   `json:"existed"`
+}
+
+type RevertPayload struct {
+	TxID string `json:"tx_id"`
+}
+
 type PreviewFile struct {
 	Path     string         `json:"path"`
 	Status   string         `json:"status"` // READY, ERROR, IGNORED
@@ -1696,92 +2102,91 @@ func TestSaveLedger_WriteError(t *testing.T) {
 package main
 
 const cssStyles = `
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Helvetica Neue", sans-serif; background: #0b0f19; color: #e2e8f0; margin: 0; padding: 20px; font-size: 15px; }
-        .container { display: flex; flex-direction: column; height: 95vh; max-width: 1400px; margin: 0 auto; gap: 20px; }
-        
-        .header-zone { display: flex; flex-direction: column; }
-        
-        textarea { flex: 1; background: #121826; color: #a0aec0; border: 1px solid #2d3748; padding: 18px; font-family: 'Consolas', 'JetBrains Mono', monospace; font-size: 14px; resize: none; border-radius: 6px; outline: none; box-shadow: inset 0 2px 4px rgba(0,0,0,0.2); transition: border-color 0.2s; }
-        textarea:focus { border-color: #3b82f6; box-shadow: 0 0 0 1px #3b82f6, inset 0 2px 4px rgba(0,0,0,0.2); }
-        
-        .controls { display: flex; justify-content: space-between; align-items: center; background: #121826; padding: 12px 18px; border-radius: 6px; border: 1px solid #2d3748; }
-        .control-group { display: flex; gap: 8px; align-items: center; }
-        .prep-group { justify-content: flex-start; flex: 1; }
-        .action-group { justify-content: center; flex: 1; }
-        .export-group { justify-content: flex-end; flex: 1; position: relative; }
-        
-               button { padding: 0 16px; height: 38px; min-width: 145px; justify-content: center;
+       body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Helvetica Neue", sans-serif; background: #0b0f19; color: #e2e8f0; margin: 0; padding: 20px; font-size: 15px; }
+       .container { display: flex; flex-direction: column; height: 95vh; max-width: 1400px; margin: 0 auto; gap: 20px; }
+       
+       .header-zone { display: flex; flex-direction: column; }
+       
+       textarea { flex: 1; background: #121826; color: #a0aec0; border: 1px solid #2d3748; padding: 18px; font-family: 'Consolas', 'JetBrains Mono', monospace; font-size: 14px; resize: none; border-radius: 6px; outline: none; box-shadow: inset 0 2px 4px rgba(0,0,0,0.2); transition: border-color 0.2s; }
+       textarea:focus { border-color: #3b82f6; box-shadow: 0 0 0 1px #3b82f6, inset 0 2px 4px rgba(0,0,0,0.2); }
+       
+       .controls { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; background: #121826; padding: 12px 18px; border-radius: 6px; border: 1px solid #2d3748; }
+       .control-group { display: flex; gap: 8px; align-items: center; }
+       .prep-group { justify-content: flex-start; }
+       .action-group { justify-content: center; }
+       .export-group { justify-content: flex-end; position: relative; }
+       
+              button { padding: 0 16px; height: 38px; min-width: 100px; justify-content: center;
 border: none; border-radius: 4px; font-size: 14px; cursor: pointer; font-weight: 600; transition: all 0.2s ease; letter-spacing: 0.3px; display: flex; align-items: center;
 gap: 6px; white-space: nowrap; box-sizing: border-box; }
-        button:hover { filter: brightness(1.15); transform: translateY(-1px); }
-        button:active { transform: translateY(0); }
-        button:disabled { opacity: 0.4; cursor: not-allowed; transform: none; filter: none; }
-        
-        #clearPasteBtn { background: #3f3f46; color: white; border: 1px solid #52525b; }
-        #checkBtn { background: #ca8a04; color: #fff; border: 1px solid #eab308; }
-        #applyBtn { background: #2563eb; color: white; border: 1px solid #3b82f6; }
-        #applyBtn.ready { background: #16a34a; border-color: #22c55e; box-shadow: 0 0 10px rgba(34, 197, 94, 0.3); }
-        #unarmorBtn { background: #7c3aed; color: #fff; max-width: 0; padding-left: 0; padding-right: 0; opacity: 0; overflow: hidden; white-space: nowrap; transition: all 0.3s ease; display: none; }
-        #unarmorBtn.show { max-width: 200px; padding-left: 20px; padding-right: 20px; opacity: 1; border: 1px solid #8b5cf6; }
-        #fixPathsBtn { background: #0891b2; color: white; border: 1px solid #06b6d4; }
-        #copyLedgerBtn { background: #475569; color: white; border: 1px solid #64748b; }
-        #retestBtn { background: #0284c7; color: white; border: 1px solid #06b6d4; }
-               #cancelRetestBtn { background: #dc2626; color: white;
-border: 1px solid #ef4444; }
-       #autoBtn { background: #0f766e; color: white; border: 1px solid #06b6d4; }
+       button:hover { filter: brightness(1.15); transform: translateY(-1px); }
+       button:active { transform: translateY(0); }
+       button:disabled { opacity: 0.4; cursor: not-allowed; transform: none; filter: none; }
        
-       #copyTraceBtn.trace-blue { background: #0284c7; color: white; border: 1px solid #0ea5e9; }
-       #copyTraceBtn.trace-purple { background: #7c3aed; color: white; border: 1px solid #8b5cf6; }
-       #copyTraceBtn.trace-red { background: #dc2626; color: white; border: 1px solid #ef4444; }
+       #clearPasteBtn { background: #3f3f46; color: white; border: 1px solid #52525b; }
+       #checkBtn { background: #ca8a04; color: #fff; border: 1px solid #eab308; }
+       #applyBtn { background: #2563eb; color: white; border: 1px solid #3b82f6; }
+       #applyBtn.ready { background: #16a34a; border-color: #22c55e; box-shadow: 0 0 10px rgba(34, 197, 94, 0.3); }
+       
+       #fixPathsBtn { background: #0891b2; color: white; border: 1px solid #06b6d4; }
+       #copyLedgerBtn, #historyBtn { background: #475569; color: white; border: 1px solid #64748b; }
+       #retestBtn { background: #0284c7; color: white; border: 1px solid #06b6d4; }
+              #cancelRetestBtn { background: #dc2626; color: white;
+border: 1px solid #ef4444; }
+      #autoBtn { background: #0f766e; color: white; border: 1px solid #06b6d4; }
+      
+      #copyTraceBtn.trace-blue { background: #0284c7; color: white; border: 1px solid #0ea5e9; }
+      #copyTraceBtn.trace-purple { background: #7c3aed; color: white; border: 1px solid #8b5cf6; }
+      #copyTraceBtn.trace-red { background: #dc2626; color: white; border: 1px solid #ef4444; }
 
-        .output { flex: 1; background: #0f1420; border: 1px solid #2d3748; padding: 20px; overflow-y: auto; border-radius: 6px; font-family: 'Consolas', 'JetBrains Mono', monospace; font-size: 13.5px; line-height: 1.6; box-shadow: inset 0 2px 4px rgba(0,0,0,0.1); }
-        
-        .file-block { margin-bottom: 16px; border: 1px solid #334155; border-radius: 6px; overflow: hidden; background: #1e293b; transition: all 0.2s; box-shadow: 0 2px 5px rgba(0,0,0,0.15); }
-        
-        .file-block.status-ready { border-color: #16a34a; }
-        .file-block.status-ready .file-header { background: rgba(22, 163, 74, 0.15); color: #bbf7d0; border-bottom: 1px solid rgba(22, 163, 74, 0.3); }
-        
-        .file-block.status-applied { border-color: #475569; opacity: 0.85; }
-        .file-block.status-applied .file-header { background: rgba(71, 85, 105, 0.2); color: #cbd5e1; border-bottom: 1px solid rgba(71, 85, 105, 0.4); }
-        
-        .file-block.status-error { border-color: #ef4444; }
-        .file-block.status-error .file-header { background: rgba(239, 68, 68, 0.15); color: #fecaca; border-bottom: 1px solid rgba(239, 68, 68, 0.3); }
-        
-        .file-block.status-ignored { border-color: #f59e0b; }
-        .file-block.status-ignored .file-header { background: rgba(245, 158, 11, 0.15); color: #fef08a; border-bottom: 1px solid rgba(245, 158, 11, 0.3); }
-        
-        .file-header { background: #1e293b; padding: 10px 16px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; user-select: none; transition: background 0.2s; font-family: -apple-system, BlinkMacSystemFont, sans-serif; letter-spacing: 0.2px; }
-        .file-header:hover { filter: brightness(1.2); }
-        
-        .file-content { padding: 14px 16px; }
-        .file-block[open] .file-content { display: block; }
-        
-        .patch-block { margin-bottom: 18px; padding-bottom: 18px; border-bottom: 1px dashed #475569; }
-        .patch-block:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
-        
-        .status-badge { padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; }
-        .status-ready { background: rgba(34, 197, 94, 0.2); color: #4ade80; border: 1px solid rgba(34, 197, 94, 0.3); }
-        .status-error { background: rgba(239, 68, 68, 0.2); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.3); }
-        .status-ignored { background: rgba(245, 158, 11, 0.2); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.3); }
-        .status-applied { background: rgba(100, 116, 139, 0.2); color: #94a3b8; border: 1px solid rgba(100, 116, 139, 0.3); }
-        
-               .net-lines { font-family: 'Consolas', monospace;
+       .output { flex: 1; background: #0f1420; border: 1px solid #2d3748; padding: 20px; overflow-y: auto; border-radius: 6px; font-family: 'Consolas', 'JetBrains Mono', monospace; font-size: 13.5px; line-height: 1.6; box-shadow: inset 0 2px 4px rgba(0,0,0,0.1); }
+       
+       .file-block { margin-bottom: 16px; border: 1px solid #334155; border-radius: 6px; overflow: hidden; background: #1e293b; transition: all 0.2s; box-shadow: 0 2px 5px rgba(0,0,0,0.15); }
+       
+       .file-block.status-ready { border-color: #16a34a; }
+       .file-block.status-ready .file-header { background: rgba(22, 163, 74, 0.15); color: #bbf7d0; border-bottom: 1px solid rgba(22, 163, 74, 0.3); }
+       
+       .file-block.status-applied { border-color: #475569; opacity: 0.85; }
+       .file-block.status-applied .file-header { background: rgba(71, 85, 105, 0.2); color: #cbd5e1; border-bottom: 1px solid rgba(71, 85, 105, 0.4); }
+       
+       .file-block.status-error { border-color: #ef4444; }
+       .file-block.status-error .file-header { background: rgba(239, 68, 68, 0.15); color: #fecaca; border-bottom: 1px solid rgba(239, 68, 68, 0.3); }
+       
+       .file-block.status-ignored { border-color: #f59e0b; }
+       .file-block.status-ignored .file-header { background: rgba(245, 158, 11, 0.15); color: #fef08a; border-bottom: 1px solid rgba(245, 158, 11, 0.3); }
+       
+       .file-header { background: #1e293b; padding: 10px 16px; cursor: pointer; display: flex; justify-content: space-between; align-items: center; user-select: none; transition: background 0.2s; font-family: -apple-system, BlinkMacSystemFont, sans-serif; letter-spacing: 0.2px; }
+       .file-header:hover { filter: brightness(1.2); }
+       
+       .file-content { padding: 14px 16px; }
+       .file-block[open] .file-content { display: block; }
+       
+       .patch-block { margin-bottom: 18px; padding-bottom: 18px; border-bottom: 1px dashed #475569; }
+       .patch-block:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
+       
+       .status-badge { padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; }
+       .status-ready { background: rgba(34, 197, 94, 0.2); color: #4ade80; border: 1px solid rgba(34, 197, 94, 0.3); }
+       .status-error { background: rgba(239, 68, 68, 0.2); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.3); }
+       .status-ignored { background: rgba(245, 158, 11, 0.2); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.3); }
+       .status-applied { background: rgba(100, 116, 139, 0.2); color: #94a3b8; border: 1px solid rgba(100, 116, 139, 0.3); }
+       
+              .net-lines { font-family: 'Consolas', monospace;
 font-size: 11px; color: #94a3b8; margin-left: 12px; padding: 2px 6px; background: rgba(0,0,0,0.25); border-radius: 4px; border: 1px solid rgba(255,255,255,0.05);
 }
-       .file-type-tag { font-family: -apple-system, BlinkMacSystemFont, sans-serif; font-size: 11px; padding: 2px 6px; background: rgba(0,0,0,0.25); border-radius: 4px; margin-right: 10px; display: inline-flex; align-items: center; gap: 4px; color: #cbd5e1; border: 1px solid rgba(255,255,255,0.05); letter-spacing: 0.3px;}
-        .rhs-chips { display: flex; align-items: center; gap: 8px; }
-        
-        .error-msg { color: #f87171; margin-top: 8px; font-size: 13px; font-weight: 500; }
-        
-        .replace-block { color: #86efac; margin-top: 8px; white-space: pre-wrap; background: rgba(34, 197, 94, 0.08); padding: 10px 12px; border-left: 3px solid #22c55e; border-radius: 0 4px 4px 0; }
-        .replace-block.applied { color: #94a3b8; background: rgba(100, 116, 139, 0.08); border-left: 3px solid #64748b; }
-        
-        .hint-block { color: #7dd3fc; margin-top: 8px; white-space: pre-wrap; background: rgba(6, 182, 212, 0.08); padding: 10px 12px; border-left: 3px dashed #06b6d4; border-radius: 0 4px 4px 0; }
-        
-        ::-webkit-scrollbar { width: 8px; height: 8px; }
-        ::-webkit-scrollbar-track { background: #0f1420; border-radius: 4px; }
-        ::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
-        ::-webkit-scrollbar-thumb:hover { background: #475569; }
+      .file-type-tag { font-family: -apple-system, BlinkMacSystemFont, sans-serif; font-size: 11px; padding: 2px 6px; background: rgba(0,0,0,0.25); border-radius: 4px; margin-right: 10px; display: inline-flex; align-items: center; gap: 4px; color: #cbd5e1; border: 1px solid rgba(255,255,255,0.05); letter-spacing: 0.3px;}
+       .rhs-chips { display: flex; align-items: center; gap: 8px; }
+       
+       .error-msg { color: #f87171; margin-top: 8px; font-size: 13px; font-weight: 500; }
+       
+       .replace-block { color: #86efac; margin-top: 8px; white-space: pre-wrap; background: rgba(34, 197, 94, 0.08); padding: 10px 12px; border-left: 3px solid #22c55e; border-radius: 0 4px 4px 0; }
+       .replace-block.applied { color: #94a3b8; background: rgba(100, 116, 139, 0.08); border-left: 3px solid #64748b; }
+       
+       .hint-block { color: #7dd3fc; margin-top: 8px; white-space: pre-wrap; background: rgba(6, 182, 212, 0.08); padding: 10px 12px; border-left: 3px dashed #06b6d4; border-radius: 0 4px 4px 0; }
+       
+       ::-webkit-scrollbar { width: 8px; height: 8px; }
+       ::-webkit-scrollbar-track { background: #0f1420; border-radius: 4px; }
+       ::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
+       ::-webkit-scrollbar-thumb:hover { background: #475569; }
 `
 -- ui_e2e_test.go --
 // :: product: FDM/NS
@@ -1896,14 +2301,12 @@ func TestE2E_UI_InitialState(t *testing.T) {
 	defer cancelTimeout()
 
 	var checkBtnDisabled, applyBtnDisabled bool
-	var unarmorDisplay string
 
 	err := chromedp.Run(ctx,
 		chromedp.Navigate(ts.URL),
 		chromedp.WaitVisible(`#bundleInput`, chromedp.ByQuery),
 		chromedp.Evaluate(`document.getElementById('checkBtn').hasAttribute('disabled')`, &checkBtnDisabled),
 		chromedp.Evaluate(`document.getElementById('applyBtn').hasAttribute('disabled')`, &applyBtnDisabled),
-		chromedp.Evaluate(`document.getElementById('unarmorBtn').style.display || "none"`, &unarmorDisplay),
 	)
 	if err != nil {
 		t.Fatalf("Chromedp run failed: %v", err)
@@ -1911,9 +2314,6 @@ func TestE2E_UI_InitialState(t *testing.T) {
 
 	if !checkBtnDisabled || !applyBtnDisabled {
 		t.Errorf("Expected check and apply buttons to be disabled on load")
-	}
-	if unarmorDisplay != "none" && unarmorDisplay != "" {
-		t.Errorf("Expected unarmor button to be hidden on load, got display: %s", unarmorDisplay)
 	}
 }
 
@@ -1925,8 +2325,6 @@ func TestE2E_UI_ArmorLogic(t *testing.T) {
 	ctx, cancelTimeout := context.WithTimeout(ctx, 10*time.Second)
 	defer cancelTimeout()
 
-	var display string
-
 	// Helper to set textarea value and trigger input event
 	setInput := func(val string) chromedp.Action {
 		return chromedp.Evaluate(fmt.Sprintf(`
@@ -1936,41 +2334,41 @@ el.dispatchEvent(new Event('input'));
 `, val), nil)
 	}
 
+	var inputVal string
+
+	// 1. Mixed text with < 2 armors (should not unarmor)
 	err := chromedp.Run(ctx,
 		chromedp.Navigate(ts.URL),
 		chromedp.WaitVisible(`#bundleInput`, chromedp.ByQuery),
-
-		// 1. Mixed text (should hide)
-		// 1. Mixed text with < 2 armors (should hide)
 		setInput("@@@line 1\nline 2"),
 		chromedp.Sleep(100*time.Millisecond),
-		chromedp.Evaluate(`document.getElementById('unarmorBtn').style.display || "none"`, &display),
+		chromedp.Evaluate(`document.getElementById('bundleInput').value`, &inputVal),
 	)
 	if err != nil {
 		t.Fatalf("Chromedp run failed: %v", err)
 	}
-	if display != "none" {
-		t.Errorf("Expected unarmor button to be hidden for < 2 armors, got %s", display)
+	if inputVal != "@@@line 1\nline 2" {
+		t.Errorf("Expected < 2 armors to remain untouched, got: %s", inputVal)
 	}
 
+	// 2. Mixed text with >= 2 armors (should auto-unarmor)
 	err = chromedp.Run(ctx,
-		// 2. Mixed text with >= 2 armors (should show)
 		setInput("@@@line 1\nline 2\n\n@@@line 3"),
 		chromedp.Sleep(100*time.Millisecond),
-		chromedp.Evaluate(`document.getElementById('unarmorBtn').style.display`, &display),
+		chromedp.Evaluate(`document.getElementById('bundleInput').value`, &inputVal),
 	)
 	if err != nil {
 		t.Fatalf("Chromedp run failed: %v", err)
 	}
-	if display != "inline-block" {
-		t.Errorf("Expected unarmor button to be shown for >= 2 armors, got %s", display)
+	expectedAuto := "line 1\nline 2\n\nline 3"
+	if inputVal != expectedAuto {
+		t.Errorf("Expected >= 2 armors to auto-unarmor, got: %s", inputVal)
 	}
 
 	// 3. Unarmor text handles LLM artifact leading spaces correctly
-	var inputVal string
 	err = chromedp.Run(ctx,
 		setInput("@@@ %%% filename: foo\n@@@ %%% replace\n@@@ %%% with\n@@@ %%% end"),
-		chromedp.Evaluate(`document.getElementById('unarmorBtn').click()`, nil),
+		chromedp.Sleep(100*time.Millisecond),
 		chromedp.Evaluate(`document.getElementById('bundleInput').value`, &inputVal),
 	)
 	if err != nil {
@@ -1984,7 +2382,7 @@ el.dispatchEvent(new Event('input'));
 	// 4. Unarmor text preserves indentation for NDCL and code
 	err = chromedp.Run(ctx,
 		setInput("@@@ %%% replace\n@@@   - [ ] Item\n@@@     - [x] Subitem\n@@@ %%% end"),
-		chromedp.Evaluate(`document.getElementById('unarmorBtn').click()`, nil),
+		chromedp.Sleep(100*time.Millisecond),
 		chromedp.Evaluate(`document.getElementById('bundleInput').value`, &inputVal),
 	)
 	if err != nil {
@@ -1998,7 +2396,7 @@ el.dispatchEvent(new Event('input'));
 	// 5. Unarmor text preserves tabs (crucial for Makefiles)
 	err = chromedp.Run(ctx,
 		setInput("@@@ %%% replace\n@@@\tbuild:\n@@@\t\tgo build .\n@@@ %%% end"),
-		chromedp.Evaluate(`document.getElementById('unarmorBtn').click()`, nil),
+		chromedp.Sleep(100*time.Millisecond),
 		chromedp.Evaluate(`document.getElementById('bundleInput').value`, &inputVal),
 	)
 	if err != nil {
@@ -2511,31 +2909,30 @@ const htmlMiddle = `</style>
         <textarea id="bundleInput" placeholder="Paste the raw LLM output here (including the markdown code blocks and %%% syntax)..." oninput="debouncePreview()"></textarea>
        
        <div class="controls">
-           <div class="control-group prep-group">
-               <button id="autoBtn" onclick="runAutoPilot()">🤖 Auto-Pilot</button>
-               <button id="clearPasteBtn" onclick="clearAndPaste()">📋 Clear & Paste</button>
-               <button id="unarmorBtn" onclick="unarmorText()">🛡️ Remove @@@</button>
+                               <div class="control-group prep-group">
+              <button id="autoBtn" onclick="runAutoPilot()">🤖 Auto</button>
+              <button id="clearPasteBtn" onclick="clearAndPaste()">📋 Paste</button>
+              <button id="fixPathsBtn" onclick="fixFilePaths()" style="display: none;">🔧 Fix Paths</button>
+              <button id="historyBtn" onclick="toggleHistory()">⏪ History</button>
+          </div>
           
-     <button id="fixPathsBtn" onclick="fixFilePaths()" style="display: none;">🔧 Fix File Paths</button>
-           </div>
-           
-           <div class="control-group action-group">
-               <button id="checkBtn" onclick="checkSyntax()" disabled>🧪 Check Compiler</button>
-               <button id="applyBtn" onclick="applyBundle()" disabled>🚀 Apply to Disk</button>
-      
-               <button id="retestBtn" onclick="runRetest()" style="display: none;">🔄 Retest Impacted</button>
-               <button id="cancelRetestBtn" onclick="cancelRetest()" style="display: none;">⏹️ Stop</button>
-           </div>
-           
-           <div class="control-group export-group">
-               <button id="copyTraceBtn" onclick="copyTraceReport()" style="display: none;">📋 Copy Trace</button>
-           </div>
+          <div class="control-group action-group">
+              <button id="checkBtn" onclick="checkSyntax()" disabled>🧪 Check</button>
+              <button id="applyBtn" onclick="applyBundle()" disabled>🚀 Apply</button>
+              <button id="retestBtn" onclick="runRetest()" style="display: none;">🔄 Retest</button>
+              <button id="cancelRetestBtn" onclick="cancelRetest()" style="display: none;">⏹️ Stop</button>
+          </div>
+          
+          <div class="control-group export-group">
+              <button id="copyTraceBtn" onclick="copyTraceReport()" style="display: none;">📋 Copy</button>
+          </div>
        </div>
        
-       <div id="output" class="output">
-           <em>Waiting for input...</em>
-       </div>
-   </div>
+             <div id="output" class="output">
+          <em>Waiting for input...</em>
+      </div>
+      <div id="historyOutput" class="output" style="display: none;"></div>
+  </div>
    <script>`
 
 const htmlBottom = `</script>
@@ -2561,8 +2958,9 @@ const applyBtn = document.getElementById('applyBtn');
 const checkBtn = document.getElementById('checkBtn');
 const autoBtn = document.getElementById('autoBtn');
 const clearPasteBtn = document.getElementById('clearPasteBtn');
-const unarmorBtn = document.getElementById('unarmorBtn');
+
 const fixPathsBtn = document.getElementById('fixPathsBtn');
+const historyBtn = document.getElementById('historyBtn');
 const copyTraceBtn = document.getElementById('copyTraceBtn');
 const retestBtn = document.getElementById('retestBtn');
 let previewTimeout;
@@ -2594,26 +2992,13 @@ function syncUIState() {
           armorCount++;
       }
   }
-  if (armorCount >= 2) {
-      hasArmor = true;
-  }
-
-   if (hasArmor) {
-       unarmorBtn.classList.add('show');
-       unarmorBtn.style.display = 'inline-block';
-   } else {
-       unarmorBtn.classList.remove('show');
-       unarmorBtn.style.display = 'none';
-   }
-}
-
-function unarmorText() {
-   // Consume exactly ONE optional standard/non-breaking space left behind by LLMs
-   // to preserve the structural indentation necessary for checklists and code.
-   // CRITICAL: We do NOT consume \t here, because that destroys Makefile command indentation.
-   inputEl.value = inputEl.value.replace(/^@@@[ \u00A0]?/gm, '');
-   syncUIState();
-   sendRequest('/api/preview');
+   if (armorCount >= 2) {
+     // Auto-unarmor
+     // Consume exactly ONE optional standard/non-breaking space left behind by LLMs
+     // to preserve the structural indentation necessary for checklists and code.
+     // CRITICAL: We do NOT consume \t here, because that destroys Makefile command indentation.
+     inputEl.value = inputEl.value.replace(/^@@@[ \u00A0]?/gm, '');
+ }
 }
 
 function debouncePreview() {
@@ -2652,10 +3037,16 @@ function setExportMode(label, severity) {
 }
 
 async function checkSyntax() {
+   checkBtn.innerText = "⏳ Checking...";
+   applyBtn.disabled = true;
+   checkBtn.disabled = true;
    sendRequest('/api/apply', false, true);
 }
 
 async function applyBundle() {
+   applyBtn.innerText = "⏳ Applying...";
+   applyBtn.disabled = true;
+   checkBtn.disabled = true;
    sendRequest('/api/apply', true, false);
 }
 
@@ -2670,12 +3061,14 @@ async function sendRequest(endpoint, skipCompiler = false, checkOnly = false) {
        });
        const data = await res.json();
        
-       if (data.error) {
+              if (data.error) {
            outputEl.innerHTML = "<div class='error' style='margin-top:15px; padding: 15px; border: 1px solid #f44336; border-radius: 4px; background: rgba(244,67,54,0.1);'><strong>Server Error:</strong> " + escapeHtml(data.error) + "</div>";
            window.tracePayload = "**Appy Server Error**\n\n" + data.error;
            setExportMode('errors');
            applyBtn.disabled = true;
            checkBtn.disabled = true;
+           checkBtn.innerText = "🧪 Check";
+           applyBtn.innerText = "🚀 Apply";
            return;
        }
 
@@ -2684,10 +3077,12 @@ async function sendRequest(endpoint, skipCompiler = false, checkOnly = false) {
        } else {
            renderPreview(data);
        }
-   } catch (err) {
+      } catch (err) {
        outputEl.innerHTML = "<div class='error'>Error: " + err.message + "</div>";
        window.tracePayload = "**Appy Network/Client Error**\n\n" + err.message;
        setExportMode('errors');
+       checkBtn.innerText = "🧪 Check";
+       applyBtn.innerText = "🚀 Apply";
    }
 }
 
@@ -2748,20 +3143,18 @@ function addDecorator(el, emoji) {
 
 async function runAutoPilot() {
    autoBtn.disabled = true;
-   autoBtn.innerText = "🤖 Auto-Piloting...";
+     autoBtn.innerText = "🤖 Auto...";
    try {
        // 1. Paste
        inputEl.value = await navigator.clipboard.readText();
        syncUIState();
        
        // 2. Unarmor
-       if (unarmorBtn.classList.contains('show')) {
-           // CRITICAL: We do NOT consume \t here, because that destroys Makefile command indentation.
-           inputEl.value = inputEl.value.replace(/^@@@[ \u00A0]?/gm, '');
-           syncUIState();
-       }
-       
-       if (!inputEl.value.trim()) throw new Error("Clipboard empty");
+             // 2. Unarmor (Handled automatically by syncUIState, but ensuring it here just in case)
+      inputEl.value = inputEl.value.replace(/^@@@[ \u00A0]?/gm, '');
+      syncUIState();
+      
+      if (!inputEl.value.trim()) throw new Error("Clipboard empty");
        // 3. Preview
        const previewRes = await fetch('/api/preview', {
            method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -2791,13 +3184,77 @@ async function runAutoPilot() {
        console.warn(err);
    } finally {
        autoBtn.disabled = false;
-       autoBtn.innerText = "🤖 Auto-Pilot";
+             autoBtn.innerText = "🤖 Auto";
    }
 }
 
 function escapeHtml(unsafe) {
-   if (!unsafe) return "";
-   return unsafe.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  if (!unsafe) return "";
+  return unsafe.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+let showingHistory = false;
+async function toggleHistory() {
+   showingHistory = !showingHistory;
+   if (showingHistory) {
+       outputEl.style.display = 'none';
+       document.getElementById('historyOutput').style.display = 'block';
+       historyBtn.innerText = "🔙 Back";
+       await loadHistory();
+   } else {
+       outputEl.style.display = 'block';
+       document.getElementById('historyOutput').style.display = 'none';
+       historyBtn.innerText = "⏪ History";
+   }
+}
+
+async function loadHistory() {
+   const histEl = document.getElementById('historyOutput');
+   histEl.innerHTML = "<em>Loading history...</em>";
+   try {
+       const res = await fetch('/api/history');
+       const data = await res.json();
+       if (!data.history || data.history.length === 0) {
+           histEl.innerHTML = "<em>No history available.</em>";
+           return;
+       }
+       let html = "";
+       data.history.forEach(tx => {
+           const d = new Date(tx.timestamp * 1000).toLocaleString();
+           html += '<div class="file-block status-applied" style="padding: 15px; margin-bottom: 10px;">';
+           html += '<div style="font-weight: bold; margin-bottom: 8px;">' + escapeHtml(d) + ' <span style="font-size: 11px; color: #94a3b8; font-weight: normal;">(' + escapeHtml(tx.tx_id) + ')</span></div>';
+           tx.files.forEach(f => {
+               html += '<div style="font-family: monospace; font-size: 12px; color: #cbd5e1; margin-bottom: 4px;">';
+               html += (f.existed ? '<span style="color: #fbbf24;">[MOD/DEL]</span> ' : '<span style="color: #4ade80;">[CREATE]</span> ') + escapeHtml(f.path);
+               html += '</div>';
+           });
+           html += '<button onclick="revertTx(\'' + escapeHtml(tx.tx_id) + '\')" style="margin-top: 10px; height: 30px; min-width: 100px; background: #dc2626; color: white; border: 1px solid #ef4444; border-radius: 4px; cursor: pointer;">Revert This Patch</button>';
+           html += '</div>';
+       });
+       histEl.innerHTML = html;
+   } catch(err) {
+       histEl.innerHTML = "<div class='error'>Failed to load history: " + err.message + "</div>";
+   }
+}
+
+async function revertTx(txId) {
+   if (!confirm("Are you sure you want to revert " + txId + "? This will restore original file contents and CANNOT be undone.")) return;
+   try {
+       const res = await fetch('/api/revert', {
+           method: 'POST',
+           headers: { 'Content-Type': 'application/json' },
+           body: JSON.stringify({ tx_id: txId })
+       });
+       const data = await res.json();
+       if (data.error) {
+           alert("Revert failed: " + data.error);
+           return;
+       }
+       alert("Revert successful. Reloading history.");
+       loadHistory();
+   } catch (err) {
+       alert("Revert failed: " + err.message);
+   }
 }
 `
 -- ui_script_render.go --
@@ -2845,11 +3302,14 @@ function renderResult(data, isCheck) {
            setExportMode('Compiler', 'error');
 }
 
-        const anyOk = document.querySelectorAll('.file-block.status-ready').length > 0;
+                const anyOk = document.querySelectorAll('.file-block.status-ready').length > 0;
         applyBtn.disabled = !anyOk;
         if (anyOk) applyBtn.classList.add('ready');
         else applyBtn.classList.remove('ready');
         
+        checkBtn.disabled = false;
+        checkBtn.innerText = "🧪 Check";
+        applyBtn.innerText = "🚀 Apply";
         return;
     }
 
@@ -2934,7 +3394,7 @@ function renderResult(data, isCheck) {
     applyBtn.disabled = true;
     applyBtn.classList.remove('ready');
     applyBtn.innerText = "Applied!";
-    setTimeout(() => { applyBtn.innerText = "🚀 Apply to Disk"; }, 2500);
+       setTimeout(() => { applyBtn.innerText = "🚀 Apply"; }, 2500);
 }
 
 function renderPreview(data) {
@@ -3065,7 +3525,7 @@ async function runRetest() {
         return "./" + (parts.length > 0 ? parts.join('/') : '.');
     }))];
     
-    retestBtn.innerText = "Running Tests...";
+       retestBtn.innerText = "Running...";
     retestBtn.disabled = true;
     
     const loadingHtml = "<div id='testLoading' class='patch-block' style='margin-top: 15px; border-top: 1px solid #555; padding-top: 15px;'><em>Running tests for " + packages.join(', ') + " ...</em></div>";
@@ -3126,7 +3586,7 @@ async function runRetest() {
         if (loader) loader.style.display = 'none';
         outputEl.innerHTML += "<div class='error' style='margin-top:15px;'>Test request failed: " + err.message + "</div>";
     } finally {
-        retestBtn.innerText = "🔄 Retest Impacted";
+               retestBtn.innerText = "🔄 Retest";
         retestBtn.disabled = false;
     }
 }
@@ -3181,7 +3641,7 @@ func findUniquePathSuffix(rootDir, targetSuffix string) string {
 		}
 		if d.IsDir() {
 			name := d.Name()
-			if name == ".git" || name == "vendor" || name == "node_modules" {
+			if name == ".git" || name == "vendor" || name == "node_modules" || name == ".appy_history" {
 				return filepath.SkipDir
 			}
 			return nil
@@ -3956,7 +4416,7 @@ These rules are non-negotiable and dictate the core safety of the application:
 5. Any input edit after preview MUST invalidate the current preview and disable Apply until preview is recomputed.
 6. Status chips MUST remain visible at the RHS of each stripe header regardless of horizontal content length.
 7. Copy Trace MUST contain enough information for an LLM to repair the patch without seeing the whole UI.
-8. The Result Ledger MUST only report files actually written to disk.
+8. The Result Ledger (both the visual report and the internal `.appy_ledger.json` hash store) MUST only record/report files actually written to disk. It MUST NOT record hashes for files that failed pre-flight checks, even if other files in the same batch succeeded.
 9. Partial success during Apply MUST be represented per file, not collapsed into one global success/failure banner.
 10. Raw JSON responses MUST never be rendered directly in the main output zone.
 
@@ -4019,6 +4479,7 @@ To prevent frustrating UI jumping when states change, buttons MUST be rendered i
 * Operates **only** on files currently in `READY`. It MUST NOT apply `ERROR` or `IGNORED` files.
 * Application is **partial/per-file**. If some files succeed and others fail, successful files become `APPLIED` and failed files become `ERROR`.
 * Records per-file results in the ledger.
+* If all patches for a given file are already present in the ledger (previously applied), the backend MUST gracefully skip the file and report it as `APPLIED` without attempting to re-modify the disk or throwing an error.
 
 ### 6.2 Check Compiler Semantics
 * Uses the current filesystem as a base.
@@ -4026,8 +4487,8 @@ To prevent frustrating UI jumping when states change, buttons MUST be rendered i
 * Validates the resulting files/packages.
 * Must NOT mutate source files or leave scratch files in the repo.
 
-### 6.3 Armor Removal Semantics
-* If the input contains 2 or more instances of `@@@` at the start of a line, the button appears.
+### 6.3 Auto-Unarmor Semantics
+* If the input contains 2 or more instances of `@@@` at the start of a line, Appy will automatically strip the armor.
 * Strips exactly **one** leading `@@@` per line and immediately triggers a preview.
 * Operates safely on partially armored text, only stripping from lines that begin with the prefix.
 
@@ -4115,10 +4576,11 @@ When Appy generates Go source files, metadata must be at the absolute top, one d
 
 :: product: FDM/NS
 :: majorVersion: 1
-:: fileVersion: 27
+:: fileVersion: 29
 :: description: Fixed armor logic specification and added unified trace exports + auto-pilot logic.
 :: filename: ui_spec.md
 :: serialization: md
+:: latestChange: Documented graceful skip logic for already-applied files during Apply to Disk.
 -- ui_tests.ndcl.md --
 # Appy UI Verification Checklist
 
@@ -4154,8 +4616,8 @@ This checklist locks the implementation of Appy to the `ui_spec.md` behavioral c
 - | | 5. Control Plane Button Matrix (Anti-Shift) #(test-matrix-group)
  - [ ] Verify buttons are logically grouped into Prep (Left), Action (Center), and Export (Right). #(t-mat-01)
  - [ ] Verify the unified "Copy Trace" button occupies a fixed spatial slot and dynamically updates color/text without shifting action buttons. #(t-mat-02)
-- [ ] Verify "Remove @@@" appears if the input contains 2 or more instances of @@@ at the start of a line. #(t-mat-03)
-- [ ] Verify "Remove @@@" safely strips exactly one level of @@@ per line, even on partial armor, and triggers a preview. #(t-mat-04)
+- [ ] Verify Appy automatically unarmors text if the input contains 2 or more instances of @@@ at the start of a line. #(t-mat-03)
+- [ ] Verify auto-unarmor safely strips exactly one level of @@@ per line, even on partial armor, and triggers a preview. #(t-mat-04)
  - [ ] Verify "Auto-Pilot" halts immediately upon encountering an ERROR during Preview or Apply. #(t-mat-05)
 
 - | | 6. Failure & Recovery Reporting #(test-recovery-group)

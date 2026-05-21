@@ -110,14 +110,12 @@ func TestE2E_UI_InitialState(t *testing.T) {
 	defer cancelTimeout()
 
 	var checkBtnDisabled, applyBtnDisabled bool
-	var unarmorDisplay string
 
 	err := chromedp.Run(ctx,
 		chromedp.Navigate(ts.URL),
 		chromedp.WaitVisible(`#bundleInput`, chromedp.ByQuery),
 		chromedp.Evaluate(`document.getElementById('checkBtn').hasAttribute('disabled')`, &checkBtnDisabled),
 		chromedp.Evaluate(`document.getElementById('applyBtn').hasAttribute('disabled')`, &applyBtnDisabled),
-		chromedp.Evaluate(`document.getElementById('unarmorBtn').style.display || "none"`, &unarmorDisplay),
 	)
 	if err != nil {
 		t.Fatalf("Chromedp run failed: %v", err)
@@ -125,9 +123,6 @@ func TestE2E_UI_InitialState(t *testing.T) {
 
 	if !checkBtnDisabled || !applyBtnDisabled {
 		t.Errorf("Expected check and apply buttons to be disabled on load")
-	}
-	if unarmorDisplay != "none" && unarmorDisplay != "" {
-		t.Errorf("Expected unarmor button to be hidden on load, got display: %s", unarmorDisplay)
 	}
 }
 
@@ -139,8 +134,6 @@ func TestE2E_UI_ArmorLogic(t *testing.T) {
 	ctx, cancelTimeout := context.WithTimeout(ctx, 10*time.Second)
 	defer cancelTimeout()
 
-	var display string
-
 	// Helper to set textarea value and trigger input event
 	setInput := func(val string) chromedp.Action {
 		return chromedp.Evaluate(fmt.Sprintf(`
@@ -150,41 +143,41 @@ el.dispatchEvent(new Event('input'));
 `, val), nil)
 	}
 
+	var inputVal string
+
+	// 1. Mixed text with < 2 armors (should not unarmor)
 	err := chromedp.Run(ctx,
 		chromedp.Navigate(ts.URL),
 		chromedp.WaitVisible(`#bundleInput`, chromedp.ByQuery),
-
-		// 1. Mixed text (should hide)
-		// 1. Mixed text with < 2 armors (should hide)
 		setInput("@@@line 1\nline 2"),
 		chromedp.Sleep(100*time.Millisecond),
-		chromedp.Evaluate(`document.getElementById('unarmorBtn').style.display || "none"`, &display),
+		chromedp.Evaluate(`document.getElementById('bundleInput').value`, &inputVal),
 	)
 	if err != nil {
 		t.Fatalf("Chromedp run failed: %v", err)
 	}
-	if display != "none" {
-		t.Errorf("Expected unarmor button to be hidden for < 2 armors, got %s", display)
+	if inputVal != "@@@line 1\nline 2" {
+		t.Errorf("Expected < 2 armors to remain untouched, got: %s", inputVal)
 	}
 
+	// 2. Mixed text with >= 2 armors (should auto-unarmor)
 	err = chromedp.Run(ctx,
-		// 2. Mixed text with >= 2 armors (should show)
 		setInput("@@@line 1\nline 2\n\n@@@line 3"),
 		chromedp.Sleep(100*time.Millisecond),
-		chromedp.Evaluate(`document.getElementById('unarmorBtn').style.display`, &display),
+		chromedp.Evaluate(`document.getElementById('bundleInput').value`, &inputVal),
 	)
 	if err != nil {
 		t.Fatalf("Chromedp run failed: %v", err)
 	}
-	if display != "inline-block" {
-		t.Errorf("Expected unarmor button to be shown for >= 2 armors, got %s", display)
+	expectedAuto := "line 1\nline 2\n\nline 3"
+	if inputVal != expectedAuto {
+		t.Errorf("Expected >= 2 armors to auto-unarmor, got: %s", inputVal)
 	}
 
 	// 3. Unarmor text handles LLM artifact leading spaces correctly
-	var inputVal string
 	err = chromedp.Run(ctx,
 		setInput("@@@ %%% filename: foo\n@@@ %%% replace\n@@@ %%% with\n@@@ %%% end"),
-		chromedp.Evaluate(`document.getElementById('unarmorBtn').click()`, nil),
+		chromedp.Sleep(100*time.Millisecond),
 		chromedp.Evaluate(`document.getElementById('bundleInput').value`, &inputVal),
 	)
 	if err != nil {
@@ -198,7 +191,7 @@ el.dispatchEvent(new Event('input'));
 	// 4. Unarmor text preserves indentation for NDCL and code
 	err = chromedp.Run(ctx,
 		setInput("@@@ %%% replace\n@@@   - [ ] Item\n@@@     - [x] Subitem\n@@@ %%% end"),
-		chromedp.Evaluate(`document.getElementById('unarmorBtn').click()`, nil),
+		chromedp.Sleep(100*time.Millisecond),
 		chromedp.Evaluate(`document.getElementById('bundleInput').value`, &inputVal),
 	)
 	if err != nil {
@@ -212,7 +205,7 @@ el.dispatchEvent(new Event('input'));
 	// 5. Unarmor text preserves tabs (crucial for Makefiles)
 	err = chromedp.Run(ctx,
 		setInput("@@@ %%% replace\n@@@\tbuild:\n@@@\t\tgo build .\n@@@ %%% end"),
-		chromedp.Evaluate(`document.getElementById('unarmorBtn').click()`, nil),
+		chromedp.Sleep(100*time.Millisecond),
 		chromedp.Evaluate(`document.getElementById('bundleInput').value`, &inputVal),
 	)
 	if err != nil {

@@ -43,7 +43,7 @@ func findUniquePathSuffix(rootDir, targetSuffix string) string {
 		}
 		if d.IsDir() {
 			name := d.Name()
-			if name == ".git" || name == "vendor" || name == "node_modules" {
+			if name == ".git" || name == "vendor" || name == "node_modules" || name == ".appy_history" {
 				return filepath.SkipDir
 			}
 			return nil

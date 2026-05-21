@@ -21,7 +21,7 @@ These rules are non-negotiable and dictate the core safety of the application:
 5. Any input edit after preview MUST invalidate the current preview and disable Apply until preview is recomputed.
 6. Status chips MUST remain visible at the RHS of each stripe header regardless of horizontal content length.
 7. Copy Trace MUST contain enough information for an LLM to repair the patch without seeing the whole UI.
-8. The Result Ledger MUST only report files actually written to disk.
+8. The Result Ledger (both the visual report and the internal `.appy_ledger.json` hash store) MUST only record/report files actually written to disk. It MUST NOT record hashes for files that failed pre-flight checks, even if other files in the same batch succeeded.
 9. Partial success during Apply MUST be represented per file, not collapsed into one global success/failure banner.
 10. Raw JSON responses MUST never be rendered directly in the main output zone.
 
@@ -48,6 +48,7 @@ The visual header of the stripe MUST contain four elements in this exact order (
 ### 3.3 Secondary Verification Decorators
 Verification passes and structural modifiers append specific emoji decorators. **These sigils MUST be placed on the RHS of the stripe, immediately to the left of the primary status chip.**
 * **Overwrite Indicator**: ☢️ (Appears if the patch strategy is a full file overwrite).
+* **Anchored Indicator**: ⚓ (Appears if the patch used semantic coordinates).
 * **Compiler Verified (`Check Compiler`)**: 🏅 PASS / ⚠️ FAIL
 * **Test Verified (`Retest Impacted`)**: 🧪 PASS / 💥 FAIL
 
@@ -84,6 +85,7 @@ To prevent frustrating UI jumping when states change, buttons MUST be rendered i
 * Operates **only** on files currently in `READY`. It MUST NOT apply `ERROR` or `IGNORED` files.
 * Application is **partial/per-file**. If some files succeed and others fail, successful files become `APPLIED` and failed files become `ERROR`.
 * Records per-file results in the ledger.
+* If all patches for a given file are already present in the ledger (previously applied), the backend MUST gracefully skip the file and report it as `APPLIED` without attempting to re-modify the disk or throwing an error.
 
 ### 6.2 Check Compiler Semantics
 * Uses the current filesystem as a base.
@@ -91,8 +93,8 @@ To prevent frustrating UI jumping when states change, buttons MUST be rendered i
 * Validates the resulting files/packages.
 * Must NOT mutate source files or leave scratch files in the repo.
 
-### 6.3 Armor Removal Semantics
-* If the input contains 2 or more instances of `@@@` at the start of a line, the button appears.
+### 6.3 Auto-Unarmor Semantics
+* If the input contains 2 or more instances of `@@@` at the start of a line, Appy will automatically strip the armor.
 * Strips exactly **one** leading `@@@` per line and immediately triggers a preview.
 * Operates safely on partially armored text, only stripping from lines that begin with the prefix.
 
@@ -180,7 +182,8 @@ When Appy generates Go source files, metadata must be at the absolute top, one d
 
 :: product: FDM/NS
 :: majorVersion: 1
-:: fileVersion: 27
+:: fileVersion: 29
 :: description: Fixed armor logic specification and added unified trace exports + auto-pilot logic.
 :: filename: ui_spec.md
 :: serialization: md
+:: latestChange: Documented graceful skip logic for already-applied files during Apply to Disk.

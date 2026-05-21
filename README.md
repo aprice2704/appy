@@ -42,7 +42,8 @@ Appy supports escalating patching strategies, selected automatically by the LLM 
 1.  **`symbol_replace`**: Replaces Go functions/types by their AST signature (e.g., `*Engine.Apply`).
 2.  **`replace_block` / `replace_element`**: Replaces specific control-flow blocks (`if`, `for`) or DOM elements (`#nav`) using AST/Tokenizers.
 3.  **`match_line`**: Expands fuzzy searches to exact line boundaries (excellent for Markdown/NDCL checklists).
-4.  **`fuzzy_patch_agnostic`**: The workhorse. Replaces code while ignoring all whitespace, tabs, newlines, and language-specific comments.
+4.  **`replace_anchored`**: Mathematically exact placement using injected semantic markers (e.g. `
+5.  **`fuzzy_patch_agnostic`**: The workhorse. Replaces code while ignoring all whitespace, tabs, newlines, and language-specific comments.
 5.  **`strict_full_file` / `overwrite`**: Replaces the entire file contents.
 6.  **`ndcl_update`**: Surgically updates states and appends items in `.ndcl` semantic checklists.
 7.  **`meta_update`**: Surgically updates or appends NeuroScript/SDI metadata (`:: key: value` or `// :: key: value`) based on the host language profile.

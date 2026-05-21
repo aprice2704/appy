@@ -25,6 +25,21 @@ type RetestPayload struct {
 	Packages []string `json:"packages"`
 }
 
+type HistoryTx struct {
+	TxID      string          `json:"tx_id"`
+	Timestamp int64           `json:"timestamp"`
+	Files     []HistoryFileOp `json:"files"`
+}
+
+type HistoryFileOp struct {
+	Path    string `json:"path"`
+	Existed bool   `json:"existed"`
+}
+
+type RevertPayload struct {
+	TxID string `json:"tx_id"`
+}
+
 type PreviewFile struct {
 	Path     string         `json:"path"`
 	Status   string         `json:"status"` // READY, ERROR, IGNORED
@@ -39,6 +54,7 @@ type PreviewPatch struct {
 	ReplaceBlock     string `json:"replace_block"`
 	IsOverwrite      bool   `json:"is_overwrite,omitempty"`
 	IsDeleteFile     bool   `json:"is_delete_file,omitempty"`
+	IsAnchored       bool   `json:"is_anchored,omitempty"`
 	Error            string `json:"error,omitempty"`
 	ClosestMatchHint string `json:"closest_match_hint,omitempty"`
 	LLMFallbackHint  string `json:"llm_fallback_hint,omitempty"`

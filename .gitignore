@@ -2,6 +2,7 @@
 /appy
 /appy_bin
 /bin/
+/.appy_history/
 /dist/
 /tmp/
 /coverage.out

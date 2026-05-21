@@ -27,13 +27,15 @@ This checklist locks the implementation of Appy to the `ui_spec.md` behavioral c
  - [ ] Verify primary status chips (OK, ERROR, APPLIED, IGNORED) are pinned to the RHS. #(t-str-03)
  - [ ] Verify secondary decorators (🏅, ⚠️, 🧪, 💥) appear immediately to the left of the primary status chip in the RHS container. #(t-str-04)
  - [ ] Verify the Diff Preview shows both the old Search Block (collapsible) and the new Replacement Block. #(t-str-05)
- - [ ] Verify the ☢️ icon appears on the stripe RHS when a file is patched using the full file overwrite strategy. #(t-str-06)
+ - [ ] Verify the ☢️ icon appears on the stripe RHS when a file is patched using the full file overwrite strategy.
+#(t-str-06)
+- [ ] Verify the ⚓ icon appears on the stripe RHS when a file is patched using semantic anchors. #(t-str-06)
 
 - | | 5. Control Plane Button Matrix (Anti-Shift) #(test-matrix-group)
  - [ ] Verify buttons are logically grouped into Prep (Left), Action (Center), and Export (Right). #(t-mat-01)
  - [ ] Verify the unified "Copy Trace" button occupies a fixed spatial slot and dynamically updates color/text without shifting action buttons. #(t-mat-02)
-- [ ] Verify "Remove @@@" appears if the input contains 2 or more instances of @@@ at the start of a line. #(t-mat-03)
-- [ ] Verify "Remove @@@" safely strips exactly one level of @@@ per line, even on partial armor, and triggers a preview. #(t-mat-04)
+- [ ] Verify Appy automatically unarmors text if the input contains 2 or more instances of @@@ at the start of a line. #(t-mat-03)
+- [ ] Verify auto-unarmor safely strips exactly one level of @@@ per line, even on partial armor, and triggers a preview. #(t-mat-04)
  - [ ] Verify "Auto-Pilot" halts immediately upon encountering an ERROR during Preview or Apply. #(t-mat-05)
 
 - | | 6. Failure & Recovery Reporting #(test-recovery-group)

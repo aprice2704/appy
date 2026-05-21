@@ -229,3 +229,19 @@ t -quick -run '^(TestAPI_Apply_DeleteFile)$' .
 t
 go install .
 x
+./run_appy.sh -port 8082
+x
+go install .
+t
+go install .
+x
+t
+go install .
+txtar *.go *.js *.md  > appy.txtar
+t
+go install .
+txtar *.go *.js *.md  > appy.txtar
+./run_appy.sh -port 8082
+..
+t
+go install .

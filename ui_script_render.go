@@ -42,11 +42,14 @@ function renderResult(data, isCheck) {
            setExportMode('Compiler', 'error');
 }
 
-        const anyOk = document.querySelectorAll('.file-block.status-ready').length > 0;
+                const anyOk = document.querySelectorAll('.file-block.status-ready').length > 0;
         applyBtn.disabled = !anyOk;
         if (anyOk) applyBtn.classList.add('ready');
         else applyBtn.classList.remove('ready');
         
+        checkBtn.disabled = false;
+        checkBtn.innerText = "🧪 Check";
+        applyBtn.innerText = "🚀 Apply";
         return;
     }
 
@@ -131,7 +134,7 @@ function renderResult(data, isCheck) {
     applyBtn.disabled = true;
     applyBtn.classList.remove('ready');
     applyBtn.innerText = "Applied!";
-    setTimeout(() => { applyBtn.innerText = "🚀 Apply to Disk"; }, 2500);
+       setTimeout(() => { applyBtn.innerText = "🚀 Apply"; }, 2500);
 }
 
 function renderPreview(data) {
@@ -161,10 +164,11 @@ function renderPreview(data) {
                               let statusClass = 'status-' + fileStatus.toLowerCase();
        let chipText = fileStatus === 'READY' ? 'OK' : fileStatus;
        let lineDeltaFmt = fileObj.net_lines > 0 ? ('+' + fileObj.net_lines) : fileObj.net_lines;
-       let isOverwrite = fileObj.patches && fileObj.patches.some(p => p.is_overwrite);
-       let isDelete = fileObj.patches && fileObj.patches.some(p => p.is_delete_file);
-       
-       let fileTypeHtml = '';
+             let isOverwrite = fileObj.patches && fileObj.patches.some(p => p.is_overwrite);
+      let isDelete = fileObj.patches && fileObj.patches.some(p => p.is_delete_file);
+      let isAnchored = fileObj.patches && fileObj.patches.some(p => p.is_anchored);
+      
+      let fileTypeHtml = '';
        if (fileObj.file_type) {
            fileTypeHtml = '<span class="file-type-tag">' + escapeHtml(fileObj.file_icon) + ' ' + escapeHtml(fileObj.file_type) + '</span>';
        }
@@ -177,13 +181,16 @@ function renderPreview(data) {
        html += '<span class="net-lines">' + lineDeltaFmt + '</span>';
 html += '</div>';
                 html += '<div class="rhs-chips">';
-        if (isOverwrite) {
-            html += '<span class="decorator" style="font-size: 1.2em;">☢️</span>';
-        }
-        if (isDelete) {
-            html += '<span class="decorator" style="font-size: 1.2em;">🗑️</span>';
-        }
-        html += '<span class="status-badge ' + statusClass + '">' + chipText + '</span>';
+               if (isOverwrite) {
+           html += '<span class="decorator" style="font-size: 1.2em;">☢️</span>';
+       }
+       if (isDelete) {
+           html += '<span class="decorator" style="font-size: 1.2em;">🗑️</span>';
+       }
+       if (isAnchored) {
+           html += '<span class="decorator" style="font-size: 1.2em;">⚓</span>';
+       }
+       html += '<span class="status-badge ' + statusClass + '">' + chipText + '</span>';
         html += '</div></summary>';
         
         html += '<div class="file-content">';
