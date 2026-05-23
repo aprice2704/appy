@@ -40,6 +40,14 @@ type RevertPayload struct {
 	TxID string `json:"tx_id"`
 }
 
+type TxtarPayload struct {
+	Paths    []string `json:"paths"`
+	Excludes []string `json:"excludes"`
+	Anchors  []string `json:"anchors"`
+	Preface  string   `json:"preface"`
+	FileName string   `json:"file_name"`
+}
+
 type PreviewFile struct {
 	Path     string         `json:"path"`
 	Status   string         `json:"status"` // READY, ERROR, IGNORED

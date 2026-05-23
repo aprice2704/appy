@@ -245,3 +245,40 @@ txtar *.go *.js *.md  > appy.txtar
 ..
 t
 go install .
+txtar *.go *.js *.md  > appy.txtar
+t
+go install .
+t
+go install .
+appy
+appy -h
+./run_appy.sh -port 8082
+./run_appy.sh -port 8082 -quick-adds "code/how_it_works/always/","code/how_it_works/pipeline"
+t
+go install .
+txtar *.go *.js *.md *.html  > appy.txtar
+find appy -type f \( -name "*.go" -o -name "*.js" -o -name "*.html" -o -name "*.css" -o -name "*.md" \) | while read -r file; do echo "-- $file --"; cat "$file"; done > appy.txtar
+..
+txtar *.go *.js *.md *.html *.css  > appy.txtar
+txtar -h
+rm *.txtar
+txtar . > appy.txtar
+txtar -l appy.txtar 
+txtar -h
+txtar l appy.txtar 
+txtar . > appy.txtar
+txtar l appy.txtar 
+cls
+go install .
+t
+go install .
+t
+go install .
+t
+go install .
+t
+go install .
+t
+go install .
+t
+go install .

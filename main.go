@@ -1,28 +1,17 @@
 // :: product: FDM/NS
 // :: majorVersion: 1
-// :: fileVersion: 32
-// :: description: v1.6.14    -- treesitter and many other updates
-// :: filename: main.go
-// :: serialization: go
-// :: latestChange: Bumped to 1.6.4 and added strict timeouts and verbose debug logging to prevent UI lockups.
-// :: product: FDM/NS
-// :: majorVersion: 1
-// :: fileVersion: 33
-// :: description: v1.6.15    -- Fix ledger pollution for failed compiler checks.
-// :: filename: main.go
-// :: serialization: go
-// :: latestChange: Bumped to 1.6.15 and enforced strict per-file ledger commits.
-// :: product: FDM/NS
-// :: majorVersion: 1
 // :: fileVersion: 34
 // :: description: v1.6.16    -- Graceful skip of already-applied files.
 // :: filename: main.go
 // :: serialization: go
 // :: latestChange: Bumped to 1.6.16 and added ledger check to gracefully skip files that are already fully applied.
+
 package main
 
 import (
+	"bytes"
 	"context"
+	"embed"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -61,7 +50,10 @@ func watchSelfForReload() {
 	}
 }
 
-const AppVersion = "v1.7.0"
+const AppVersion = "v1.8.12"
+
+//go:embed static/*
+var staticFS embed.FS
 
 func getFileMeta(prof *patcheng.LanguageProfile) (string, string) {
 	if prof == nil {
@@ -129,7 +121,11 @@ func withRecoveryAndCORS(h http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-func newServer(rootDir string) *http.ServeMux {
+func newServer(rootDir string, largeFileLines int, quickAdds ...string) *http.ServeMux {
+	qa := ""
+	if len(quickAdds) > 0 {
+		qa = quickAdds[0]
+	}
 	mux := http.NewServeMux()
 	absRootDir, err := filepath.Abs(rootDir)
 	if err != nil {
@@ -137,14 +133,39 @@ func newServer(rootDir string) *http.ServeMux {
 	}
 	LoadLedger(absRootDir)
 
+	mux.Handle("/static/", http.FileServer(http.FS(staticFS)))
+
+	var qaHtml strings.Builder
+	if qa != "" {
+		qaHtml.WriteString(`<label style="color: #94a3b8; font-size: 13px; margin-top: 10px;">Quick Add:</label>`)
+		qaHtml.WriteString(`<div style="display: flex; gap: 8px; flex-wrap: wrap;">`)
+		for _, path := range strings.Split(qa, ",") {
+			p := strings.TrimSpace(path)
+			if p != "" {
+				qaHtml.WriteString(fmt.Sprintf(`
+				<div style="display: flex; gap: 2px;">
+					<button onclick="addTxtarPath('%s')" style="background: #334155; border: 1px solid #475569; border-radius: 4px 0 0 4px; color: white;">%s</button>
+					<button onclick="autoQuickAdd('%s')" title="Auto-bundle %s" style="background: #0ea5e9; border: 1px solid #0284c7; border-radius: 0 4px 4px 0; color: white; padding: 0 8px;">⚡</button>
+				</div>`, p, p, p, p))
+			}
+		}
+		qaHtml.WriteString(`</div>`)
+	}
+
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
 			http.NotFound(w, r)
 			return
 		}
-		html := strings.ReplaceAll(indexHTML, "{TITLE}", filepath.Base(absRootDir))
+		indexBytes, err := staticFS.ReadFile("static/index.html")
+		if err != nil {
+			http.Error(w, "Internal Server Error", 500)
+			return
+		}
+		html := strings.ReplaceAll(string(indexBytes), "{TITLE}", filepath.Base(absRootDir))
 		html = strings.ReplaceAll(html, "{VERSION}", AppVersion)
 		html = strings.ReplaceAll(html, "{ROOT_DIR}", absRootDir)
+		html = strings.ReplaceAll(html, "{QUICK_ADDS_HTML}", qaHtml.String())
 		w.Header().Set("Content-Type", "text/html")
 		_, writeErr := w.Write([]byte(html))
 		if writeErr != nil {
@@ -652,11 +673,337 @@ func newServer(rootDir string) *http.ServeMux {
 		}
 	}))
 
+	mux.HandleFunc("/api/resolve_path", withRecoveryAndCORS(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		name := r.URL.Query().Get("name")
+		if name == "" {
+			sendError(w, "missing name parameter", http.StatusBadRequest)
+			return
+		}
+		match := findUniquePathSuffix(absRootDir, name)
+		w.Header().Set("Content-Type", "application/json")
+		if match != "" {
+			json.NewEncoder(w).Encode(map[string]string{"path": match})
+		} else {
+			json.NewEncoder(w).Encode(map[string]string{"path": name})
+		}
+	}))
+
+	mux.HandleFunc("/api/txtar", withRecoveryAndCORS(func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("[DEBUG] /api/txtar request received")
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		var req TxtarPayload
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			log.Printf("[DEBUG] /api/txtar: Invalid JSON: %v", err)
+			sendError(w, "Invalid JSON", http.StatusBadRequest)
+			return
+		}
+
+		var buf bytes.Buffer
+		buf.WriteString(req.Preface)
+		if !strings.HasSuffix(req.Preface, "\n") {
+			buf.WriteString("\n")
+		}
+
+		fileCount := 0
+		errWalk := filepath.WalkDir(absRootDir, func(path string, d os.DirEntry, err error) error {
+			if err != nil {
+				log.Printf("[DEBUG] /api/txtar: Walk error at %s: %v", path, err)
+				return nil
+			}
+
+			if strings.HasPrefix(d.Name(), ".") && d.Name() != "." {
+				if d.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+
+			if d.IsDir() {
+				if d.Name() == "vendor" || d.Name() == "node_modules" {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+
+			rel, errRel := filepath.Rel(absRootDir, path)
+			if errRel != nil {
+				log.Printf("[DEBUG] /api/txtar: Rel error %s: %v", path, errRel)
+				return nil
+			}
+
+			included := false
+			if len(req.Paths) == 0 {
+				included = true
+			} else {
+				for _, p := range req.Paths {
+					p = strings.TrimPrefix(p, "/") // allow abs from root (/)
+					if p == "." || p == "" {
+						included = true
+						break
+					}
+					if rel == p || strings.HasPrefix(rel, p+"/") {
+						included = true
+						break
+					}
+					if strings.Contains(p, "**") {
+						parts := strings.SplitN(p, "**", 2)
+						if strings.HasPrefix(rel, parts[0]) && strings.HasSuffix(rel, parts[1]) {
+							included = true
+							break
+						}
+					} else {
+						if matched, _ := filepath.Match(p, filepath.Base(rel)); matched {
+							included = true
+							break
+						}
+						if matched, _ := filepath.Match(p, rel); matched {
+							included = true
+							break
+						}
+					}
+				}
+			}
+			if !included {
+				return nil
+			}
+
+			for _, ex := range req.Excludes {
+				if ex == "" {
+					continue
+				}
+				matched, matchErr := filepath.Match(ex, d.Name())
+				if matchErr != nil {
+					log.Printf("[DEBUG] /api/txtar: Bad exclude pattern %s: %v", ex, matchErr)
+					continue
+				}
+				if !matched {
+					matched, matchErr = filepath.Match(ex, rel)
+					if matchErr != nil {
+						log.Printf("[DEBUG] /api/txtar: Bad exclude pattern %s: %v", ex, matchErr)
+						continue
+					}
+				}
+				if matched {
+					log.Printf("[DEBUG] /api/txtar: Excluded %s due to rule %s", rel, ex)
+					return nil
+				}
+			}
+
+			content, readErr := os.ReadFile(path)
+			if readErr != nil {
+				log.Printf("[DEBUG] /api/txtar: Read error %s: %v", path, readErr)
+				return nil
+			}
+
+			needsAnchor := true
+			for _, ag := range req.Anchors {
+				if ag == "" {
+					continue
+				}
+				matched, matchErr := filepath.Match(ag, d.Name())
+				if matchErr == nil && matched {
+					needsAnchor = false
+					break
+				}
+				matched, matchErr = filepath.Match(ag, rel)
+				if matchErr == nil && matched {
+					needsAnchor = false
+					break
+				}
+			}
+
+			if needsAnchor {
+				anchoredContent, err := patcheng.InjectAnchors(rel, content, 10)
+				if err == nil {
+					content = anchoredContent
+				} else {
+					log.Printf("[DEBUG] /api/txtar: Anchor injection failed for %s: %v", rel, err)
+				}
+			}
+
+			if needsAnchor && countLines(string(content)) > largeFileLines {
+				warning := []byte("⚠️ APPY NOTE: This file is overly large. If you need to touch it, please split it into sensible pieces if possible.\n\n")
+				content = append(warning, content...)
+			}
+
+			buf.WriteString(fmt.Sprintf("-- %s --\n", filepath.ToSlash(rel)))
+			buf.Write(content)
+			if !strings.HasSuffix(string(content), "\n") {
+				buf.WriteString("\n")
+			}
+			fileCount++
+			return nil
+		})
+		if errWalk != nil {
+			log.Printf("[DEBUG] /api/txtar: WalkDir fatal error: %v", errWalk)
+		}
+
+		fileName := req.FileName
+		if fileName == "" {
+			fileName = fmt.Sprintf("appy_bundle_%d.txtar", time.Now().Unix())
+		} else {
+			fileName = filepath.Base(fileName)
+			if !strings.HasSuffix(fileName, ".txtar") {
+				fileName += ".txtar"
+			}
+		}
+		outPath := filepath.Join(absRootDir, fileName)
+		if err := os.WriteFile(outPath, buf.Bytes(), 0644); err != nil {
+			log.Printf("[DEBUG] /api/txtar: WriteFile error: %v", err)
+			sendError(w, fmt.Sprintf("Failed to write %s: %v", fileName, err), http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		res := map[string]any{
+			"success":    true,
+			"file_url":   "/api/bundle?name=" + fileName,
+			"file_name":  fileName,
+			"file_count": fileCount,
+		}
+		if err := json.NewEncoder(w).Encode(withND("appy/txtar", "Generated txtar bundle", res)); err != nil {
+			log.Printf("[DEBUG] /api/txtar: encoding response failed: %v", err)
+		}
+	}))
+
+	mux.HandleFunc("/api/txtar_stats", withRecoveryAndCORS(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		var req TxtarPayload
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			sendError(w, "Invalid JSON", http.StatusBadRequest)
+			return
+		}
+
+		fileCount := 0
+		var totalBytes int64 = 0
+
+		errWalk := filepath.WalkDir(absRootDir, func(path string, d os.DirEntry, err error) error {
+			if err != nil {
+				return nil
+			}
+			if strings.HasPrefix(d.Name(), ".") && d.Name() != "." {
+				if d.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if d.IsDir() {
+				if d.Name() == "vendor" || d.Name() == "node_modules" {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			rel, errRel := filepath.Rel(absRootDir, path)
+			if errRel != nil {
+				return nil
+			}
+
+			included := false
+			if len(req.Paths) == 0 {
+				included = true
+			} else {
+				for _, p := range req.Paths {
+					p = strings.TrimPrefix(p, "/")
+					if p == "." || p == "" {
+						included = true
+						break
+					}
+					if rel == p || strings.HasPrefix(rel, p+"/") {
+						included = true
+						break
+					}
+					if strings.Contains(p, "**") {
+						parts := strings.SplitN(p, "**", 2)
+						if strings.HasPrefix(rel, parts[0]) && strings.HasSuffix(rel, parts[1]) {
+							included = true
+							break
+						}
+					} else {
+						if matched, _ := filepath.Match(p, filepath.Base(rel)); matched {
+							included = true
+							break
+						}
+						if matched, _ := filepath.Match(p, rel); matched {
+							included = true
+							break
+						}
+					}
+				}
+			}
+			if !included {
+				return nil
+			}
+
+			for _, ex := range req.Excludes {
+				if ex == "" {
+					continue
+				}
+				matched, matchErr := filepath.Match(ex, d.Name())
+				if matchErr != nil {
+					continue
+				}
+				if !matched {
+					matched, _ = filepath.Match(ex, rel)
+				}
+				if matched {
+					return nil
+				}
+			}
+
+			info, infoErr := d.Info()
+			if infoErr == nil {
+				fileCount++
+				totalBytes += info.Size()
+			}
+			return nil
+		})
+		if errWalk != nil {
+			log.Printf("[DEBUG] /api/txtar_stats: WalkDir error: %v", errWalk)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"file_count": fileCount,
+			"size_kb":    totalBytes / 1024,
+			"tokens_est": totalBytes / 4,
+		})
+	}))
+
+	mux.HandleFunc("/api/bundle", withRecoveryAndCORS(func(w http.ResponseWriter, r *http.Request) {
+		name := r.URL.Query().Get("name")
+		if !strings.HasSuffix(name, ".txtar") || strings.Contains(name, "/") || strings.Contains(name, "\\") {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, name))
+		http.ServeFile(w, r, filepath.Join(absRootDir, name))
+	}))
+
 	return mux
 }
 
 func main() {
 	port := flag.String("port", "8085", "Port to run the appy server on")
+	quickAdds := flag.String("quick-adds", "", "Comma-separated list of paths for Quick Add Txtar buttons")
+	largeFileLines := flag.Int("large-file-lines", 350, "Line threshold to inject 'split file' warnings into txtar bundles")
+
+	flag.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Appy %s - The Stateful Patch Console\n\n", AppVersion)
+		fmt.Fprintf(os.Stderr, "Usage:\n  appy [flags]\n\nFlags:\n")
+		flag.PrintDefaults()
+		fmt.Fprintf(os.Stderr, "\nExamples:\n  appy -port 8080\n  appy -quick-adds=\"always/,code/definitions/\"\n")
+	}
 	flag.Parse()
 
 	go watchSelfForReload()
@@ -667,5 +1014,5 @@ func main() {
 	}
 	fmt.Printf("Appy %s on http://localhost:%s\n", AppVersion, *port)
 
-	log.Fatal(http.ListenAndServe(":"+*port, newServer(cwd)))
+	log.Fatal(http.ListenAndServe(":"+*port, newServer(cwd, *largeFileLines, *quickAdds)))
 }

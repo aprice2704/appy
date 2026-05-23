@@ -1,6 +1,6 @@
 // :: product: FDM/NS
 // :: majorVersion: 1
-// :: fileVersion: 8
+// :: fileVersion: 11
 // :: description: Unit tests for the appy server APIs compliant with v1.5.22.
 // :: filename: server_test.go
 // :: serialization: go
@@ -20,6 +20,13 @@ import (
 	"github.com/aprice2704/fdm/code/patcheng"
 )
 
+const defaultLargeFileLines = 350
+
+// newTestServer wraps newServer with test-appropriate defaults
+func newTestServer(rootDir string) *http.ServeMux {
+	return newServer(rootDir, defaultLargeFileLines)
+}
+
 func setupTestWorkspace(t *testing.T) string {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module appytest\n\ngo 1.22\n"), 0644)
@@ -28,7 +35,7 @@ func setupTestWorkspace(t *testing.T) string {
 }
 
 func TestAPI_Root(t *testing.T) {
-	mux := newServer(setupTestWorkspace(t))
+	mux := newTestServer(setupTestWorkspace(t))
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
@@ -39,7 +46,7 @@ func TestAPI_Root(t *testing.T) {
 }
 
 func TestAPI_RootNotFound(t *testing.T) {
-	mux := newServer(setupTestWorkspace(t))
+	mux := newTestServer(setupTestWorkspace(t))
 	req := httptest.NewRequest(http.MethodGet, "/random-path", nil)
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
@@ -50,7 +57,7 @@ func TestAPI_RootNotFound(t *testing.T) {
 }
 
 func TestAPI_MethodNotAllowed(t *testing.T) {
-	mux := newServer(setupTestWorkspace(t))
+	mux := newTestServer(setupTestWorkspace(t))
 
 	reqs := []*http.Request{
 		httptest.NewRequest(http.MethodGet, "/api/preview", nil),
@@ -67,7 +74,7 @@ func TestAPI_MethodNotAllowed(t *testing.T) {
 }
 
 func TestAPI_InvalidJSON(t *testing.T) {
-	mux := newServer(setupTestWorkspace(t))
+	mux := newTestServer(setupTestWorkspace(t))
 
 	reqs := []*http.Request{
 		httptest.NewRequest(http.MethodPost, "/api/preview", strings.NewReader("{bad json")),
@@ -84,7 +91,7 @@ func TestAPI_InvalidJSON(t *testing.T) {
 }
 
 func TestAPI_Preview_Valid(t *testing.T) {
-	mux := newServer(setupTestWorkspace(t))
+	mux := newTestServer(setupTestWorkspace(t))
 
 	payload := Payload{
 		Bundle: strings.ReplaceAll(`
@@ -121,7 +128,7 @@ func B() {}
 }
 
 func TestAPI_Preview_InvalidSyntax(t *testing.T) {
-	mux := newServer(setupTestWorkspace(t))
+	mux := newTestServer(setupTestWorkspace(t))
 
 	payload := Payload{Bundle: patcheng.BundleDelim + " replace\nbroken"}
 	body, _ := json.Marshal(payload)
@@ -137,7 +144,7 @@ func TestAPI_Preview_InvalidSyntax(t *testing.T) {
 
 func TestAPI_Apply_ValidModify(t *testing.T) {
 	tempDir := setupTestWorkspace(t)
-	mux := newServer(tempDir)
+	mux := newTestServer(tempDir)
 
 	targetFile := filepath.Join(tempDir, "target.go")
 	initialContent := "package mypkg\n\nfunc Old() {}\n"
@@ -176,7 +183,7 @@ func New() {}
 
 func TestAPI_Apply_PathTraversalDenied(t *testing.T) {
 	tempDir := setupTestWorkspace(t)
-	mux := newServer(tempDir)
+	mux := newTestServer(tempDir)
 
 	payloads := []string{
 		patcheng.BundleDelim + ` filename: ../../../etc/passwd` + "\n" + patcheng.BundleDelim + " replace\n" + patcheng.BundleDelim + " with\n" + patcheng.BundleDelim + " end",
@@ -202,7 +209,7 @@ func TestAPI_Apply_PathTraversalDenied(t *testing.T) {
 
 func TestAPI_Apply_PartialSuccess(t *testing.T) {
 	tempDir := setupTestWorkspace(t)
-	mux := newServer(tempDir)
+	mux := newTestServer(tempDir)
 
 	os.WriteFile(filepath.Join(tempDir, "fileA.go"), []byte("package mypkg\nfunc A() {}"), 0644)
 	os.WriteFile(filepath.Join(tempDir, "fileB.go"), []byte("package mypkg\nfunc B() {}"), 0644)
@@ -249,7 +256,7 @@ func BROKEN() {}
 
 func TestAPI_Apply_CompilerPreFlightFailure(t *testing.T) {
 	tempDir := setupTestWorkspace(t)
-	mux := newServer(tempDir)
+	mux := newTestServer(tempDir)
 
 	targetFile := filepath.Join(tempDir, "badcode.go")
 	os.WriteFile(targetFile, []byte("package mypkg\nfunc Old() {}\n"), 0644)
@@ -312,7 +319,7 @@ func Good() { println("ok") }
 
 func TestAPI_Apply_CreateNewFile_NativeEngine(t *testing.T) {
 	tempDir := setupTestWorkspace(t)
-	mux := newServer(tempDir)
+	mux := newTestServer(tempDir)
 
 	payload := Payload{
 		Bundle: strings.ReplaceAll(`
@@ -347,7 +354,7 @@ func Boot() {}
 
 func TestAPI_Retest(t *testing.T) {
 	tempDir := setupTestWorkspace(t)
-	mux := newServer(tempDir)
+	mux := newTestServer(tempDir)
 
 	payload := RetestPayload{Packages: []string{"path"}} // stdlib package so it passes quickly
 	body, _ := json.Marshal(payload)
@@ -363,7 +370,7 @@ func TestAPI_Retest(t *testing.T) {
 
 func TestAPI_Apply_EmptySearchOverwritesIgnored(t *testing.T) {
 	tempDir := setupTestWorkspace(t)
-	mux := newServer(tempDir)
+	mux := newTestServer(tempDir)
 
 	targetFile := filepath.Join(tempDir, "important.go")
 	os.WriteFile(targetFile, []byte("package mypkg\nfunc Old() {}"), 0644)
@@ -398,7 +405,7 @@ func AccidentalOverwrite() {}
 
 func TestAPI_Preview_WarningsAndHints(t *testing.T) {
 	tempDir := setupTestWorkspace(t)
-	mux := newServer(tempDir)
+	mux := newTestServer(tempDir)
 
 	os.WriteFile(filepath.Join(tempDir, "exists.go"), []byte("package mypkg\n\nfunc Old() {}\n"), 0644)
 
@@ -484,7 +491,7 @@ func New() {}
 
 func TestAPI_Apply_TracksHistory(t *testing.T) {
 	tempDir := setupTestWorkspace(t)
-	mux := newServer(tempDir)
+	mux := newTestServer(tempDir)
 
 	targetFile := filepath.Join(tempDir, "history.go")
 	os.WriteFile(targetFile, []byte("package mypkg\nfunc Old() {}"), 0644)
@@ -527,7 +534,7 @@ func New() {}
 
 func TestAPI_Apply_DeleteFile(t *testing.T) {
 	tempDir := setupTestWorkspace(t)
-	mux := newServer(tempDir)
+	mux := newTestServer(tempDir)
 
 	targetFile := filepath.Join(tempDir, "goner.go")
 	os.WriteFile(targetFile, []byte("package mypkg\nfunc Old() {}\n"), 0644)
@@ -557,7 +564,7 @@ CONFIRM
 
 func TestAPI_Apply_DeleteBlock(t *testing.T) {
 	tempDir := setupTestWorkspace(t)
-	mux := newServer(tempDir)
+	mux := newTestServer(tempDir)
 
 	targetFile := filepath.Join(tempDir, "delete_me.go")
 	os.WriteFile(targetFile, []byte("package mypkg\nfunc Old() {}\nfunc Keep() {}"), 0644)
@@ -584,7 +591,7 @@ func Old() {}
 
 func TestAPI_Apply_EmptyFileDeletion(t *testing.T) {
 	tempDir := setupTestWorkspace(t)
-	mux := newServer(tempDir)
+	mux := newTestServer(tempDir)
 
 	targetFile := filepath.Join(tempDir, "delete_me.go")
 	os.WriteFile(targetFile, []byte("package mypkg\nfunc Old() {}"), 0644)
@@ -612,7 +619,7 @@ func Old() {}
 
 func TestAPI_Apply_ReplaceSymbol(t *testing.T) {
 	tempDir := setupTestWorkspace(t)
-	mux := newServer(tempDir)
+	mux := newTestServer(tempDir)
 
 	targetFile := filepath.Join(tempDir, "symbol.go")
 	os.WriteFile(targetFile, []byte("package mypkg\nfunc Old() {}\n"), 0644)
@@ -679,7 +686,7 @@ func TestWithRecoveryAndCORS(t *testing.T) {
 func TestAPI_Contracts_T_API_01(t *testing.T) {
 	// t-api-01: Verify /api/preview returns the strictly nested files -> patches array structure
 	tempDir := setupTestWorkspace(t)
-	mux := newServer(tempDir)
+	mux := newTestServer(tempDir)
 
 	os.WriteFile(filepath.Join(tempDir, "test.go"), []byte("package main\n"), 0644)
 
@@ -726,7 +733,7 @@ func TestAPI_AtomicApply_T_ATM_01_03(t *testing.T) {
 	// t-atm-01: multi-file bundle, syntax error in A rejects A but allows B.
 	// t-atm-03: Copy Result Ledger accurately reports ONLY the files written to disk.
 	tempDir := setupTestWorkspace(t)
-	mux := newServer(tempDir)
+	mux := newTestServer(tempDir)
 
 	os.WriteFile(filepath.Join(tempDir, "fileA.go"), []byte("package main\n"), 0644)
 	os.WriteFile(filepath.Join(tempDir, "fileB.go"), []byte("package main\n"), 0644)

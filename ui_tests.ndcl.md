@@ -5,7 +5,16 @@ This checklist locks the implementation of Appy to the `ui_spec.md` behavioral c
 - | | 1. Top-Level Layout #(test-layout-group)
  - [ ] Verify browser tab text matches the last element of the sandbox path. #(t-lay-01)
  - [ ] Verify Appy version is explicitly displayed next to the title. #(t-lay-02)
- - [ ] Verify sandbox root subtitle is displayed. #(t-lay-03)
+- [ ] Verify sandbox root subtitle is displayed. #(t-lay-03)
+- [ ] Verify Tab Bar displays Patch, Builder, and History tabs and correctly toggles views. #(t-lay-04)
+
+- | | 1.5 Builder Tab & Stats #(test-builder-group)
+- [ ] Verify Builder tab displays live updating counters for file count, size (KB), and estimated tokens. #(t-bld-01)
+- [ ] Verify the Paste button strips `txtar c`, trailing redirects (`> file`), bash continuations, and appends valid paths. #(t-bld-02)
+- [ ] Verify the Dir Picker appends `<dirname>/**` instead of individual files. #(t-bld-03)
+- [ ] Verify the Quick Add "Auto" button (⚡) generates a targeted bundle without altering the Include box state. #(t-bld-04)
+- [ ] Verify files exceeding `large-file-lines` contain the `⚠️ APPY NOTE: This file is overly large...` warning header when bundled. #(t-bld-05)
+- [ ] Verify the custom Output Filename box successfully overrides the default timestamped name. #(t-bld-06)
 
 - | | 2. UI Behaviour Invariants #(test-invariants-group)
  - [ ] Verify Apply to Disk is disabled when NO files are in the READY state. #(t-inv-01)
@@ -68,7 +77,8 @@ This checklist locks the implementation of Appy to the `ui_spec.md` behavioral c
 
 :: product: FDM/NS
 :: majorVersion: 1
-:: fileVersion: 3
+:: fileVersion: 4
 :: description: E2E and Unit Test definitions derived strictly from the Appy UI Spec. Added API Contract, Metadata checks, Auto-Pilot, and Unified Trace validations.
 :: filename: ui_tests.ndcl.md
 :: serialization: md
+:: latestChange: Added Builder tab QoL constraints.

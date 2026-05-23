@@ -1,10 +1,10 @@
 // :: product: FDM/NS
 // :: majorVersion: 1
-// :: fileVersion: 8
+// :: fileVersion: 10
 // :: description: End-to-End browser tests for the Appy UI using chromedp.
 // :: filename: ui_e2e_test.go
 // :: serialization: go
-// :: latestChange: Obfuscated metadata syntax in TestE2E_UI_MetaUpdate to prevent patcheng collisions.
+// :: latestChange: Syncing metadata for ui_e2e_test.go after newTestServer fix.
 
 package main
 
@@ -24,6 +24,7 @@ import (
 )
 
 // setupTestServer creates an isolated Appy server and a chromedp context.
+// setupTestServer creates an isolated Appy server and a chromedp context.
 func setupTestServer(t *testing.T) (*httptest.Server, context.Context, context.CancelFunc, string) {
 	tempDir := t.TempDir()
 
@@ -31,12 +32,13 @@ func setupTestServer(t *testing.T) (*httptest.Server, context.Context, context.C
 	os.WriteFile(filepath.Join(tempDir, "go.mod"), []byte("module appytest\n\ngo 1.22\n"), 0644)
 
 	// Create a dummy target file for patching tests
+	// Create a dummy target file for patching tests
 	err := os.WriteFile(filepath.Join(tempDir, "target.go"), []byte("package main\n\nfunc Old() {}\n"), 0644)
 	if err != nil {
 		t.Fatalf("Failed to create dummy target file: %v", err)
 	}
 
-	ts := httptest.NewServer(newServer(tempDir))
+	ts := httptest.NewServer(newTestServer(tempDir))
 
 	opts := append(chromedp.DefaultExecAllocatorOptions[:],
 		chromedp.DisableGPU,

@@ -1,14 +1,21 @@
 # Appy UI Functional Specification v1.6.2
 
 ## 1. Top-Level Layout
-The UI is contained within a fixed-height flex container (`95vh`) and divided into three primary functional zones:
+The UI is contained within a fixed-height flex container (`95vh`) and divided into four primary functional zones:
 * **Header Zone**: The top of the page MUST display:
-  * The browser tab text and the primary page title set to the last element of the directory path from which Appy is run.
-  * The current Appy version number explicitly displayed next to the title.
-  * A subtitle indicating the absolute file root to which all operations are sandboxed.
-* **Input Zone**: A large, unformatted textarea for pasting multi-file patch bundles (includes markdown blocks and `%%%` syntax).
+ * The browser tab text and the primary page title set to the last element of the directory path from which Appy is run.
+ * The current Appy version number explicitly displayed next to the title.
+ * A subtitle indicating the absolute file root to which all operations are sandboxed.
+* **Tab Bar**: A horizontal list of tabs (Patch, Builder, History) allowing navigation between functional areas.
+* **Input Zone**: A large, unformatted textarea for pasting multi-file patch bundles (includes markdown blocks and `\%%%` syntax).
 * **Control Zone**: A horizontal button array for system actions, strictly grouped to prevent layout shift.
 * **Output Zone**: A scrollable area rendering visual "File Block" stripes.
+
+### 1.1 Builder Tab Constraints
+* **Smart Paste**: The Builder MUST support smart extraction of shell commands (stripping `txtar c`, line continuations, and output redirects) via a dedicated Paste action.
+* **Directory Picking**: Directory selection MUST yield a recursive glob path (`dirname/**`) relative to the root, rather than enumerating every child file into the UI.
+* **File Size Defenses**: The backend MUST inject a prominent warning marker (`⚠️ APPY NOTE: This file is overly large...`) below the filename in the generated `txtar` block for files exceeding the configured line threshold (default 350) to discourage LLM truncation and massive unmodified rewrites.
+* **Quick Add Auto-Execution**: One-click Quick Add execution MUST instantly generate a targeted `.txtar` bundle, automatically deriving the filename from the terminal path segment, without mutating the user's current configuration in the Include box.
 
 ---
 
@@ -57,12 +64,12 @@ Verification passes and structural modifiers append specific emoji decorators. *
 ## 4. Stale Preview Handling
 The preview model is valid **only** for the exact input string and repository snapshot used to produce it.
 * **If the input textarea changes:**
-  * All existing preview/apply buttons are disabled immediately.
-  * Existing stripes are cleared or marked STALE.
-  * Applying stale preview data is strictly forbidden.
+ * All existing preview/apply buttons are disabled immediately.
+ * Existing stripes are cleared or marked STALE.
+ * Applying stale preview data is strictly forbidden.
 * **If the repository changes between preview and apply:**
-  * The backend MUST re-check search block matches before writing.
-  * Any mismatch becomes `ERROR` and is not written.
+ * The backend MUST re-check search block matches before writing.
+ * Any mismatch becomes `ERROR` and is not written.
 
 ---
 
@@ -110,7 +117,7 @@ To ensure operator trust, each patch block within an expanded file stripe MUST d
 
 ## 8. Failure & Recovery Reporting
 When a patch fails during preview, application, compiler checks, or testing, the UI MUST surface detailed, LLM-friendly diagnostic data:
-1.  **Matched Line Echo**: Reports must echo the exact state of the target line(s) to allow easy recovery using `%%% match_line`.
+1.  **Matched Line Echo**: Reports must echo the exact state of the target line(s) to allow easy recovery using `\%%% match_line`.
 2.  **LLM Hints & Fallbacks**: The error feedback MUST include explicit instructions delivering the suggested fallback patching sequence for the targeted language profile so the LLM knows how to recover.
 3.  **Trace Output (Clipboard Only)**: If a failure occurs during `Check Compiler` or `Retest Impacted`, the exact standard output/error trace MUST NOT be injected into the visual DOM stripes (to prevent UI bloat/lag). Instead, it MUST be appended exclusively to the clipboard payload of the `Copy Trace` button.
 4.  **Global Error Routing**: Top-level server or network errors (e.g., malformed bundle parsing failures) MUST NOT bypass the export mechanisms. They must populate the clipboard payload and force the `Copy Trace` button to appear.
@@ -124,43 +131,43 @@ The backend MUST adhere to these conceptual payload shapes to prevent UI spaghet
 ```yaml
 files:
 - path: string
-  status: string (READY|ERROR|IGNORED)
-  net_lines: int
-  file_type: string
-  file_icon: string
-  patches:
-    - search_block: string
-      replace_block: string
-      is_overwrite: bool
-      error: string
-      closest_match_hint: string
-      llm_fallback_hint: string
+ status: string (READY|ERROR|IGNORED)
+ net_lines: int
+ file_type: string
+ file_icon: string
+ patches:
+   - search_block: string
+     replace_block: string
+     is_overwrite: bool
+     error: string
+     closest_match_hint: string
+     llm_fallback_hint: string
 ```
 
 **ApplyResponse:**
 ```yaml
 files:
 - path: string
-  applied: bool
-  net_lines: int
-  file_type: string
-  file_icon: string
-  hash_before: string
-  hash_after: string
-  ledger_entry: string
-  error: string
-  failed_patch:
-    current_line_echo: string
-    llm_fallback_hint: string
+ applied: bool
+ net_lines: int
+ file_type: string
+ file_icon: string
+ hash_before: string
+ hash_after: string
+ ledger_entry: string
+ error: string
+ failed_patch:
+   current_line_echo: string
+   llm_fallback_hint: string
 ```
 
 **CompilerCheckResponse:**
 ```yaml
 files:
 - path: string
-  compiler_status: string (PASS|FAIL)
-  diagnostics: []string
-  raw_output: string
+ compiler_status: string (PASS|FAIL)
+ diagnostics: []string
+ raw_output: string
 ```
 
 **RetestResponse:**
@@ -168,22 +175,22 @@ files:
 packages: []string
 files:
 - path: string
-  test_status: string (PASS|FAIL)
-  package: string
-  summary: string
-  failure_excerpt: string
-  raw_output: string
+ test_status: string (PASS|FAIL)
+ package: string
+ summary: string
+ failure_excerpt: string
+ raw_output: string
 ```
 
 ---
 
 ## 10. Code & Metadata Syntax
-When Appy generates Go source files, metadata must be at the absolute top, one directive per line, followed by exactly one blank line. The backend parser and frontend unarmor logic MUST tolerate optional leading whitespace (including non-breaking spaces) before patch directives (`%%%`) to gracefully handle LLM formatting artifacts.
+When Appy generates Go source files, metadata must be at the absolute top, one directive per line, followed by exactly one blank line. The backend parser and frontend unarmor logic MUST tolerate optional leading whitespace (including non-breaking spaces) before patch directives (`\%%%`) to gracefully handle LLM formatting artifacts.
 
 :: product: FDM/NS
 :: majorVersion: 1
-:: fileVersion: 29
+:: fileVersion: 30
 :: description: Fixed armor logic specification and added unified trace exports + auto-pilot logic.
 :: filename: ui_spec.md
 :: serialization: md
-:: latestChange: Documented graceful skip logic for already-applied files during Apply to Disk.
+:: latestChange: Added Builder tab QoL constraints (Smart Paste, Dir Globbing, Large File Warning).
