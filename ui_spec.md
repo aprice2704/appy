@@ -1,11 +1,11 @@
-# Appy UI Functional Specification v1.6.2
+# Appy UI Functional Specification v1.6.4
 
 ## 1. Top-Level Layout
 The UI is contained within a fixed-height flex container (`95vh`) and divided into four primary functional zones:
 * **Header Zone**: The top of the page MUST display:
- * The browser tab text and the primary page title set to the last element of the directory path from which Appy is run.
- * The current Appy version number explicitly displayed next to the title.
- * A subtitle indicating the absolute file root to which all operations are sandboxed.
+* The browser tab text and the primary page title set to the last element of the directory path from which Appy is run.
+* The Appy name and current version number explicitly displayed in a smaller font next to the title.
+* A subtitle indicating the absolute file root to which all operations are sandboxed.
 * **Tab Bar**: A horizontal list of tabs (Patch, Builder, History) allowing navigation between functional areas.
 * **Input Zone**: A large, unformatted textarea for pasting multi-file patch bundles (includes markdown blocks and `\%%%` syntax).
 * **Control Zone**: A horizontal button array for system actions, strictly grouped to prevent layout shift.
@@ -13,9 +13,9 @@ The UI is contained within a fixed-height flex container (`95vh`) and divided in
 
 ### 1.1 Builder Tab Constraints
 * **Smart Paste**: The Builder MUST support smart extraction of shell commands (stripping `txtar c`, line continuations, and output redirects) via a dedicated Paste action.
-* **Directory Picking**: Directory selection MUST yield a recursive glob path (`dirname/**`) relative to the root, rather than enumerating every child file into the UI.
+* **Absolute Paths & Directory Globbing**: The Builder MUST accept absolute file paths from anywhere on the filesystem, automatically appending `/**` for directories added via the picker. The Builder MUST allow files from anywhere on the disk, though the patcher remains restricted to the sandbox.
+* **Config Sets**: The Builder MUST support saving and loading reusable configuration sets (Includes, Excludes, Anchors, Preface, Output Filename) via a dropdown interface, persisting to `.appy_sets.json`.
 * **File Size Defenses**: The backend MUST inject a prominent warning marker (`⚠️ APPY NOTE: This file is overly large...`) below the filename in the generated `txtar` block for files exceeding the configured line threshold (default 350) to discourage LLM truncation and massive unmodified rewrites.
-* **Quick Add Auto-Execution**: One-click Quick Add execution MUST instantly generate a targeted `.txtar` bundle, automatically deriving the filename from the terminal path segment, without mutating the user's current configuration in the Include box.
 
 ---
 
@@ -53,7 +53,8 @@ The visual header of the stripe MUST contain four elements in this exact order (
 | **IGNORED** | Light Orange | `IGNORED` | Safety skip (e.g., empty search on existing file). |
 
 ### 3.3 Secondary Verification Decorators
-Verification passes and structural modifiers append specific emoji decorators. **These sigils MUST be placed on the RHS of the stripe, immediately to the left of the primary status chip.**
+Verification passes and structural modifiers append specific emoji decorators.
+**These sigils MUST be placed on the RHS of the stripe, immediately to the left of the primary status chip.**
 * **Overwrite Indicator**: ☢️ (Appears if the patch strategy is a full file overwrite).
 * **Anchored Indicator**: ⚓ (Appears if the patch used semantic coordinates).
 * **Compiler Verified (`Check Compiler`)**: 🏅 PASS / ⚠️ FAIL
@@ -64,12 +65,12 @@ Verification passes and structural modifiers append specific emoji decorators. *
 ## 4. Stale Preview Handling
 The preview model is valid **only** for the exact input string and repository snapshot used to produce it.
 * **If the input textarea changes:**
- * All existing preview/apply buttons are disabled immediately.
- * Existing stripes are cleared or marked STALE.
- * Applying stale preview data is strictly forbidden.
+* All existing preview/apply buttons are disabled immediately.
+* Existing stripes are cleared or marked STALE.
+* Applying stale preview data is strictly forbidden.
 * **If the repository changes between preview and apply:**
- * The backend MUST re-check search block matches before writing.
- * Any mismatch becomes `ERROR` and is not written.
+* The backend MUST re-check search block matches before writing.
+* Any mismatch becomes `ERROR` and is not written.
 
 ---
 
@@ -131,43 +132,43 @@ The backend MUST adhere to these conceptual payload shapes to prevent UI spaghet
 ```yaml
 files:
 - path: string
- status: string (READY|ERROR|IGNORED)
- net_lines: int
- file_type: string
- file_icon: string
- patches:
-   - search_block: string
-     replace_block: string
-     is_overwrite: bool
-     error: string
-     closest_match_hint: string
-     llm_fallback_hint: string
+status: string (READY|ERROR|IGNORED)
+net_lines: int
+file_type: string
+file_icon: string
+patches:
+  - search_block: string
+    replace_block: string
+    is_overwrite: bool
+    error: string
+    closest_match_hint: string
+    llm_fallback_hint: string
 ```
 
 **ApplyResponse:**
 ```yaml
 files:
 - path: string
- applied: bool
- net_lines: int
- file_type: string
- file_icon: string
- hash_before: string
- hash_after: string
- ledger_entry: string
- error: string
- failed_patch:
-   current_line_echo: string
-   llm_fallback_hint: string
+applied: bool
+net_lines: int
+file_type: string
+file_icon: string
+hash_before: string
+hash_after: string
+ledger_entry: string
+error: string
+failed_patch:
+  current_line_echo: string
+  llm_fallback_hint: string
 ```
 
 **CompilerCheckResponse:**
 ```yaml
 files:
 - path: string
- compiler_status: string (PASS|FAIL)
- diagnostics: []string
- raw_output: string
+compiler_status: string (PASS|FAIL)
+diagnostics: []string
+raw_output: string
 ```
 
 **RetestResponse:**
@@ -175,11 +176,33 @@ files:
 packages: []string
 files:
 - path: string
- test_status: string (PASS|FAIL)
- package: string
- summary: string
- failure_excerpt: string
- raw_output: string
+test_status: string (PASS|FAIL)
+package: string
+summary: string
+failure_excerpt: string
+raw_output: string
+```
+
+**Builder Responses (`/api/sets`, `/api/txtar`, `/api/txtar_stats`):**
+```yaml
+ConfigSetsResponse:
+ <set_name>:
+   paths: []string
+   excludes: []string
+   anchors: []string
+   preface: string
+   file_name: string
+
+TxtarStatsResponse:
+ file_count: int
+ size_kb: int
+ tokens_est: int
+
+TxtarBuildResponse:
+ success: bool
+ file_url: string
+ file_name: string
+ file_count: int
 ```
 
 ---
@@ -189,8 +212,8 @@ When Appy generates Go source files, metadata must be at the absolute top, one d
 
 :: product: FDM/NS
 :: majorVersion: 1
-:: fileVersion: 30
-:: description: Fixed armor logic specification and added unified trace exports + auto-pilot logic.
+:: fileVersion: 32
+:: description: Documented Builder API response contracts following backend modularization.
 :: filename: ui_spec.md
 :: serialization: md
-:: latestChange: Added Builder tab QoL constraints (Smart Paste, Dir Globbing, Large File Warning).
+:: latestChange: Added /api/sets, /api/txtar, and /api/txtar_stats response contracts.
