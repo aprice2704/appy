@@ -1,7 +1,7 @@
 {
   "package": "github.com/aprice2704/appy",
   "directory": "/home/aprice/dev/appy",
-  "overall_coverage_percent": 56.8,
+  "overall_coverage_percent": 63.7,
   "target_coverage_percent": 72,
   "instructions": [
     "This package is not fully healthy (has failures, skips, or coverage below target).",

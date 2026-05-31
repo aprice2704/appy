@@ -70,9 +70,10 @@
                        <button onclick="deleteCurrentSet()" style="background: #dc2626; color: white; border: 1px solid #ef4444; height: auto; padding: 6px 12px;">🗑️ Delete</button>
                    </div>
 
-                   <div style="display: flex; justify-content: space-between; align-items: center;">
+                                      <div style="display: flex; justify-content: space-between; align-items: center;">
                       <label style="color: #94a3b8; font-size: 13px;">Include (one per line):</label>
                       <div style="display: flex; gap: 5px;">
+                          <button id="builderFixPathsBtn" onclick="fixBuilderPaths()" style="display: none; padding: 2px 8px; font-size: 11px; background: #eab308; border: 1px solid #ca8a04; color: black; min-width: 0; height: 24px;">🔧 Fix Paths</button>
                           <button onclick="pasteTxtarCommand()" style="padding: 2px 8px; font-size: 11px; min-width: 0; height: 24px; background: #4f46e5; border-color: #4338ca; color: white;">📋 Paste</button>
                           <button onclick="document.getElementById('txtarFileInput').click()"
                               style="padding: 2px 8px; font-size: 11px; min-width: 0; height: 24px;">📄 Files</button>

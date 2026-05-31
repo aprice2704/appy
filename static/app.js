@@ -446,6 +446,8 @@ function loadTxtarState() {
 }
 
 let txtarStatsTimeout;
+window.pendingBuilderPathFixes = null;
+
 async function updateTxtarStats() {
   const paths = document.getElementById('txtarPaths').value.split('\n').map(l => l.trim()).filter(l => l.length > 0);
   const excludes = document.getElementById('txtarExcludes').value.split('\n').map(l => l.trim()).filter(l => l.length > 0);
@@ -461,6 +463,14 @@ async function updateTxtarStats() {
           if (statsEl) {
               statsEl.innerHTML = `<strong>Files:</strong> ${data.file_count} &nbsp;|&nbsp; <strong>Size:</strong> ${data.size_kb} KB &nbsp;|&nbsp; <strong>Tokens:</strong> ~${data.tokens_est}`;
           }
+          const fixBtn = document.getElementById('builderFixPathsBtn');
+          if (data.path_fixes && Object.keys(data.path_fixes).length > 0) {
+              window.pendingBuilderPathFixes = data.path_fixes;
+              if (fixBtn) fixBtn.style.display = 'inline-block';
+          } else {
+              window.pendingBuilderPathFixes = null;
+              if (fixBtn) fixBtn.style.display = 'none';
+          }
       }
   } catch (e) {
       console.error("Stats fetch failed", e);
@@ -470,6 +480,29 @@ async function updateTxtarStats() {
 function scheduleTxtarStatsUpdate() {
   clearTimeout(txtarStatsTimeout);
   txtarStatsTimeout = setTimeout(updateTxtarStats, 300);
+}
+
+function fixBuilderPaths() {
+   const inputEl = document.getElementById('txtarPaths');
+   const fixBtn = document.getElementById('builderFixPathsBtn');
+   if (!window.pendingBuilderPathFixes) return;
+
+   let lines = inputEl.value.split('\n');
+   let updated = false;
+   for (let i = 0; i < lines.length; i++) {
+       let p = lines[i].trim();
+       if (window.pendingBuilderPathFixes[p]) {
+           lines[i] = window.pendingBuilderPathFixes[p];
+           updated = true;
+       }
+   }
+   if (updated) {
+       inputEl.value = lines.join('\n');
+       saveTxtarState();
+   }
+
+   window.pendingBuilderPathFixes = null;
+   if (fixBtn) fixBtn.style.display = 'none';
 }
 
 async function buildTxtar(overridePaths = null, overrideFilename = null) {

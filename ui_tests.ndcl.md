@@ -77,11 +77,12 @@ These tests MUST pass to certify an Appy release.
 - [ ] Verify the "Fix File Paths" button successfully rewrites the textarea and triggers a re-preview. #(t-edg-02)
 - [ ] Verify Export buttons temporarily change text to "Copied!" to provide visual feedback. #(t-edg-03)
 - [ ] Verify the "Retest" button disables and shows "Running Tests..." during execution. #(t-edg-04)
+- [ ] Verify the "Fix Paths" button in the Builder tab successfully rewrites unresolved paths and updates stats. #(t-edg-05)
 
 :: product: FDM/NS
 :: majorVersion: 1
-:: fileVersion: 6
+:: fileVersion: 7
 :: description: E2E and Unit Test definitions derived strictly from the Appy UI Spec. Added API Contract, Metadata checks, Auto-Pilot, and Unified Trace validations.
 :: filename: ui_tests.ndcl.md
 :: serialization: md
-:: latestChange: Added checks for Builder API endpoints (sets, txtar, stats).
+:: latestChange: Added edge case test for Builder Fix Paths.

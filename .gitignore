@@ -17,3 +17,6 @@
 # OS/editor
 *.swp
 *~
+.appy_ledger.json
+.appy_sets.json
+appy.txtar

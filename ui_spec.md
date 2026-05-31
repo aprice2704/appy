@@ -197,6 +197,7 @@ TxtarStatsResponse:
  file_count: int
  size_kb: int
  tokens_est: int
+ path_fixes: map[string]string
 
 TxtarBuildResponse:
  success: bool
@@ -212,8 +213,8 @@ When Appy generates Go source files, metadata must be at the absolute top, one d
 
 :: product: FDM/NS
 :: majorVersion: 1
-:: fileVersion: 32
+:: fileVersion: 33
 :: description: Documented Builder API response contracts following backend modularization.
 :: filename: ui_spec.md
 :: serialization: md
-:: latestChange: Added /api/sets, /api/txtar, and /api/txtar_stats response contracts.
+:: latestChange: Added path_fixes map to TxtarStatsResponse.

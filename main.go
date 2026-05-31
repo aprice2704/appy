@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-const AppVersion = "v1.8.17"
+const AppVersion = "v1.8.19"
 
 func watchSelfForReload() {
 	execPath, err := os.Executable()
