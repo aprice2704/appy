@@ -13,12 +13,32 @@ function switchTab(tabId) {
        pane.classList.remove('active');
        pane.style.display = 'none';
    });
+
    const activePane = document.getElementById(tabId);
    activePane.classList.add('active');
    activePane.style.display = tabId === 'tab-history' ? 'block' : 'flex';
+
    if (tabId === 'tab-history') {
        loadHistory();
    }
+}
+
+function syncScroll(el, targetId) {
+    const target = document.getElementById(targetId);
+    if (target) {
+        target.scrollTop = el.scrollTop;
+        target.scrollLeft = el.scrollLeft;
+    }
+}
+
+function toggleGlobHelp() {
+    const helpDiv = document.getElementById('globHelp');
+    helpDiv.style.display = helpDiv.style.display === 'none' ? 'block' : 'none';
+}
+
+async function replaceTxtarCommand() {
+    clearTxtarPaths();
+    await pasteTxtarCommand();
 }
 
 async function clearAndPaste() {
@@ -37,7 +57,7 @@ async function clearAndPaste() {
        console.error("Clipboard access denied:", err);
        outputEl.innerHTML = `<div class='error' style='padding: 15px; background: rgba(239, 68, 68, 0.1); border: 1px solid #ef4444; border-radius: 4px; margin-top: 10px;'><strong>Clipboard read failed:</strong> ${err.message}.<br><br>Please click inside the text box above and press <strong>Ctrl+V</strong> to paste manually.</div>`;
        inputEl.focus();
-   }
+   } 
 }
 
 function syncUIState() {
@@ -87,7 +107,7 @@ function setExportMode(label, severity) {
        return;
    }
    copyTraceBtn.style.display = 'inline-block';
-   copyTraceBtn.className = '';
+   copyTraceBtn.className = ''; 
    if (severity === 'success') {
        copyTraceBtn.classList.add('trace-blue');
        copyTraceBtn.innerText = "✅ " + label + " Log";
@@ -97,7 +117,7 @@ function setExportMode(label, severity) {
    } else if (severity === 'error') {
        copyTraceBtn.classList.add('trace-red');
        copyTraceBtn.innerText = "❌ " + label + " Errors";
-   }
+   } 
 }
 
 async function checkSyntax() {
@@ -107,7 +127,7 @@ async function checkSyntax() {
    applyBtn.disabled = true;
    checkBtn.disabled = true;
    sendRequest('/api/apply', false, true);
-}
+} 
 
 async function applyBundle() {
    const applyBtn = document.getElementById('applyBtn');
@@ -125,9 +145,10 @@ async function sendRequest(endpoint, skipCompiler = false, checkOnly = false) {
    const checkBtn = document.getElementById('checkBtn');
    const bundle = inputEl.value;
    if (!bundle.trim()) return;
+
    try {
        const res = await fetch(endpoint, {
-           method: 'POST',
+           method: 'POST', 
            headers: { 'Content-Type': 'application/json' },
            body: JSON.stringify({ bundle, skip_compiler: skipCompiler, check_only: checkOnly })
        });
@@ -163,6 +184,7 @@ function fixFilePaths() {
    const fixPathsBtn = document.getElementById('fixPathsBtn');
    if (!window.pendingPathFixes) return;
    let val = inputEl.value;
+
    for (const [oldPath, newPath] of Object.entries(window.pendingPathFixes)) {
        val = val.replace("filename: " + oldPath, "filename: " + newPath);
    }
@@ -177,7 +199,7 @@ async function copyTraceReport() {
    try {
        await navigator.clipboard.writeText(window.tracePayload || "No data available.");
        const originalText = copyTraceBtn.innerText;
-       copyTraceBtn.innerText = "Copied!";
+       copyTraceBtn.innerText = "Copied!"; 
        setTimeout(() => copyTraceBtn.innerText = originalText, 2000);
    } catch (err) {
        console.error("Failed to copy:", err);
@@ -207,7 +229,8 @@ async function runAutoPilot() {
 
    autoBtn.disabled = true;
    autoBtn.innerText = "🤖 Auto...";
-   try {
+
+   try { 
        if (!navigator.clipboard || !navigator.clipboard.readText) {
            throw new Error("Clipboard API not available. Auto-pilot requires clipboard read permissions.");
        }
@@ -217,7 +240,7 @@ async function runAutoPilot() {
        inputEl.value = inputEl.value.replace(/^@@@[ \u00A0]?/gm, '');
        syncUIState();
 
-       if (!inputEl.value.trim()) throw new Error("Clipboard empty");
+       if (!inputEl.value.trim()) throw new Error("Clipboard empty"); 
        const previewRes = await fetch('/api/preview', {
            method: 'POST', headers: { 'Content-Type': 'application/json' },
            body: JSON.stringify({ bundle: inputEl.value, skip_compiler: false, check_only: false })
@@ -226,8 +249,9 @@ async function runAutoPilot() {
        renderPreview(previewData);
 
        if (applyBtn.disabled) throw new Error("Auto-Pilot halted: Preview yielded errors or no ready files.");
+
        const applyRes = await fetch('/api/apply', {
-           method: 'POST', headers: { 'Content-Type': 'application/json' },
+           method: 'POST', headers: { 'Content-Type': 'application/json' }, 
            body: JSON.stringify({ bundle: inputEl.value, skip_compiler: false, check_only: false })
        });
        const applyData = await applyRes.json();
@@ -237,7 +261,7 @@ async function runAutoPilot() {
            throw new Error("Auto-Pilot halted: Errors occurred during disk application.");
        }
 
-       await runRetest();
+       await runRetest(); 
    } catch (err) {
        console.warn(err);
        alert(err.message);
@@ -247,7 +271,7 @@ async function runAutoPilot() {
    }
 }
 
-function escapeHtml(unsafe) {
+function escapeHtml(unsafe) { 
    if (!unsafe) return "";
    return unsafe.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
@@ -257,7 +281,7 @@ async function fetchSets() {
        const res = await fetch('/api/sets');
        configSets = await res.json();
        updateSetDropdown();
-   } catch (err) {
+   } catch (err) { 
        console.error("Failed to fetch config sets", err);
    }
 }
@@ -267,7 +291,7 @@ function updateSetDropdown() {
    const currentVal = select.value;
    select.innerHTML = '<option value="">-- Default Scratchpad --</option>';
    for (const name in configSets) {
-       const opt = document.createElement('option');
+       const opt = document.createElement('option'); 
        opt.value = name;
        opt.textContent = name;
        select.appendChild(opt);
@@ -287,7 +311,7 @@ function loadSelectedSet() {
    }
    const set = configSets[name];
    if (set) {
-       document.getElementById('txtarPaths').value = set.paths ? set.paths.join('\n') : '';
+       document.getElementById('txtarPaths').value = set.paths ? set.paths.join('\n') : ''; 
        document.getElementById('txtarExcludes').value = set.excludes ? set.excludes.join('\n') : '';
        document.getElementById('txtarAnchors').value = set.anchors ? set.anchors.join('\n') : '';
        document.getElementById('txtarPreface').value = set.preface || '';
@@ -297,7 +321,7 @@ function loadSelectedSet() {
 }
 
 async function saveCurrentSet() {
-   let name = document.getElementById('setSelect').value;
+   let name = document.getElementById('setSelect').value; 
    const newName = document.getElementById('newSetName').value.trim();
    if (newName) {
        name = newName;
@@ -307,17 +331,18 @@ async function saveCurrentSet() {
        return;
    }
    const payload = {
-       paths: document.getElementById('txtarPaths').value.split('\n').map(l=>l.trim()).filter(l=>l),
+       paths: document.getElementById('txtarPaths').value.split('\n').map(l=>l.trim()).filter(l=>l), 
        excludes: document.getElementById('txtarExcludes').value.split('\n').map(l=>l.trim()).filter(l=>l),
        anchors: document.getElementById('txtarAnchors').value.split('\n').map(l=>l.trim()).filter(l=>l),
        preface: document.getElementById('txtarPreface').value,
        file_name: document.getElementById('txtarFilename').value.trim()
    };
+
    configSets[name] = payload;
    try {
        await fetch('/api/sets', {
            method: 'POST',
-           headers: { 'Content-Type': 'application/json' },
+           headers: { 'Content-Type': 'application/json' }, 
            body: JSON.stringify(configSets)
        });
        document.getElementById('newSetName').value = '';
@@ -331,14 +356,17 @@ async function saveCurrentSet() {
 async function deleteCurrentSet() {
    const name = document.getElementById('setSelect').value;
    if (!name) return;
+
    if (!confirm("Delete configuration set '" + name + "'?")) return;
    delete configSets[name];
+
    try {
        await fetch('/api/sets', {
            method: 'POST',
            headers: { 'Content-Type': 'application/json' },
-           body: JSON.stringify(configSets)
+           body: JSON.stringify(configSets) 
        });
+
        updateSetDropdown();
        loadTxtarState();
    } catch (err) {
@@ -347,23 +375,21 @@ async function deleteCurrentSet() {
 }
 
 async function pasteTxtarCommand() {
-  try {
+  try { 
       const text = await navigator.clipboard.readText();
       let cleaned = text.trim();
       
       cleaned = cleaned.replace(/^txtar\s+c\s+/i, '').replace(/^txtar\s+/i, '');
       cleaned = cleaned.replace(/>\s*[^\s]+$/, '');
       cleaned = cleaned.replace(/\\\r?\n/g, ' ');
-      
       const paths = cleaned.split(/\s+/).map(p => p.trim()).filter(p => p.length > 0);
   
       const el = document.getElementById('txtarPaths');
+
       let existing = el.value.split('\n').map(l => l.trim()).filter(l => l.length > 0);
-      
       paths.forEach(p => {
           if (!existing.includes(p)) existing.push(p);
       });
-      
       el.value = existing.join('\n');
       saveTxtarState();
   } catch(err) {
@@ -377,9 +403,10 @@ function clearTxtarPaths() {
    saveTxtarState();
 }
 
-async function handleTxtarFileSelect(event, isDir) {
+async function handleTxtarFileSelect(event, isDir) { 
  const el = document.getElementById('txtarPaths');
  let lines = el.value.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+
  if (isDir && event.target.files.length > 0) {
      let firstFile = event.target.files[0];
      let pathStr = firstFile.path || firstFile.webkitRelativePath.split('/')[0];
@@ -419,6 +446,7 @@ async function handleTxtarFileSelect(event, isDir) {
 
 function saveTxtarState() {
   const root = window.AppyRootDir || 'default';
+
   if (!document.getElementById('setSelect').value) {
       localStorage.setItem('txtarPaths_' + root, document.getElementById('txtarPaths').value);
       localStorage.setItem('txtarExcludes_' + root, document.getElementById('txtarExcludes').value);
@@ -451,6 +479,7 @@ window.pendingBuilderPathFixes = null;
 async function updateTxtarStats() {
   const paths = document.getElementById('txtarPaths').value.split('\n').map(l => l.trim()).filter(l => l.length > 0);
   const excludes = document.getElementById('txtarExcludes').value.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+
   try {
       const res = await fetch('/api/txtar_stats', {
           method: 'POST',
@@ -458,11 +487,13 @@ async function updateTxtarStats() {
           body: JSON.stringify({ paths: paths, excludes: excludes })
       });
       const data = await res.json();
+      
       if (!data.error) {
           const statsEl = document.getElementById('txtarLiveStats');
           if (statsEl) {
               statsEl.innerHTML = `<strong>Files:</strong> ${data.file_count} &nbsp;|&nbsp; <strong>Size:</strong> ${data.size_kb} KB &nbsp;|&nbsp; <strong>Tokens:</strong> ~${data.tokens_est}`;
           }
+          
           const fixBtn = document.getElementById('builderFixPathsBtn');
           if (data.path_fixes && Object.keys(data.path_fixes).length > 0) {
               window.pendingBuilderPathFixes = data.path_fixes;
@@ -470,6 +501,34 @@ async function updateTxtarStats() {
           } else {
               window.pendingBuilderPathFixes = null;
               if (fixBtn) fixBtn.style.display = 'none';
+          }
+
+          const backdrop = document.getElementById('txtarPathsBackdrop');
+          if (backdrop && data.path_statuses) {
+              const lines = document.getElementById('txtarPaths').value.split('\n');
+              let html = '';
+              lines.forEach(line => {
+                  const trimmed = line.trim();
+                  if (!trimmed) {
+                      html += line + '\n';
+                      return;
+                  }
+                  const status = data.path_statuses[trimmed];
+                  if (status === 'valid') {
+                      html += '<span class="hl-valid">' + escapeHtml(line) + '</span>\n';
+                  } else if (status === 'not_found') {
+                      html += '<span class="hl-missing">' + escapeHtml(line) + '</span>\n';
+                  } else if (status === 'zero_matches') {
+                      html += '<span class="hl-empty">' + escapeHtml(line) + '</span>\n';
+                  } else {
+                      html += escapeHtml(line) + '\n';
+                  }
+              });
+              // Avoid rendering an extra newline if it wasn't there
+              if (lines.length > 0 && !lines[lines.length-1].endsWith('\n')) {
+                  html = html.replace(/\n$/, '');
+              }
+              backdrop.innerHTML = html;
           }
       }
   } catch (e) {
@@ -489,6 +548,7 @@ function fixBuilderPaths() {
 
    let lines = inputEl.value.split('\n');
    let updated = false;
+
    for (let i = 0; i < lines.length; i++) {
        let p = lines[i].trim();
        if (window.pendingBuilderPathFixes[p]) {
@@ -516,6 +576,7 @@ async function buildTxtar(overridePaths = null, overrideFilename = null) {
   const filename = overrideFilename || (document.getElementById('txtarFilename') ? document.getElementById('txtarFilename').value.trim() : "");
 
   if (!overridePaths) saveTxtarState();
+
   try {
       const res = await fetch('/api/txtar', {
           method: 'POST',
@@ -535,6 +596,7 @@ async function buildTxtar(overridePaths = null, overrideFilename = null) {
 
       const downloadUrl = data.file_url;
       const absUrl = window.location.origin + downloadUrl;
+
       const link = document.getElementById('txtarDownloadLink');
       link.href = downloadUrl;
       link.download = data.file_name;
@@ -545,17 +607,19 @@ async function buildTxtar(overridePaths = null, overrideFilename = null) {
   } catch (err) {
       alert("Network error: " + err.message);
   } finally {
-      btn.innerText = "Build Txtar";
+      btn.innerText = "📦 Build Txtar";
       btn.disabled = false;
   }
 }
 
 async function loadHistory() {
-   const histEl = document.getElementById('tab-history');
+   const histEl = document.getElementById('historyContent');
    histEl.innerHTML = "<em>Loading history...</em>";
+
    try {
        const res = await fetch('/api/history');
        const data = await res.json();
+
        if (!data.history || data.history.length === 0) {
            histEl.innerHTML = "<em>No history available.</em>";
            return;
@@ -574,6 +638,7 @@ async function loadHistory() {
            html += '</div>';
        });
        histEl.innerHTML = html;
+
    } catch (err) {
        histEl.innerHTML = "<div class='error'>Failed to load history: " + err.message + "</div>";
    }
@@ -581,6 +646,7 @@ async function loadHistory() {
 
 async function revertTx(txId) {
    if (!confirm("Are you sure you want to revert " + txId + "? This will restore original file contents and CANNOT be undone.")) return;
+
    try {
        const res = await fetch('/api/revert', {
            method: 'POST',

@@ -21,3 +21,9 @@ x
 appy -build-sets="appy"
 go install .
 x
+appy -build-sets="appy"
+cls
+tre
+tre -s
+ll -R
+go install .

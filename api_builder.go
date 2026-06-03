@@ -93,6 +93,7 @@ func (s *AppyServer) handleTxtarStats(w http.ResponseWriter, r *http.Request) {
 	var fileCount int
 	var totalBytes int64
 	pathFixes := make(map[string]string)
+	pathStatuses := make(map[string]string)
 
 	walkPaths(s.rootDir, req.Paths, req.Excludes, func(absPath, relName string) {
 		info, err := os.Stat(absPath)
@@ -104,26 +105,46 @@ func (s *AppyServer) handleTxtarStats(w http.ResponseWriter, r *http.Request) {
 
 	for _, p := range req.Paths {
 		pTrim := strings.TrimSpace(p)
-		if pTrim == "" || strings.Contains(pTrim, "*") || strings.Contains(pTrim, "?") {
+		if pTrim == "" {
 			continue
 		}
+
+		if strings.Contains(pTrim, "*") || strings.Contains(pTrim, "?") {
+			// Glob check
+			found := false
+			walkPaths(s.rootDir, []string{pTrim}, req.Excludes, func(absPath, relName string) {
+				found = true
+			})
+			if !found {
+				pathStatuses[pTrim] = "zero_matches"
+			} else {
+				pathStatuses[pTrim] = "valid"
+			}
+			continue
+		}
+
+		// Exact path check
 		baseDir := pTrim
 		if !filepath.IsAbs(baseDir) {
 			baseDir = filepath.Join(s.rootDir, baseDir)
 		}
 		if _, err := os.Stat(baseDir); os.IsNotExist(err) {
+			pathStatuses[pTrim] = "not_found"
 			if fixed := findUniquePathSuffix(s.rootDir, pTrim); fixed != "" && fixed != filepath.ToSlash(pTrim) {
 				pathFixes[pTrim] = fixed
 			}
+		} else {
+			pathStatuses[pTrim] = "valid"
 		}
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
-		"file_count": fileCount,
-		"size_kb":    totalBytes / 1024,
-		"tokens_est": totalBytes / 4,
-		"path_fixes": pathFixes,
+		"file_count":    fileCount,
+		"size_kb":       totalBytes / 1024,
+		"tokens_est":    totalBytes / 4,
+		"path_fixes":    pathFixes,
+		"path_statuses": pathStatuses,
 	})
 }
 

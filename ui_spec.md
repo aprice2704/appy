@@ -198,6 +198,7 @@ TxtarStatsResponse:
  size_kb: int
  tokens_est: int
  path_fixes: map[string]string
+ path_statuses: map[string]string
 
 TxtarBuildResponse:
  success: bool

@@ -13,7 +13,7 @@ body {
     height: 95vh;
     max-width: 1400px;
     margin: 0 auto;
-    gap: 15px;
+    gap: 0; /* Gap managed explicitly between tabs and controls now */
 }
 
 .header-zone {
@@ -25,14 +25,14 @@ body {
 .tab-bar {
     display: flex;
     gap: 5px;
-    border-bottom: 2px solid #1e293b;
-    margin-bottom: 5px;
+    border-bottom: 2px solid #2563eb;
+    margin-bottom: 0;
 }
 
 .tab-btn {
     background: #121826;
     color: #94a3b8;
-    border: 1px solid #1e293b;
+    border: 1px solid #2d3748;
     border-bottom: none;
     border-radius: 6px 6px 0 0;
     padding: 8px 16px;
@@ -65,34 +65,17 @@ body {
     gap: 15px;
 }
 
-textarea {
-    flex: 1;
-    background: #121826;
-    color: #a0aec0;
-    border: 1px solid #2d3748;
-    padding: 18px;
-    font-family: 'Consolas', 'JetBrains Mono', monospace;
-    font-size: 14px;
-    resize: none;
-    border-radius: 6px;
-    outline: none;
-    box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.2);
-    transition: border-color 0.2s;
-}
-
-textarea:focus {
-    border-color: #3b82f6;
-    box-shadow: 0 0 0 1px #3b82f6, inset 0 2px 4px rgba(0, 0, 0, 0.2);
-}
-
-.controls {
-    display: grid;
-    grid-template-columns: 1fr auto 1fr;
+/* TAB CONTROLS (THE COMMAND BAR) */
+.tab-controls {
+    display: flex;
+    justify-content: space-between;
     align-items: center;
     background: #121826;
-    padding: 12px 18px;
-    border-radius: 6px;
+    padding: 10px 16px;
     border: 1px solid #2d3748;
+    border-top: none;
+    border-radius: 0 0 6px 6px;
+    margin-bottom: 10px;
 }
 
 .control-group {
@@ -113,6 +96,73 @@ textarea:focus {
     justify-content: flex-end;
     position: relative;
 }
+
+textarea {
+    flex: 1;
+    background: #121826;
+    color: #a0aec0;
+    border: 1px solid #2d3748;
+    padding: 18px;
+    font-family: 'Consolas', 'JetBrains Mono', monospace;
+    font-size: 14px;
+    resize: none;
+    border-radius: 6px;
+    outline: none;
+    box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.2);
+    transition: border-color 0.2s;
+}
+
+textarea:focus {
+    border-color: #3b82f6;
+    box-shadow: 0 0 0 1px #3b82f6, inset 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+/* Syntax Highlighting text areas */
+.backdrop-container {
+    position: relative;
+    background: #121826;
+    border: 1px solid #2d3748;
+    border-radius: 4px;
+    overflow: hidden;
+    box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+.backdrop-content {
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    padding: 8px;
+    font-family: 'Consolas', 'JetBrains Mono', monospace;
+    font-size: 14px;
+    line-height: normal;
+    white-space: pre; 
+    overflow: hidden; 
+    color: #a0aec0;
+    pointer-events: none;
+    z-index: 1;
+}
+.overlay-textarea {
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    width: 100%; height: 100%;
+    padding: 8px;
+    font-family: 'Consolas', 'JetBrains Mono', monospace;
+    font-size: 14px;
+    background: transparent !important;
+    color: transparent !important;
+    caret-color: #e2e8f0;
+    border: none !important;
+    outline: none;
+    z-index: 2;
+    resize: none;
+    white-space: pre;
+    box-shadow: none !important;
+}
+.overlay-textarea::selection {
+    background: rgba(59, 130, 246, 0.3);
+    color: transparent;
+}
+.hl-valid { color: #4ade80; font-weight: bold; }
+.hl-missing { color: #f87171; text-decoration: line-through; }
+.hl-empty { color: #c084fc; font-style: italic; }
 
 button {
     padding: 0 16px;
