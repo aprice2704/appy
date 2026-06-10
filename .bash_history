@@ -27,3 +27,16 @@ tre
 tre -s
 ll -R
 go install .
+./run_appy.sh -port=8082
+x
+x
+appy -build-sets="appy"
+x
+t
+go install .
+t -quick
+go install .
+t -quick
+go install .
+x
+./run_appy.sh -port=8082

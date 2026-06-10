@@ -94,14 +94,7 @@ func (s *AppyServer) handleTxtarStats(w http.ResponseWriter, r *http.Request) {
 	var totalBytes int64
 	pathFixes := make(map[string]string)
 	pathStatuses := make(map[string]string)
-
-	walkPaths(s.rootDir, req.Paths, req.Excludes, func(absPath, relName string) {
-		info, err := os.Stat(absPath)
-		if err == nil {
-			fileCount++
-			totalBytes += info.Size()
-		}
-	})
+	pathStats := make(map[string]map[string]int64)
 
 	for _, p := range req.Paths {
 		pTrim := strings.TrimSpace(p)
@@ -109,17 +102,24 @@ func (s *AppyServer) handleTxtarStats(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
+		var pFiles int64
+		var pBytes int64
+
 		if strings.Contains(pTrim, "*") || strings.Contains(pTrim, "?") {
-			// Glob check
 			found := false
 			walkPaths(s.rootDir, []string{pTrim}, req.Excludes, func(absPath, relName string) {
 				found = true
+				if info, err := os.Stat(absPath); err == nil && !info.IsDir() {
+					pFiles++
+					pBytes += info.Size()
+				}
 			})
 			if !found {
 				pathStatuses[pTrim] = "zero_matches"
 			} else {
 				pathStatuses[pTrim] = "valid"
 			}
+			pathStats[pTrim] = map[string]int64{"files": pFiles, "tokens": pBytes / 4}
 			continue
 		}
 
@@ -133,10 +133,26 @@ func (s *AppyServer) handleTxtarStats(w http.ResponseWriter, r *http.Request) {
 			if fixed := findUniquePathSuffix(s.rootDir, pTrim); fixed != "" && fixed != filepath.ToSlash(pTrim) {
 				pathFixes[pTrim] = fixed
 			}
+			pathStats[pTrim] = map[string]int64{"files": 0, "tokens": 0}
 		} else {
 			pathStatuses[pTrim] = "valid"
+			walkPaths(s.rootDir, []string{pTrim}, req.Excludes, func(absPath, relName string) {
+				if info, err := os.Stat(absPath); err == nil && !info.IsDir() {
+					pFiles++
+					pBytes += info.Size()
+				}
+			})
+			pathStats[pTrim] = map[string]int64{"files": pFiles, "tokens": pBytes / 4}
 		}
 	}
+
+	walkPaths(s.rootDir, req.Paths, req.Excludes, func(absPath, relName string) {
+		info, err := os.Stat(absPath)
+		if err == nil && !info.IsDir() {
+			fileCount++
+			totalBytes += info.Size()
+		}
+	})
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
@@ -145,6 +161,7 @@ func (s *AppyServer) handleTxtarStats(w http.ResponseWriter, r *http.Request) {
 		"tokens_est":    totalBytes / 4,
 		"path_fixes":    pathFixes,
 		"path_statuses": pathStatuses,
+		"path_stats":    pathStats,
 	})
 }
 
@@ -158,12 +175,21 @@ func (s *AppyServer) handleResolvePath(w http.ResponseWriter, r *http.Request) {
 		sendError(w, "missing name parameter", http.StatusBadRequest)
 		return
 	}
+
+	// Force relativity to sandbox if an absolute path leaked in
+	if filepath.IsAbs(name) {
+		rel, err := filepath.Rel(s.rootDir, name)
+		if err == nil && !strings.HasPrefix(rel, "..") {
+			name = filepath.ToSlash(rel)
+		}
+	}
+
 	match := findUniquePathSuffix(s.rootDir, name)
 	w.Header().Set("Content-Type", "application/json")
 	if match != "" {
 		json.NewEncoder(w).Encode(map[string]string{"path": match})
 	} else {
-		json.NewEncoder(w).Encode(map[string]string{"path": name})
+		json.NewEncoder(w).Encode(map[string]string{"path": filepath.ToSlash(name)})
 	}
 }
 

@@ -691,9 +691,7 @@ func TestE2E_UI_BuilderTab(t *testing.T) {
 		chromedp.Navigate(ts.URL),
 		// 1. Navigate to Builder tab
 		chromedp.Evaluate(`document.getElementById('btn-tab-bundle').click()`, nil),
-		chromedp.WaitVisible(`#txtarPaths`, chromedp.ByQuery),
-
-		// Wait for initial stats poll (t-bld-01)
+		chromedp.WaitVisible(`#txtarPathsTable`, chromedp.ByQuery),
 		chromedp.Sleep(500*time.Millisecond),
 		chromedp.Text(`#txtarLiveStats`, &statsText, chromedp.ByID),
 
@@ -746,12 +744,9 @@ func TestE2E_UI_BuilderFixPaths(t *testing.T) {
 	err := chromedp.Run(ctx,
 		chromedp.Navigate(ts.URL),
 		chromedp.Evaluate(`document.getElementById('btn-tab-bundle').click()`, nil),
-		chromedp.WaitVisible(`#txtarPaths`, chromedp.ByQuery),
-
-		// Input partial path and force the update promise immediately,
-		// bypassing the 300ms debounce and any race conditions with the initial page load.
+		chromedp.WaitVisible(`#txtarPathsTable`, chromedp.ByQuery),
 		chromedp.Evaluate(`
-			document.getElementById('txtarPaths').value = 'core/engine.go';
+			setTxtarPaths(['core/engine.go']);
 			window._testStatsDone = false;
 			updateTxtarStats().then(() => { window._testStatsDone = true; });
 		`, nil),
@@ -774,11 +769,11 @@ func TestE2E_UI_BuilderFixPaths(t *testing.T) {
 			window._testStatsDone = false;
 			// The click calls fixBuilderPaths(), which schedules an update.
 			// We clear the timeout and force it immediately to await the resolution.
-			clearTimeout(txtarStatsTimeout);
+						clearTimeout(txtarStatsTimeout);
 			updateTxtarStats().then(() => { window._testStatsDone = true; });
 		`, nil),
 		chromedp.Poll(`window._testStatsDone === true`, nil),
-		chromedp.Evaluate(`document.getElementById('txtarPaths').value`, &textareaValue),
+		chromedp.Evaluate(`getTxtarPaths().join('\n')`, &textareaValue),
 		chromedp.Evaluate(`document.getElementById('builderFixPathsBtn').style.display`, &fixBtnDisplay),
 	)
 	if err != nil {

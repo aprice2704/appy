@@ -2,179 +2,191 @@
 <html lang="en">
 
 <head>
-   <meta charset="UTF-8">
-   <link rel="icon"
-       href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">🚀</text></svg>'>
-   <title>{TITLE}</title>
-   <link rel="stylesheet" href="/static/style.css">
+  <meta charset="UTF-8">
+  <link rel="icon"
+      href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">🚀</text></svg>'>
+  <title>{TITLE}</title>
+  <link rel="stylesheet" href="/static/style.css">
 </head>
 
 <body>
-   <div class="container">
-       <div class="header-zone">
-           <h2 style="margin: 0; display: flex; align-items: baseline; gap: 10px;">
-               {TITLE}
-               <span style="font-size: 0.6em; color: #64748b; font-weight: normal;">Appy {VERSION}</span>
-           </h2>
-           <div style="font-size: 13px; color: #64748b; margin-top: 5px; font-family: monospace; margin-bottom: 15px;">
-               Sandboxed to: {ROOT_DIR}
-           </div>
-       </div>
+  <div class="container">
+      <div class="header-zone">
+          <h2 style="margin: 0; display: flex; align-items: baseline; gap: 10px;">
+              {TITLE}
+              <span style="font-size: 0.6em; color: #64748b; font-weight: normal;">Appy {VERSION}</span>
+          </h2>
+          <div style="font-size: 13px; color: #64748b; margin-top: 5px; font-family: monospace; margin-bottom: 15px;">
+              Sandboxed to: {ROOT_DIR}
+          </div>
+      </div>
 
-       <div class="tab-bar">
-           <button id="btn-tab-patch" class="tab-btn active" onclick="switchTab('tab-patch')">🛠️ Patch</button>
-           <button id="btn-tab-bundle" class="tab-btn" onclick="switchTab('tab-bundle')">📦 Builder</button>
-           <button id="btn-tab-history" class="tab-btn" onclick="switchTab('tab-history')">⏪ History</button>
-       </div>
+      <div class="tab-bar">
+          <button id="btn-tab-patch" class="tab-btn active" onclick="switchTab('tab-patch')">🛠️ Patch</button>
+          <button id="btn-tab-bundle" class="tab-btn" onclick="switchTab('tab-bundle')">📦 Builder</button>
+          <button id="btn-tab-history" class="tab-btn" onclick="switchTab('tab-history')">⏪ History</button>
+      </div>
 
-       <div id="tab-patch" class="tab-pane active">
-           <div class="tab-controls">
-               <div class="control-group prep-group">
-                   <button id="autoBtn" onclick="runAutoPilot()">🤖 Auto</button>
-                   <button id="clearPasteBtn" onclick="clearAndPaste()">📋 Paste</button>
-                   <button id="fixPathsBtn" onclick="fixFilePaths()" style="display: none;">🔧 Fix Paths</button>
-               </div>
-               <div class="control-group action-group">
-                   <button id="checkBtn" onclick="checkSyntax()" disabled>🧪 Check</button>
-                   <button id="applyBtn" onclick="applyBundle()" disabled>🚀 Apply</button>
-                   <button id="retestBtn" onclick="runRetest()" style="display: none;">🔄 Retest</button>
-                   <button id="cancelRetestBtn" onclick="cancelRetest()" style="display: none;">⏹️ Stop</button>
-               </div>
-               <div class="control-group export-group">
-                  <button id="copyTraceBtn" onclick="copyTraceReport()" style="display: none;">📋 Logs</button>
-               </div>
-           </div>
-           
-           <textarea id="bundleInput"
-               placeholder="Paste the raw LLM output here (including the markdown code blocks and %%% syntax)..."
-               oninput="debouncePreview()"></textarea>
+      <div id="tab-patch" class="tab-pane active">
+          <div class="tab-controls">
+              <div class="control-group prep-group">
+                  <button id="autoBtn" onclick="runAutoPilot()">🤖 Auto</button>
+                  <button id="clearPasteBtn" onclick="clearAndPaste()">📋 Paste</button>
+                  <button id="fixPathsBtn" onclick="fixFilePaths()" style="display: none;">🔧 Fix Paths</button>
+              </div>
+              <div class="control-group action-group">
+                  <button id="checkBtn" onclick="checkSyntax()" disabled>🧪 Check</button>
+                  <button id="applyBtn" onclick="applyBundle()" disabled>🚀 Apply</button>
+                  <button id="retestBtn" onclick="runRetest()" style="display: none;">🔄 Retest</button>
+                  <button id="cancelRetestBtn" onclick="cancelRetest()" style="display: none;">⏹️ Stop</button>
+              </div>
+              <div class="control-group export-group">
+                 <button id="copyTraceBtn" onclick="copyTraceReport()" style="display: none;">📋 Logs</button>
+              </div>
+          </div>
+          
+          <textarea id="bundleInput"
+              placeholder="Paste the raw LLM output here (including the markdown code blocks and %%% syntax)..."
+              oninput="debouncePreview()"></textarea>
 
-           <div id="output" class="output">
-               <em>Waiting for input...</em>
-           </div>
-       </div>
+          <div id="output" class="output">
+              <em>Waiting for input...</em>
+          </div>
+      </div>
 
-       <div id="tab-bundle" class="tab-pane" style="display: none;">
-           <div class="tab-controls">
-               <div class="control-group prep-group">
-                   <label style="color: #cbd5e1; font-weight: bold; font-size: 13px;">Config Sets:</label>
-                   <select id="setSelect" onchange="loadSelectedSet()" style="min-width: 150px; padding: 6px; background: #0f1420; color: white; border: 1px solid #475569; border-radius: 4px;">
-                       <option value="">-- Default Scratchpad --</option>
-                   </select>
-                   <input type="text" id="newSetName" placeholder="New set name..." style="padding: 6px; background: #0f1420; color: white; border: 1px solid #475569; border-radius: 4px; width: 140px;">
-                   <button onclick="saveCurrentSet()" style="background: #16a34a; color: white; border: 1px solid #22c55e; height: 32px; padding: 0 12px; font-size: 13px;">💾 Save</button>
-                   <button onclick="deleteCurrentSet()" style="background: #dc2626; color: white; border: 1px solid #ef4444; height: 32px; padding: 0 12px; font-size: 13px;">🗑️ Delete</button>
-               </div>
-               <div class="control-group action-group">
-               </div>
-               <div class="control-group export-group">
-                   <button id="buildTxtarBtn" onclick="buildTxtar()" style="background: #2563eb; color: white; border: 1px solid #3b82f6; padding: 0 16px; font-weight: bold;">📦 Build Txtar</button>
-               </div>
-           </div>
+      <div id="tab-bundle" class="tab-pane" style="display: none;">
+          <div class="tab-controls">
+              <div class="control-group prep-group">
+                  <button id="buildTxtarBtn" onclick="buildTxtar()" style="background: #3b82f6; color: #f8fafc; border: 1px solid #2563eb; padding: 0 16px; font-weight: bold; margin-right: 15px;">📦 Build Txtar</button>
 
-           <div style="display: flex; gap: 20px; height: calc(100% - 60px);">
-               <div style="flex: 1; display: flex; flex-direction: column; gap: 10px;">
-                   <div style="display: flex; justify-content: space-between; align-items: center;">
-                      <label style="color: #94a3b8; font-size: 13px;">Include (one per line):</label>
-                      <div style="display: flex; gap: 5px;">
-                          <button id="builderFixPathsBtn" onclick="fixBuilderPaths()" style="display: none; padding: 2px 8px; font-size: 11px; background: #eab308; border: 1px solid #ca8a04; color: black; min-width: 0; height: 24px;">🔧 Fix Paths</button>
-                          <button onclick="replaceTxtarCommand()" style="padding: 2px 8px; font-size: 11px; min-width: 0; height: 24px; background: #0ea5e9; border-color: #0284c7; color: white;">🔄 Replace</button>
-                          <button onclick="pasteTxtarCommand()" style="padding: 2px 8px; font-size: 11px; min-width: 0; height: 24px; background: #4f46e5; border-color: #4338ca; color: white;">📋 Paste</button>
-                          <button onclick="document.getElementById('txtarFileInput').click()" style="padding: 2px 8px; font-size: 11px; min-width: 0; height: 24px;">📄 Files</button>
-                          <button onclick="document.getElementById('txtarDirInput').click()" style="padding: 2px 8px; font-size: 11px; min-width: 0; height: 24px;">📁 Dir</button>
-                          <button onclick="clearTxtarPaths()" style="padding: 2px 8px; font-size: 11px; background: #dc2626; border: 1px solid #ef4444; min-width: 0; height: 24px;">🗑️ Clear</button>
-                      </div>
-                  </div>
-                  
-                  <div class="backdrop-container" style="flex: 1;">
-                      <div id="txtarPathsBackdrop" class="backdrop-content"></div>
-                      <textarea id="txtarPaths" class="overlay-textarea" oninput="saveTxtarState()" onscroll="syncScroll(this, 'txtarPathsBackdrop')">.</textarea>
-                  </div>
+                  <label style="color: #cbd5e1; font-weight: bold; font-size: 13px;">Config Sets:</label>
+                  <select id="setSelect" onchange="loadSelectedSet()" style="min-width: 150px; padding: 6px; background: #0f1420; color: #f8fafc; border: 1px solid #475569; border-radius: 4px;">
+                      <option value="">-- Default Scratchpad --</option>
+                  </select>
+                  <input type="text" id="newSetName" placeholder="New set name..." style="padding: 6px; background: #0f1420; color: #f8fafc; border: 1px solid #475569; border-radius: 4px; width: 140px;">
+                  <button onclick="saveCurrentSet()" style="background: #16a34a; color: #f8fafc; border: 1px solid #15803d; height: 32px; padding: 0 12px; font-size: 13px;">💾 Save</button>
+                  <button onclick="deleteCurrentSet()" style="background: #991b1b; color: #f8fafc; border: 1px solid #7f1d1d; height: 32px; padding: 0 12px; font-size: 13px;">🗑️ Delete</button>
+              </div>
+              <div class="control-group action-group">
+              </div>
+              <div class="control-group export-group">
+              </div>
+          </div>
 
-                   <input type="file" id="txtarFileInput" multiple style="display: none;" onchange="handleTxtarFileSelect(event, false)">
-                   <input type="file" id="txtarDirInput" webkitdirectory directory multiple style="display: none;" onchange="handleTxtarFileSelect(event, true)">
+          <div style="display: flex; gap: 20px; height: calc(100% - 60px);">
+              <div style="flex: 1; display: flex; flex-direction: column; gap: 10px;">
+                  <div style="display: flex; justify-content: space-between; align-items: center;">
+                     <label style="color: #94a3b8; font-size: 13px;">Include (one per line):</label>
+                     <div style="display: flex; gap: 5px;">
+                         <button id="builderFixPathsBtn" onclick="fixBuilderPaths()" style="display: none; padding: 2px 8px; font-size: 11px; background: #eab308; border: 1px solid #ca8a04; color: #0f1420; min-width: 0; height: 24px;">🔧 Fix Paths</button>
+                         <button onclick="replaceTxtarCommand()" style="padding: 2px 8px; font-size: 11px; min-width: 0; height: 24px; background: #334155; border: 1px solid #475569; color: #f8fafc;">🔄 Replace</button>
+                         <button onclick="pasteTxtarCommand()" style="padding: 2px 8px; font-size: 11px; min-width: 0; height: 24px; background: #334155; border: 1px solid #475569; color: #f8fafc;">📋 Paste</button>
+                         <button onclick="document.getElementById('txtarFileInput').click()" style="padding: 2px 8px; font-size: 11px; min-width: 0; height: 24px; background: #334155; border: 1px solid #475569; color: #f8fafc;">📄 Files</button>
+                         <button onclick="document.getElementById('txtarDirInput').click()" style="padding: 2px 8px; font-size: 11px; min-width: 0; height: 24px; background: #334155; border: 1px solid #475569; color: #f8fafc;">📁 Dir</button>
+                         <button onclick="clearTxtarPaths()" style="padding: 2px 8px; font-size: 11px; background: #991b1b; border: 1px solid #7f1d1d; min-width: 0; height: 24px; color: #f8fafc;">🗑️ Clear</button>
+                     </div>
+                 </div>
+                 
+                 <div class="table-container" style="flex: 1; overflow-y: auto; background: #121826; border: 1px solid #2d3748; border-radius: 4px;">
+                     <table id="txtarPathsTable" class="builder-table">
+                         <thead style="position: sticky; top: 0; background: #1e293b; z-index: 10;">
+                             <tr><th style="width:60px; padding: 8px;">Files</th><th style="width:80px; padding: 8px;">~kTok</th><th style="padding: 8px; text-align: left;">Glob / Path</th><th style="width:40px;"></th></tr>
+                         </thead>
+                         <tbody id="txtarPathsBody">
+                         </tbody>
+                         <tfoot style="position: sticky; bottom: 0; background: #1e293b; z-index: 10;">
+                             <tr><td id="totFiles" style="padding: 8px; text-align: center; color: #e2e8f0;">0</td><td id="totTokens" style="padding: 8px; text-align: center; color: #e2e8f0;">0</td><td colspan="2" style="padding: 8px; font-weight: bold; color: #cbd5e1;">Total</td></tr>
+                         </tfoot>
+                     </table>
+                     <div style="padding: 10px;">
+                         <button onclick="addPathRow('')" style="background: #334155; color: #f8fafc; height: 28px; font-size: 12px; min-width: auto; border: 1px solid #475569; border-radius: 4px; cursor: pointer;">+ Add Path</button>
+                     </div>
+                 </div>
 
-                   <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 5px;">
-                       <label style="color: #94a3b8; font-size: 13px;">Glob Excludes (one per line):</label>
-                       <button onclick="toggleGlobHelp()" style="padding: 2px 8px; font-size: 11px; background: #334155; border: 1px solid #475569; color: white; min-width: 0; height: 24px;">❓ Glob Help</button>
-                   </div>
-                   
-                   <div id="globHelp" style="display: none; background: #0f1420; padding: 12px; border-radius: 4px; border: 1px dashed #3b82f6; font-size: 12.5px; color: #94a3b8; font-family: monospace;">
-                       <strong>*</strong> : Matches any sequence of non-separator chars (e.g., *.go)<br>
-                       <strong>**</strong> : Matches any sequence of chars, including separators (e.g., src/**/*.js)<br>
-                       <strong>?</strong> : Matches any single non-separator char (e.g., test?.go)
-                   </div>
+                  <input type="file" id="txtarFileInput" multiple style="display: none;" onchange="handleTxtarFileSelect(event, false)">
+                  <input type="file" id="txtarDirInput" webkitdirectory directory multiple style="display: none;" onchange="handleTxtarFileSelect(event, true)">
 
-                   <textarea id="txtarExcludes"
-                       style="height: 80px; padding: 8px; background: #121826; color: #a0aec0; border: 1px solid #2d3748; border-radius: 4px; font-family: monospace;"
-                       oninput="saveTxtarState()">*_test.go
+                  <div style="display: flex; gap: 15px; margin-top: 5px;">
+                      <div style="flex: 1; display: flex; flex-direction: column; gap: 5px;">
+                          <div style="display: flex; justify-content: space-between; align-items: center;">
+                              <label style="color: #94a3b8; font-size: 13px;">Glob Excludes (one per line):</label>
+                              <button onclick="toggleGlobHelp()" style="padding: 2px 8px; font-size: 11px; background: #334155; border: 1px solid #475569; color: #f8fafc; min-width: 0; height: 24px;">❓ Glob Help</button>
+                          </div>
+                          <textarea id="txtarExcludes"
+                              style="height: 120px; padding: 8px; background: #121826; color: #a0aec0; border: 1px solid #2d3748; border-radius: 4px; font-family: monospace;"
+                              oninput="saveTxtarState()">*_test.go
 .git
 vendor
 node_modules</textarea>
+                      </div>
+                      <div style="flex: 1; display: flex; flex-direction: column; gap: 5px;">
+                          <label style="color: #94a3b8; font-size: 13px; height: 24px; display: flex; align-items: center;">Semantic Anchors Exclude Glob:</label>
+                          <textarea id="txtarAnchors"
+                              style="height: 120px; padding: 8px; background: #121826; color: #a0aec0; border: 1px solid #2d3748; border-radius: 4px; font-family: monospace;"
+                              oninput="saveTxtarState()"
+                              placeholder="Leave empty to anchor all supported files">*.ndcl</textarea>
+                      </div>
+                  </div>
+                  
+                  <div id="globHelp" style="display: none; background: #0f1420; padding: 12px; border-radius: 4px; border: 1px dashed #3b82f6; font-size: 12.5px; color: #94a3b8; font-family: monospace; margin-top: 5px;">
+                      <strong>*</strong> : Matches any sequence of non-separator chars (e.g., *.go)<br>
+                      <strong>**</strong> : Matches any sequence of chars, including separators (e.g., src/**/*.js)<br>
+                      <strong>?</strong> : Matches any single non-separator char (e.g., test?.go)
+                  </div>
+              </div>
+       
+              <div style="flex: 1; display: flex; flex-direction: column; gap: 10px;">
+                 <label style="color: #94a3b8; font-size: 13px;">Output Filename:</label>
+                 <div style="display: flex; gap: 5px; margin-bottom: 10px;">
+                     <input type="text" id="txtarFilename" placeholder="appy_bundle_xxx.txtar (Auto)" style="flex: 1; padding: 8px; background: #121826; color: #a0aec0; border: 1px solid #2d3748; border-radius: 4px; font-family: monospace;"> 
+                     <button onclick="document.getElementById('txtarFilename').value = ''" style="height: auto; padding: 0 12px; font-size: 12px; background: #334155; border: 1px solid #475569; color: #f8fafc;">Auto</button>
+                 </div>
 
-                   <label style="color: #94a3b8; font-size: 13px;">Semantic Anchors Exclude Glob (e.g. *.ndcl):</label>
-                   <textarea id="txtarAnchors"
-                       style="height: 40px; padding: 8px; background: #121826; color: #a0aec0; border: 1px solid #2d3748; border-radius: 4px; font-family: monospace;"
-                       oninput="saveTxtarState()"
-                       placeholder="Leave empty to anchor all supported files">*.ndcl</textarea>
-               </div>
-        
-               <div style="flex: 1; display: flex; flex-direction: column; gap: 10px;">
-                  <label style="color: #94a3b8; font-size: 13px;">Preface Text:</label>
-                  <textarea id="txtarPreface"
-                      style="flex: 1; padding: 8px; background: #121826; color: #a0aec0; border: 1px solid #2d3748; border-radius: 4px; font-family: monospace;"
-                      oninput="saveTxtarState()">Please review the following files to help me with...</textarea>
-
-                  <label style="color: #94a3b8; font-size: 13px; margin-top: 10px;">Output Filename:</label>
-                  <div style="display: flex; gap: 5px; margin-bottom: 10px;">
-                      <input type="text" id="txtarFilename" placeholder="appy_bundle_xxx.txtar (Auto)" style="flex: 1; padding: 8px; background: #121826; color: #a0aec0; border: 1px solid #2d3748; border-radius: 4px; font-family: monospace;">
-                      <button onclick="document.getElementById('txtarFilename').value = ''" style="height: auto; padding: 0 12px; font-size: 12px; background: #334155; border: 1px solid #475569; color: white;">Auto</button>
+                  <div id="txtarResult"
+                      style="margin-top: 5px; margin-bottom: 15px; padding: 15px; background: #1e293b; border-radius: 6px; display: none; align-items: center; gap: 15px; border: 1px solid #334155;">
+                      <a id="txtarDownloadLink" href="#" draggable="true" 
+                          style="font-size: 3em; text-decoration: none; cursor: grab;"
+                          title="Drag me to another window!">📦</a>
+                      <div>
+                          <div style="font-weight: bold; color: #4ade80;">Success!</div>
+                          <div id="txtarResultStats" style="color: #cbd5e1; font-size: 0.9em; margin-top: 4px;"></div>
+                          <div style="color: #94a3b8; font-size: 0.8em; margin-top: 5px;">Click the icon to download, or drag to your OS.</div>
+                      </div>
                   </div>
 
-                 <div id="txtarLiveStats" style="color: #cbd5e1; font-size: 13px; margin-bottom: 5px; padding: 8px; background: #1e293b; border-radius: 4px; border: 1px solid #334155;">
-                      <strong>Files:</strong> 0 &nbsp;|&nbsp; <strong>Size:</strong> 0 KB &nbsp;|&nbsp; <strong>Tokens:</strong> ~0
-                  </div>
+                 <label style="color: #94a3b8; font-size: 13px;">Preface Text:</label>
+                 <textarea id="txtarPreface"
+                     style="flex: 1; padding: 8px; background: #121826; color: #a0aec0; border: 1px solid #2d3748; border-radius: 4px; font-family: monospace;"
+                     oninput="saveTxtarState()">Please review the following files to help me with...</textarea>
+              </div>
+          </div>
+      </div>
 
-                   <div id="txtarResult"
-                       style="margin-top: 15px; padding: 15px; background: #1e293b; border-radius: 6px; display: none; align-items: center; gap: 15px; border: 1px solid #334155;">
-                       <a id="txtarDownloadLink" href="#" draggable="true"
-                           style="font-size: 3em; text-decoration: none; cursor: grab;"
-                           title="Drag me to another window!">📦</a>
-                       <div>
-                           <div style="font-weight: bold; color: #4ade80;">Success!</div>
-                           <div id="txtarResultStats" style="color: #cbd5e1; font-size: 0.9em; margin-top: 4px;"></div>
-                           <div style="color: #94a3b8; font-size: 0.8em; margin-top: 5px;">Click the icon to download, or drag to your OS.</div>
-                       </div>
-                   </div>
-               </div>
-           </div>
-       </div>
+      <div id="tab-history" class="tab-pane output" 
+          style="display: none; padding: 0; background: transparent; border: none; box-shadow: none;">
+          <div class="tab-controls">
+              <div class="control-group prep-group">
+                  <button onclick="loadHistory()">🔄 Refresh History</button>
+              </div>
+          </div>
+          <div id="historyContent" style="padding: 20px; background: #0f1420; border: 1px solid #2d3748; border-radius: 6px; flex: 1; overflow-y: auto;">
+              <em>Loading history...</em>
+          </div>
+      </div>
+  </div>
 
-       <div id="tab-history" class="tab-pane output" style="display: none; padding: 0; background: transparent; border: none; box-shadow: none;">
-           <div class="tab-controls">
-               <div class="control-group prep-group">
-                   <button onclick="loadHistory()">🔄 Refresh History</button>
-               </div>
-           </div>
-           <div id="historyContent" style="padding: 20px; background: #0f1420; border: 1px solid #2d3748; border-radius: 6px; flex: 1; overflow-y: auto;">
-               <em>Loading history...</em>
-           </div>
-       </div>
-   </div>
-
-  <script>window.AppyRootDir = "{ROOT_DIR}";</script>
-  <script src="/static/app.js"></script>
-   <script src="/static/render.js"></script>
-   <script src="/static/retest.js"></script>
-   <script>
-       if (document.readyState === 'loading') {
-           document.addEventListener('DOMContentLoaded', () => { loadTxtarState(); fetchSets(); });
-       } else {
-           loadTxtarState();
-           fetchSets();
-       }
-       syncUIState();
-   </script>
+ <script>window.AppyRootDir = "{ROOT_DIR}";</script>
+ <script src="/static/app.js"></script>
+  <script src="/static/render.js"></script>
+  <script src="/static/retest.js"></script>
+  <script>
+      if (document.readyState === 'loading') {
+          document.addEventListener('DOMContentLoaded', () => { loadTxtarState(); fetchSets(); });
+      } else {
+          loadTxtarState();
+          fetchSets();
+      }
+      syncUIState();
+  </script>
 </body>
-
 </html>

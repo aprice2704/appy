@@ -106,6 +106,12 @@ func (s *AppyServer) handlePreview(w http.ResponseWriter, r *http.Request) {
 						pp.Error = pErr.Error()
 						pp.ClosestMatchHint = generateDiagnosticHint(prof, rawFilename, content, p.Search, p.NearLine)
 						pp.LLMFallbackHint = generateLLMFallbackHint(prof)
+						appendFailureLog(s.rootDir, PatchFailureLog{
+							Phase:   "preview",
+							File:    rawFilename,
+							Error:   pErr.Error(),
+							Patches: []patcheng.FuzzyPatch{p},
+						})
 					}
 				}
 			}
@@ -247,6 +253,18 @@ func (s *AppyServer) handleApply(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 
+			var echo string
+			if failedBlock != nil {
+				echo = failedBlock.CurrentLineEcho
+			}
+			appendFailureLog(s.rootDir, PatchFailureLog{
+				Phase:    "apply",
+				File:     rawFilename,
+				Error:    applyErr.Error(),
+				LineEcho: echo,
+				Patches:  patches,
+			})
+
 			applyFiles = append(applyFiles, ApplyFile{
 				Path:        rawFilename,
 				Applied:     false,
@@ -319,6 +337,11 @@ func (s *AppyServer) handleApply(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 			}
+			appendFailureLog(s.rootDir, PatchFailureLog{
+				Phase: "compiler",
+				File:  rel,
+				Error: e,
+			})
 			delete(memoryResults, p)
 		}
 
