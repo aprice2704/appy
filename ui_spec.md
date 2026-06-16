@@ -1,4 +1,4 @@
-# Appy UI Functional Specification v1.6.4
+# Appy UI Functional Specification v1.6.5
 
 ## 1. Top-Level Layout
 The UI is contained within a fixed-height flex container (`95vh`) and divided into four primary functional zones:
@@ -42,7 +42,7 @@ The visual header of the stripe MUST contain four elements in this exact order (
 1.  **File Type Tag**: A visual indicator of the language profile (e.g., `🐹 Go`) as determined by the patching engine.
 2.  **Filename**: The targeted file path.
 3.  **Net Lines Aggregate**: The total line delta for the file (e.g., `<span class="net-lines">+4</span>`), placed immediately after the filename for at-a-glance sanity checking.
-4.  **RHS Flex Container**: A right-aligned container holding the secondary decorators and the primary status chip.
+4.  **RHS Flex Container**: A right-aligned container holding the secondary decorators, stripe-specific actions (like `↺ Reset`), and the primary status chip.
 
 ### 3.2 Primary Status
 | Internal State | Stripe Header Color | RHS Chip Text | Logic |
@@ -105,6 +105,10 @@ To prevent frustrating UI jumping when states change, buttons MUST be rendered i
 * If the input contains 2 or more instances of `@@@` at the start of a line, Appy will automatically strip the armor.
 * Strips exactly **one** leading `@@@` per line and immediately triggers a preview.
 * Operates safely on partially armored text, only stripping from lines that begin with the prefix.
+
+### 6.4 Stripe Reset Semantics
+* Clicking `↺ Reset` on an `APPLIED` file stripe invokes `/api/forget` to remove the file's applied hashes from the `.appy_ledger.json` ledger.
+* This immediately triggers a bundle re-preview, reverting the file to the `READY` state so the patch can be modified and re-applied without clearing the entire history.
 
 ---
 

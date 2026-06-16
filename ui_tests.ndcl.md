@@ -58,6 +58,7 @@ These tests MUST pass to certify an Appy release.
 - [ ] Verify that in a multi-file bundle, a syntax error in file A correctly rejects file A but allows the successful application of file B. #(t-atm-01)
 - [ ] Verify that partial application surfaces distinct APPLIED and ERROR stripes simultaneously. #(t-atm-02)
 - [ ] Verify the Copy Trace Ledger accurately reports ONLY the files that were written to disk. #(t-atm-03)
+- [ ] Verify that clicking Reset on an APPLIED stripe successfully forgets the patch ledger entry and re-previews the file as READY. #(t-atm-04)
 
 - | | 8. API Response Contracts #(test-api-group)
 - [ ] Verify `/api/preview` returns the strictly nested `files` -> `patches` array structure. #(t-api-01)

@@ -203,18 +203,43 @@ async function sendRequest(endpoint, skipCompiler = false, checkOnly = false) {
 }
 
 function fixFilePaths() {
-  const inputEl = document.getElementById('bundleInput');
-  const fixPathsBtn = document.getElementById('fixPathsBtn');
-  if (!window.pendingPathFixes) return;
-  let val = inputEl.value;
+ const inputEl = document.getElementById('bundleInput');
+ const fixPathsBtn = document.getElementById('fixPathsBtn');
+ if (!window.pendingPathFixes) return;
+ let val = inputEl.value;
 
-  for (const [oldPath, newPath] of Object.entries(window.pendingPathFixes)) {
-      val = val.replace("filename: " + oldPath, "filename: " + newPath);
-  }
-  inputEl.value = val;
-  window.pendingPathFixes = null;
-  fixPathsBtn.style.display = 'none';
-  debouncePreview();
+ for (const [oldPath, newPath] of Object.entries(window.pendingPathFixes)) {
+     val = val.replace("filename: " + oldPath, "filename: " + newPath);
+ }
+ inputEl.value = val;
+ window.pendingPathFixes = null;
+ fixPathsBtn.style.display = 'none';
+ debouncePreview();
+}
+
+async function forgetStripe(event, path) {
+   event.preventDefault();
+   event.stopPropagation();
+   if (!confirm("Remove this file's patches from the applied ledger? This will allow you to re-apply them.")) {
+       return;
+   }
+   const inputEl = document.getElementById('bundleInput');
+   const bundle = inputEl.value;
+   try {
+       const res = await fetch('/api/forget', {
+           method: 'POST',
+           headers: { 'Content-Type': 'application/json' },
+           body: JSON.stringify({ bundle: bundle, path: path })
+       });
+       const data = await res.json();
+       if (data.error) {
+           alert("Failed to reset: " + data.error);
+       } else {
+           debouncePreview();
+       }
+   } catch (err) {
+       alert("Error resetting patch: " + err.message);
+   }
 }
 
 async function copyTraceReport() {

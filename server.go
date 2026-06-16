@@ -44,6 +44,7 @@ func newServer(rootDir string, largeFileLines int) *http.ServeMux {
 	// Patching & History API endpoints
 	mux.HandleFunc("/api/preview", withRecoveryAndCORS(s.handlePreview))
 	mux.HandleFunc("/api/apply", withRecoveryAndCORS(s.handleApply))
+	mux.HandleFunc("/api/forget", withRecoveryAndCORS(s.handleForget))
 	mux.HandleFunc("/api/retest", withRecoveryAndCORS(s.handleRetest))
 	mux.HandleFunc("/api/history", withRecoveryAndCORS(s.handleHistory))
 	mux.HandleFunc("/api/revert", withRecoveryAndCORS(s.handleRevert))

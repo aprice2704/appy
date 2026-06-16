@@ -433,6 +433,52 @@ func (s *AppyServer) handleApply(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (s *AppyServer) handleForget(w http.ResponseWriter, r *http.Request) {
+	log.Printf("[DEBUG] /api/forget request received")
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req ForgetPayload
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		log.Printf("[DEBUG] /api/forget: Invalid JSON payload: %v", err)
+		sendError(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	parsed, err := patcheng.ParseTextBundle(req.Bundle, patcheng.DefaultRegistry)
+	if err != nil {
+		log.Printf("[DEBUG] /api/forget: ParseTextBundle failed: %v", err)
+		sendError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	patches, ok := parsed[req.Path]
+	if !ok {
+		log.Printf("[DEBUG] /api/forget: path %s not found in bundle", req.Path)
+		sendError(w, "Path not found in bundle", http.StatusBadRequest)
+		return
+	}
+
+	appliedPatchesMu.Lock()
+	for _, p := range patches {
+		h := hashPatch(req.Path, p.Search, p.Replace)
+		delete(appliedPatches, h)
+		log.Printf("[DEBUG] /api/forget: removed hash %s from ledger for %s", h, req.Path)
+	}
+	appliedPatchesMu.Unlock()
+	SaveLedger(s.rootDir)
+
+	w.Header().Set("Content-Type", "application/json")
+	encErr := json.NewEncoder(w).Encode(withND("appy/forget", "Reset patch in ledger", map[string]any{
+		"success": true,
+	}))
+	if encErr != nil {
+		log.Printf("[DEBUG] /api/forget: response encoding failed: %v", encErr)
+	}
+}
+
 func (s *AppyServer) handleRetest(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[DEBUG] /api/retest request received")
 	if r.Method != http.MethodPost {

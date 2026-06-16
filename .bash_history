@@ -40,3 +40,16 @@ t -quick
 go install .
 x
 ./run_appy.sh -port=8082
+t
+./runappy.sh -port=8085
+./run_appy.sh -port=8085
+t
+go mod tidy
+rm .appy_ledger.json 
+./run_appy.sh -port=8089
+t
+go install .
+t
+go install .
+t
+go install .

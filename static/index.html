@@ -112,19 +112,19 @@
                               <label style="color: #94a3b8; font-size: 13px;">Glob Excludes (one per line):</label>
                               <button onclick="toggleGlobHelp()" style="padding: 2px 8px; font-size: 11px; background: #334155; border: 1px solid #475569; color: #f8fafc; min-width: 0; height: 24px;">❓ Glob Help</button>
                           </div>
-                          <textarea id="txtarExcludes"
-                              style="height: 120px; padding: 8px; background: #121826; color: #a0aec0; border: 1px solid #2d3748; border-radius: 4px; font-family: monospace;"
-                              oninput="saveTxtarState()">*_test.go
+                                                   <textarea id="txtarExcludes"
+                             style="min-height: 120px; height: 120px; padding: 8px; background: #121826; color: #a0aec0; border: 1px solid #2d3748; border-radius: 4px; font-family: monospace; resize: vertical;"
+                             oninput="saveTxtarState()">*_test.go
 .git
 vendor
 node_modules</textarea>
                       </div>
                       <div style="flex: 1; display: flex; flex-direction: column; gap: 5px;">
                           <label style="color: #94a3b8; font-size: 13px; height: 24px; display: flex; align-items: center;">Semantic Anchors Exclude Glob:</label>
-                          <textarea id="txtarAnchors"
-                              style="height: 120px; padding: 8px; background: #121826; color: #a0aec0; border: 1px solid #2d3748; border-radius: 4px; font-family: monospace;"
-                              oninput="saveTxtarState()"
-                              placeholder="Leave empty to anchor all supported files">*.ndcl</textarea>
+                                                   <textarea id="txtarAnchors"
+                             style="min-height: 120px; height: 120px; padding: 8px; background: #121826; color: #a0aec0; border: 1px solid #2d3748; border-radius: 4px; font-family: monospace; resize: vertical;"
+                             oninput="saveTxtarState()"
+                             placeholder="Leave empty to anchor all supported files">*.ndcl</textarea>
                       </div>
                   </div>
                   

@@ -1,17 +1,15 @@
 // :: product: FDM/NS
 // :: majorVersion: 1
-// :: fileVersion: 10
-// :: description: End-to-End browser tests for the Appy UI using chromedp.
-// :: filename: ui_e2e_test.go
+// :: fileVersion: 1
+// :: description: End-to-End browser tests for the Appy UI (Patch Tab).
+// :: filename: ui_e2e_patch_test.go
 // :: serialization: go
-// :: latestChange: Syncing metadata for ui_e2e_test.go after newTestServer fix.
 
 package main
 
 import (
 	"context"
 	"fmt"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,114 +17,8 @@ import (
 	"time"
 
 	"github.com/aprice2704/fdm/code/patcheng"
-	"github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/chromedp"
 )
-
-// setupTestServer creates an isolated Appy server and a chromedp context.
-// setupTestServer creates an isolated Appy server and a chromedp context.
-func setupTestServer(t *testing.T) (*httptest.Server, context.Context, context.CancelFunc, string) {
-	tempDir := t.TempDir()
-
-	// Provide a local go.mod to prevent 'retest' from walking up the OS directory tree and hanging
-	os.WriteFile(filepath.Join(tempDir, "go.mod"), []byte("module appytest\n\ngo 1.22\n"), 0644)
-
-	// Create a dummy target file for patching tests
-	// Create a dummy target file for patching tests
-	err := os.WriteFile(filepath.Join(tempDir, "target.go"), []byte("package main\n\nfunc Old() {}\n"), 0644)
-	if err != nil {
-		t.Fatalf("Failed to create dummy target file: %v", err)
-	}
-
-	ts := httptest.NewServer(newTestServer(tempDir))
-
-	opts := append(chromedp.DefaultExecAllocatorOptions[:],
-		chromedp.DisableGPU,
-		chromedp.NoSandbox,
-		chromedp.Headless,
-	)
-	allocCtx, _ := chromedp.NewExecAllocator(context.Background(), opts...)
-
-	// Capture browser console logs to aid in debugging test failures
-	ctx, cancel := chromedp.NewContext(allocCtx)
-	chromedp.ListenTarget(ctx, func(ev interface{}) {
-		switch ev := ev.(type) {
-		case *runtime.EventExceptionThrown:
-			t.Logf("Browser Exception: %s", ev.ExceptionDetails.Text)
-		case *runtime.EventConsoleAPICalled:
-			var args []string
-			for _, arg := range ev.Args {
-				args = append(args, string(arg.Value))
-			}
-			t.Logf("Browser Console: %s", strings.Join(args, " "))
-		}
-	})
-
-	return ts, ctx, cancel, tempDir
-}
-
-func TestE2E_LayoutAndHeaders(t *testing.T) {
-	ts, ctx, cancel, tempDir := setupTestServer(t)
-	defer ts.Close()
-	defer cancel()
-
-	ctx, cancelTimeout := context.WithTimeout(ctx, 10*time.Second)
-	defer cancelTimeout()
-
-	var title, version, sandboxRoot string
-
-	err := chromedp.Run(ctx,
-		chromedp.Navigate(ts.URL),
-		chromedp.WaitVisible(`h2`, chromedp.ByQuery),
-		chromedp.Text(`h2`, &title, chromedp.ByQuery),
-		chromedp.Text(`h2 span`, &version, chromedp.ByQuery),
-		chromedp.Text(`.header-zone div`, &sandboxRoot, chromedp.ByQuery),
-	)
-	if err != nil {
-		t.Fatalf("Chromedp run failed: %v", err)
-	}
-
-	// Verify t-lay-01: title matches last element of sandbox path
-	expectedTitle := filepath.Base(tempDir)
-	if !strings.Contains(title, expectedTitle) {
-		t.Errorf("Expected title to contain %q, got %q", expectedTitle, title)
-	}
-
-	// Verify t-lay-02: version is present
-	if !strings.Contains(version, AppVersion) {
-		t.Errorf("Expected version to contain %q, got %q", AppVersion, version)
-	}
-
-	// Verify t-lay-03: sandbox root is displayed
-	if !strings.Contains(sandboxRoot, tempDir) {
-		t.Errorf("Expected sandbox root to contain %q, got %q", tempDir, sandboxRoot)
-	}
-}
-
-func TestE2E_UI_InitialState(t *testing.T) {
-	ts, ctx, cancel, _ := setupTestServer(t)
-	defer ts.Close()
-	defer cancel()
-
-	ctx, cancelTimeout := context.WithTimeout(ctx, 10*time.Second)
-	defer cancelTimeout()
-
-	var checkBtnDisabled, applyBtnDisabled bool
-
-	err := chromedp.Run(ctx,
-		chromedp.Navigate(ts.URL),
-		chromedp.WaitVisible(`#bundleInput`, chromedp.ByQuery),
-		chromedp.Evaluate(`document.getElementById('checkBtn').hasAttribute('disabled')`, &checkBtnDisabled),
-		chromedp.Evaluate(`document.getElementById('applyBtn').hasAttribute('disabled')`, &applyBtnDisabled),
-	)
-	if err != nil {
-		t.Fatalf("Chromedp run failed: %v", err)
-	}
-
-	if !checkBtnDisabled || !applyBtnDisabled {
-		t.Errorf("Expected check and apply buttons to be disabled on load")
-	}
-}
 
 func TestE2E_UI_ArmorLogic(t *testing.T) {
 	ts, ctx, cancel, _ := setupTestServer(t)
@@ -619,7 +511,6 @@ func New() {}
 		chromedp.WaitVisible(`.file-block.status-applied`, chromedp.ByQuery),
 
 		// Wait for the ledger button to be unhidden by the UI state machine
-		// Wait for the trace button to be unhidden by the UI state machine
 		chromedp.WaitVisible(`#copyTraceBtn`, chromedp.ByID),
 		chromedp.Poll(`document.getElementById('copyTraceBtn').style.display !== 'none'`, nil),
 
@@ -655,7 +546,6 @@ func New() {}
 	}
 
 	// Wait for tests to finish and button to reset
-	// Wait for tests to finish and button to reset
 	err = chromedp.Run(ctx,
 		// Wait for the JS promise to resolve and re-enable the button,
 		// avoiding race conditions on the loader div if the API returns instantly.
@@ -672,118 +562,5 @@ func New() {}
 	}
 	if retestDisabled {
 		t.Errorf("Expected retest button to be enabled after execution")
-	}
-}
-
-func TestE2E_UI_BuilderTab(t *testing.T) {
-	ts, ctx, cancel, _ := setupTestServer(t)
-	defer ts.Close()
-	defer cancel()
-
-	ctx, cancelTimeout := context.WithTimeout(ctx, 20*time.Second)
-	defer cancelTimeout()
-
-	var statsText string
-	var dropdownValue string
-	var resultDisplay string
-
-	err := chromedp.Run(ctx,
-		chromedp.Navigate(ts.URL),
-		// 1. Navigate to Builder tab
-		chromedp.Evaluate(`document.getElementById('btn-tab-bundle').click()`, nil),
-		chromedp.WaitVisible(`#txtarPathsTable`, chromedp.ByQuery),
-		chromedp.Sleep(500*time.Millisecond),
-		chromedp.Text(`#txtarLiveStats`, &statsText, chromedp.ByID),
-
-		// 2. Set name and save config set (t-bld-04)
-		chromedp.SetValue(`#newSetName`, "integration_test_set", chromedp.ByID),
-		chromedp.Evaluate(`document.querySelector('button[onclick="saveCurrentSet()"]').click()`, nil),
-		chromedp.Sleep(200*time.Millisecond),
-
-		// Read dropdown to ensure it selected the new set
-		chromedp.Evaluate(`document.getElementById('setSelect').value`, &dropdownValue),
-
-		// 3. Build Txtar and wait for the result box
-		chromedp.Evaluate(`document.getElementById('buildTxtarBtn').click()`, nil),
-		chromedp.WaitVisible(`#txtarResult`, chromedp.ByQuery),
-		chromedp.Evaluate(`document.getElementById('txtarResult').style.display`, &resultDisplay),
-	)
-	if err != nil {
-		t.Fatalf("Builder tab E2E phase failed: %v", err)
-	}
-
-	// Assertions
-	if !strings.Contains(statsText, "Files:") || !strings.Contains(statsText, "Tokens:") {
-		t.Errorf("Expected live stats to contain 'Files:' and 'Tokens:', got: %s (t-bld-01)", statsText)
-	}
-
-	if dropdownValue != "integration_test_set" {
-		t.Errorf("Expected Config Set dropdown to select 'integration_test_set' after save, got: %q (t-bld-04)", dropdownValue)
-	}
-
-	if resultDisplay == "none" || resultDisplay == "" {
-		t.Errorf("Expected txtarResult box to be visible after successful build")
-	}
-}
-
-func TestE2E_UI_BuilderFixPaths(t *testing.T) {
-	ts, ctx, cancel, tempDir := setupTestServer(t)
-	defer ts.Close()
-	defer cancel()
-
-	ctx, cancelTimeout := context.WithTimeout(ctx, 20*time.Second)
-	defer cancelTimeout()
-
-	// Create a nested file that the builder needs to resolve
-	os.MkdirAll(filepath.Join(tempDir, "pkg", "core"), 0755)
-	os.WriteFile(filepath.Join(tempDir, "pkg", "core", "engine.go"), []byte("package core"), 0644)
-
-	var fixBtnDisplay string
-	var textareaValue string
-
-	err := chromedp.Run(ctx,
-		chromedp.Navigate(ts.URL),
-		chromedp.Evaluate(`document.getElementById('btn-tab-bundle').click()`, nil),
-		chromedp.WaitVisible(`#txtarPathsTable`, chromedp.ByQuery),
-		chromedp.Evaluate(`
-			setTxtarPaths(['core/engine.go']);
-			window._testStatsDone = false;
-			updateTxtarStats().then(() => { window._testStatsDone = true; });
-		`, nil),
-
-		// Wait deterministically for the fetch and DOM update to complete
-		chromedp.Poll(`window._testStatsDone === true`, nil),
-		chromedp.Evaluate(`document.getElementById('builderFixPathsBtn').style.display`, &fixBtnDisplay),
-	)
-	if err != nil {
-		t.Fatalf("Builder Fix Paths setup failed: %v", err)
-	}
-
-	if fixBtnDisplay == "none" || fixBtnDisplay == "" {
-		t.Fatalf("Expected Builder Fix Paths button to be visible for unresolved path, got display: %q", fixBtnDisplay)
-	}
-
-	err = chromedp.Run(ctx,
-		chromedp.Evaluate(`
-			document.getElementById('builderFixPathsBtn').click();
-			window._testStatsDone = false;
-			// The click calls fixBuilderPaths(), which schedules an update.
-			// We clear the timeout and force it immediately to await the resolution.
-						clearTimeout(txtarStatsTimeout);
-			updateTxtarStats().then(() => { window._testStatsDone = true; });
-		`, nil),
-		chromedp.Poll(`window._testStatsDone === true`, nil),
-		chromedp.Evaluate(`getTxtarPaths().join('\n')`, &textareaValue),
-		chromedp.Evaluate(`document.getElementById('builderFixPathsBtn').style.display`, &fixBtnDisplay),
-	)
-	if err != nil {
-		t.Fatalf("Builder Fix Paths click failed: %v", err)
-	}
-
-	if !strings.Contains(textareaValue, "pkg/core/engine.go") {
-		t.Errorf("Expected textarea to be rewritten with full path, got:\n%s", textareaValue)
-	}
-	if fixBtnDisplay != "none" {
-		t.Errorf("Expected Builder Fix Paths button to hide after use, got: %s", fixBtnDisplay)
 	}
 }

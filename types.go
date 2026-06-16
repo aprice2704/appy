@@ -21,6 +21,11 @@ type Payload struct {
 	CheckOnly    bool   `json:"check_only"`
 }
 
+type ForgetPayload struct {
+	Bundle string `json:"bundle"`
+	Path   string `json:"path"`
+}
+
 type RetestPayload struct {
 	Packages []string `json:"packages"`
 }

@@ -77,14 +77,27 @@ function renderResult(data, isCheck) {
         data.files.forEach(f => {
             const el = document.getElementById('file-block-' + escapeHtml(f.path));
             if (el) {
-                if (f.applied) {
-                    el.className = 'file-block status-applied';
-                    const badge = el.querySelector('.status-badge');
-                    if (badge) {
-                        badge.className = 'status-badge status-applied';
-                        badge.innerText = 'APPLIED';
-                    }
-                } else {
+                               if (f.applied) {
+                   el.className = 'file-block status-applied';
+                   const badge = el.querySelector('.status-badge');
+                   if (badge) {
+                       badge.className = 'status-badge status-applied';
+                       badge.innerText = 'APPLIED';
+                   }
+                   const rhs = el.querySelector('.rhs-chips');
+                   if (rhs && !rhs.querySelector('.reset-stripe-btn')) {
+                       const btn = document.createElement('button');
+                       btn.type = 'button';
+                       btn.className = 'reset-stripe-btn';
+                       btn.onclick = (e) => forgetStripe(e, f.path);
+                       btn.style.cssText = 'margin-right: 8px; font-size: 11px; padding: 2px 8px; height: 22px; background: transparent; border: 1px solid #64748b; color: #94a3b8; border-radius: 4px; cursor: pointer; transition: all 0.2s;';
+                       btn.onmouseover = function() { this.style.color='#f8fafc'; this.style.borderColor='#94a3b8'; this.style.background='#334155'; };
+                       btn.onmouseout = function() { this.style.color='#94a3b8'; this.style.borderColor='#64748b'; this.style.background='transparent'; };
+                       btn.title = "Forget this patch in the ledger so it can be applied again";
+                       btn.innerText = '↺ Reset';
+                       rhs.insertBefore(btn, badge);
+                   }
+               } else {
                     el.className = 'file-block status-error';
                     const badge = el.querySelector('.status-badge');
                     if (badge) {
@@ -175,10 +188,13 @@ function renderPreview(data) {
         html += '<strong>' + escapeHtml(fileObj.path) + '</strong>';
         html += '<span class="net-lines">' + lineDeltaFmt + '</span>';
         html += '</div>';
-        html += '<div class="rhs-chips">';
-        if (isOverwrite) {
-            html += '<span class="decorator" style="font-size: 1.2em;">☢️</span>';
-        }
+               html += '<div class="rhs-chips">';
+       if (fileStatus === 'APPLIED') {
+           html += '<button type="button" class="reset-stripe-btn" onclick="forgetStripe(event, \'' + escapeHtml(fileObj.path) + '\')" style="margin-right: 8px; font-size: 11px; padding: 2px 8px; height: 22px; background: transparent; border: 1px solid #64748b; color: #94a3b8; border-radius: 4px; cursor: pointer; transition: all 0.2s;" onmouseover="this.style.color=\'#f8fafc\'; this.style.borderColor=\'#94a3b8\'; this.style.background=\'#334155\'" onmouseout="this.style.color=\'#94a3b8\'; this.style.borderColor=\'#64748b\'; this.style.background=\'transparent\'" title="Forget this patch in the ledger so it can be applied again">↺ Reset</button>';
+       }
+       if (isOverwrite) {
+           html += '<span class="decorator" style="font-size: 1.2em;">☢️</span>';
+       }
         if (isDelete) {
             html += '<span class="decorator" style="font-size: 1.2em;">🗑️</span>';
         }
