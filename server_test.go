@@ -407,11 +407,11 @@ func TestAPI_Preview_WarningsAndHints(t *testing.T) {
 	tempDir := setupTestWorkspace(t)
 	mux := newTestServer(tempDir)
 
-	os.WriteFile(filepath.Join(tempDir, "exists.go"), []byte("package mypkg\n\nfunc Old() {}\n"), 0644)
+	os.WriteFile(filepath.Join(tempDir, "exists.go"), []byte("package mypkg\n\n// line 1\n// line 2\nfunc Old() {}\n"), 0644)
 
 	// Setup for path fixer test
 	os.MkdirAll(filepath.Join(tempDir, "nested", "deep"), 0755)
-	os.WriteFile(filepath.Join(tempDir, "nested", "deep", "missing.go"), []byte("package mypkg\nfunc Old() {}"), 0644)
+	os.WriteFile(filepath.Join(tempDir, "nested", "deep", "missing.go"), []byte("package mypkg\n// line 1\n// line 2\nfunc Old() {}"), 0644)
 
 	bundle := strings.ReplaceAll(`
 ### filename: exists.go
@@ -422,6 +422,8 @@ func AccidentalOverwrite() {}
 
 ### filename: missing.go
 ### replace
+// line 1
+// line 2
 func Old() {}
 ### with
 func New() {}
@@ -430,6 +432,9 @@ func New() {}
 ### filename: exists.go
 ### replace
 package mypkg
+
+// line 1
+// line 2
 func Older() {}
 ### with
 func New() {}

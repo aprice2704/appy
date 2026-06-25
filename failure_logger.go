@@ -9,6 +9,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"time"
@@ -28,6 +29,17 @@ type PatchFailureLog struct {
 func appendFailureLog(rootDir string, logEntry PatchFailureLog) {
 	logPath := filepath.Join(rootDir, ".appy_failures.jsonl")
 	logEntry.Timestamp = time.Now().UTC().Format(time.RFC3339)
+
+	// Trim patches to prevent the JSONL file from ballooning to 700k+
+	var trimmed []patcheng.FuzzyPatch
+	for _, p := range logEntry.Patches {
+		p.Replace = fmt.Sprintf("<elided: %d bytes>", len(p.Replace))
+		if len(p.Search) > 500 {
+			p.Search = p.Search[:500] + "...<truncated>"
+		}
+		trimmed = append(trimmed, p)
+	}
+	logEntry.Patches = trimmed
 
 	b, err := json.Marshal(logEntry)
 	if err != nil {

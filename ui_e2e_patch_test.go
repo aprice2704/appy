@@ -122,6 +122,8 @@ func TestE2E_StalePreviewHandling(t *testing.T) {
 	bundle := strings.ReplaceAll(`
 ### filename: target.go
 ### replace
+// line 1
+// line 2
 func Old() {}
 ### with
 func New() {}
@@ -187,6 +189,8 @@ func TestE2E_UI_PreviewAndApplyFlow(t *testing.T) {
 	bundle := strings.ReplaceAll(`
 ### filename: target.go
 ### replace
+// line 1
+// line 2
 func Old() {}
 ### with
 func New() {}
@@ -399,13 +403,16 @@ func TestE2E_UI_FixFilePaths(t *testing.T) {
 	defer cancelTimeout()
 
 	// Create a nested file
+	// Create a nested file
 	os.MkdirAll(filepath.Join(tempDir, "nested", "deep"), 0755)
-	os.WriteFile(filepath.Join(tempDir, "nested", "deep", "hidden.go"), []byte("package deep\nfunc FindMe() {}\n"), 0644)
+	os.WriteFile(filepath.Join(tempDir, "nested", "deep", "hidden.go"), []byte("package deep\n// line 1\n// line 2\nfunc FindMe() {}\n"), 0644)
 
 	// Provide a bundle with a partial/missing path
 	bundle := strings.ReplaceAll(`
 ### filename: hidden.go
 ### replace
+// line 1
+// line 2
 func FindMe() {}
 ### with
 func FoundYou() {}
@@ -467,6 +474,8 @@ func TestE2E_UI_MicroInteractions(t *testing.T) {
 	bundle := strings.ReplaceAll(`
 ### filename: target.go
 ### replace
+// line 1
+// line 2
 func Old() {}
 ### with
 func New() {}

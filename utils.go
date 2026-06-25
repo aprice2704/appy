@@ -11,6 +11,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -184,4 +185,52 @@ func sendError(w http.ResponseWriter, msg string, code int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	json.NewEncoder(w).Encode(withND("appy/error", "HTTP error response from appy server", map[string]any{"error": msg}))
+}
+
+func ValidateFuzzySearchBlock(p patcheng.FuzzyPatch) error {
+	// Only evaluate standard fuzzy text replacements
+	if p.IsAnchored || p.FullOverwrite || p.IsDeleteFile || p.IsReplaceBlock || p.IsReplaceStatement || p.IsReplaceElement || p.IsMetaUpdate || p.IsNdclUpdate || p.IsReplaceJson || p.SymbolName != "" || p.LineMatch {
+		return nil
+	}
+
+	if strings.TrimSpace(p.Search) == "" {
+		return nil // Handled by empty search logic
+	}
+
+	lines := getNonEmptyLines(p.Search)
+
+	// 1. Elision Sandbag Check
+	// 0. The Import Ban
+	// 0. The Import Ban
+	if strings.Contains(p.Search, "import (") || strings.HasPrefix(strings.TrimSpace(p.Search), "import \"") {
+		return fmt.Errorf("REJECTED: Manual patching of Go imports via fuzzy search is strictly forbidden. Rely on background 'goimports', or if you absolutely must modify imports, use 'overwrite' for the entire file.")
+	}
+
+	// 1. Elision Sandbag Check
+	for i, l := range lines {
+		if strings.TrimSpace(l) == "..." {
+			if i < 2 || len(lines)-i-1 < 2 {
+				return fmt.Errorf("REJECTED: Invalid use of elision (...). You must provide at least 2 lines of strong, unique context on BOTH sides of the elision.")
+			}
+		}
+	}
+
+	// 2. Substantive Character Check
+	stripped := p.Search
+	for _, char := range []string{" ", "\t", "\n", "\r", "{", "}", "(", ")", "[", "]"} {
+		stripped = strings.ReplaceAll(stripped, char, "")
+	}
+
+	log.Printf("[DEBUG] ValidateFuzzySearchBlock: stripped length %d for search block", len(stripped))
+
+	if len(stripped) < 10 {
+		return fmt.Errorf("REJECTED: Fuzzy search block is too weak. It contains fewer than 10 substantive characters. Stop trying to match single braces. Use 'replace_block' or 'replace_symbol'.")
+	}
+
+	// 3. Minimum Line Check
+	if len(lines) < 3 && p.WithinSymbol == "" && p.NearLine == 0 {
+		return fmt.Errorf("REJECTED: Fuzzy search block is too small (%d lines). You MUST include at least 3 lines of context, use 'within <symbol>', or escalate to AST strategies.", len(lines))
+	}
+
+	return nil
 }

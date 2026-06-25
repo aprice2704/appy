@@ -28,7 +28,8 @@ func setupTestServer(t *testing.T) (*httptest.Server, context.Context, context.C
 	os.WriteFile(filepath.Join(tempDir, "go.mod"), []byte("module appytest\n\ngo 1.22\n"), 0644)
 
 	// Create a dummy target file for patching tests
-	err := os.WriteFile(filepath.Join(tempDir, "target.go"), []byte("package main\n\nfunc Old() {}\n"), 0644)
+	// Create a dummy target file for patching tests
+	err := os.WriteFile(filepath.Join(tempDir, "target.go"), []byte("package main\n\n// line 1\n// line 2\nfunc Old() {}\n"), 0644)
 	if err != nil {
 		t.Fatalf("Failed to create dummy target file: %v", err)
 	}

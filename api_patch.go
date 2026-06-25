@@ -86,7 +86,13 @@ func (s *AppyServer) handlePreview(w http.ResponseWriter, r *http.Request) {
 					fileStatus = "APPLIED"
 				}
 			} else {
-				_, pErr := patcheng.ApplyFuzzyPatchesAgnostic(prof, content, []patcheng.FuzzyPatch{p})
+				var pErr error
+				if valErr := ValidateFuzzySearchBlock(p); valErr != nil {
+					pErr = valErr
+				} else {
+					_, pErr = patcheng.ApplyFuzzyPatchesAgnostic(prof, content, []patcheng.FuzzyPatch{p})
+				}
+
 				if pErr != nil {
 					log.Printf("[DEBUG] /api/preview: ApplyFuzzyPatchesAgnostic failed for patch in %s: %v", rawFilename, pErr)
 					errMsg := pErr.Error()
@@ -103,7 +109,13 @@ func (s *AppyServer) handlePreview(w http.ResponseWriter, r *http.Request) {
 						}
 					} else {
 						fileStatus = "ERROR"
-						pp.Error = pErr.Error()
+
+						errMsg := pErr.Error()
+						if strings.Contains(errMsg, "ambiguous") {
+							errMsg = "FATAL AMBIGUITY: " + errMsg + " Stop guessing with fuzzy patches! You are commanded to switch to 'replace_block' or 'replace_symbol' immediately, or append an occurrence index (e.g., '%%% replace 2')."
+						}
+						pp.Error = errMsg
+
 						pp.ClosestMatchHint = generateDiagnosticHint(prof, rawFilename, content, p.Search, p.NearLine)
 						pp.LLMFallbackHint = generateLLMFallbackHint(prof)
 						appendFailureLog(s.rootDir, PatchFailureLog{
@@ -232,7 +244,12 @@ func (s *AppyServer) handleApply(w http.ResponseWriter, r *http.Request) {
 
 			var failedBlock *FailedPatch
 			for _, p := range patches {
-				_, pErr := patcheng.ApplyFuzzyPatchesAgnostic(prof, string(contentBytes), []patcheng.FuzzyPatch{p})
+				var pErr error
+				if valErr := ValidateFuzzySearchBlock(p); valErr != nil {
+					pErr = valErr
+				} else {
+					_, pErr = patcheng.ApplyFuzzyPatchesAgnostic(prof, string(contentBytes), []patcheng.FuzzyPatch{p})
+				}
 				if pErr != nil && failedBlock == nil {
 					cur := ""
 					hint := generateDiagnosticHint(prof, rawFilename, string(contentBytes), p.Search, p.NearLine)

@@ -53,3 +53,7 @@ t
 go install .
 t
 go install .
+go mod tidy
+t
+t -quick
+go install .
