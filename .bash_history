@@ -57,3 +57,15 @@ go mod tidy
 t
 t -quick
 go install .
+x
+./run_appy.sh -port=8089
+t
+t -quick
+go install .
+t -quick
+go install .
+t -quick
+go install .
+./run_appy.sh -port=8089
+t
+go install .

@@ -147,15 +147,19 @@ func TestAPI_Apply_ValidModify(t *testing.T) {
 	mux := newTestServer(tempDir)
 
 	targetFile := filepath.Join(tempDir, "target.go")
-	initialContent := "package mypkg\n\nfunc Old() {}\n"
+	initialContent := "package mypkg\n\n// line 1\n// line 2\nfunc Old() {}\n"
 	os.WriteFile(targetFile, []byte(initialContent), 0644)
 
 	payload := Payload{
 		Bundle: strings.ReplaceAll(`
 ### filename: target.go
 ### replace
+// line 1
+// line 2
 func Old() {}
 ### with
+// line 1
+// line 2
 func New() {}
 ### end
 `, "###", patcheng.BundleDelim),
@@ -211,21 +215,29 @@ func TestAPI_Apply_PartialSuccess(t *testing.T) {
 	tempDir := setupTestWorkspace(t)
 	mux := newTestServer(tempDir)
 
-	os.WriteFile(filepath.Join(tempDir, "fileA.go"), []byte("package mypkg\nfunc A() {}"), 0644)
-	os.WriteFile(filepath.Join(tempDir, "fileB.go"), []byte("package mypkg\nfunc B() {}"), 0644)
+	os.WriteFile(filepath.Join(tempDir, "fileA.go"), []byte("package mypkg\n\n// line 1\n// line 2\nfunc A() {}"), 0644)
+	os.WriteFile(filepath.Join(tempDir, "fileB.go"), []byte("package mypkg\n\n// line 1\n// line 2\nfunc B() {}"), 0644)
 
 	bundle := strings.ReplaceAll(`
 ### filename: fileA.go
 ### replace
+// line 1
+// line 2
 func A() {}
 ### with
+// line 1
+// line 2
 func MODIFIED_A() {}
 ### end
 
 ### filename: fileB.go
 ### replace
+// line 1
+// line 2
 func DOES_NOT_EXIST() {}
 ### with
+// line 1
+// line 2
 func BROKEN() {}
 ### end
 `, "###", patcheng.BundleDelim)
@@ -499,13 +511,17 @@ func TestAPI_Apply_TracksHistory(t *testing.T) {
 	mux := newTestServer(tempDir)
 
 	targetFile := filepath.Join(tempDir, "history.go")
-	os.WriteFile(targetFile, []byte("package mypkg\nfunc Old() {}"), 0644)
+	os.WriteFile(targetFile, []byte("package mypkg\n\n// line 1\n// line 2\nfunc Old() {}"), 0644)
 
 	bundle := strings.ReplaceAll(`
 ### filename: history.go
 ### replace
+// line 1
+// line 2
 func Old() {}
 ### with
+// line 1
+// line 2
 func New() {}
 ### end
 `, "###", patcheng.BundleDelim)
@@ -572,12 +588,14 @@ func TestAPI_Apply_DeleteBlock(t *testing.T) {
 	mux := newTestServer(tempDir)
 
 	targetFile := filepath.Join(tempDir, "delete_me.go")
-	os.WriteFile(targetFile, []byte("package mypkg\nfunc Old() {}\nfunc Keep() {}"), 0644)
+	os.WriteFile(targetFile, []byte("package mypkg\n\n// line 1\n// line 2\nfunc Old() {}\nfunc Keep() {}"), 0644)
 
 	payload := Payload{
 		Bundle: strings.ReplaceAll(`
 ### filename: delete_me.go
 ### delete
+// line 1
+// line 2
 func Old() {}
 ### end
 `, "###", patcheng.BundleDelim),
@@ -599,13 +617,16 @@ func TestAPI_Apply_EmptyFileDeletion(t *testing.T) {
 	mux := newTestServer(tempDir)
 
 	targetFile := filepath.Join(tempDir, "delete_me.go")
-	os.WriteFile(targetFile, []byte("package mypkg\nfunc Old() {}"), 0644)
+	os.WriteFile(targetFile, []byte("package mypkg\n\n// line 1\n// line 2\nfunc Old() {}"), 0644)
 
 	payload := Payload{
 		Bundle: strings.ReplaceAll(`
 ### filename: delete_me.go
 ### delete
 package mypkg
+
+// line 1
+// line 2
 func Old() {}
 ### end
 `, "###", patcheng.BundleDelim),

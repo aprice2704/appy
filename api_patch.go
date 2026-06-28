@@ -223,7 +223,14 @@ func (s *AppyServer) handleApply(w http.ResponseWriter, r *http.Request) {
 
 		fileNetLines := 0
 		isDeleteFile := false
+		var applyErr error
+		var newContent string
+
 		for _, p := range patches {
+			if valErr := ValidateFuzzySearchBlock(p); valErr != nil {
+				applyErr = valErr
+				break
+			}
 			if p.FullOverwrite {
 				fileNetLines += countLines(p.Replace) - countLines(string(contentBytes))
 			} else if p.IsDeleteFile {
@@ -234,7 +241,10 @@ func (s *AppyServer) handleApply(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		newContent, applyErr := patcheng.ApplyFuzzyPatchesAgnostic(prof, string(contentBytes), patches)
+		if applyErr == nil {
+			newContent, applyErr = patcheng.ApplyFuzzyPatchesAgnostic(prof, string(contentBytes), patches)
+		}
+
 		if applyErr != nil {
 			log.Printf("[DEBUG] /api/apply: ApplyFuzzyPatchesAgnostic batch failed for %s: %v", rawFilename, applyErr)
 			if strings.Contains(applyErr.Error(), "refusing to overwrite existing file") {

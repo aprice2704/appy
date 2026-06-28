@@ -14,7 +14,8 @@ The UI is contained within a fixed-height flex container (`95vh`) and divided in
 ### 1.1 Builder Tab Constraints
 * **Smart Paste**: The Builder MUST support smart extraction of shell commands (stripping `txtar c`, line continuations, and output redirects) via a dedicated Paste action.
 * **Absolute Paths & Directory Globbing**: The Builder MUST accept absolute file paths from anywhere on the filesystem, automatically appending `/**` for directories added via the picker. The Builder MUST allow files from anywhere on the disk, though the patcher remains restricted to the sandbox.
-* **Config Sets**: The Builder MUST support saving and loading reusable configuration sets (Includes, Excludes, Anchors, Preface, Output Filename) via a dropdown interface, persisting to `.appy_sets.json`.
+* **Config Sets (Bimodal)**: The Builder MUST support a bimodal interface ('Scratchpad' vs 'Saved Set'). Saved sets persist Includes, Excludes, Anchors, Preface, and Output Filename to `.appy_sets.json`, with explicit Save, Delete, and Reload controls. The Scratchpad implicitly auto-saves local state.
+* **Zero-Match Exclusion Rendering**: If an included path or glob evaluates to zero files because of the Exclude Glob, the path MUST render in a `zero_matches` state (styled purple/italicized) rather than showing as a valid green hit.
 * **File Size Defenses**: The backend MUST inject a prominent warning marker (`⚠️ APPY NOTE: This file is overly large...`) below the filename in the generated `txtar` block for files exceeding the configured line threshold (default 350) to discourage LLM truncation and massive unmodified rewrites.
 
 ---

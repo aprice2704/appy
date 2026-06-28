@@ -16,6 +16,8 @@ These tests MUST pass to certify an Appy release.
 - [ ] Verify the Config Sets dropdown successfully saves, loads, and deletes settings to .appy_sets.json. #(t-bld-04)
 - [ ] Verify files exceeding `large-file-lines` contain the `⚠️ APPY NOTE: This file is overly large...` warning header when bundled. #(t-bld-05)
 - [ ] Verify the custom Output Filename box successfully overrides the default timestamped name. #(t-bld-06)
+- [ ] Verify the Builder tab toggles smoothly between 'Scratchpad' and 'Saved Set' modes. #(t-bld-07)
+- [ ] Verify paths completely filtered out by the exclude glob render as zero_matches (purple/italicized). #(t-bld-08)
 
 - | | 2. UI Behaviour Invariants #(test-invariants-group)
 - [ ] Verify Apply to Disk is disabled when NO files are in the READY state. #(t-inv-01)

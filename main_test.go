@@ -168,3 +168,40 @@ func TestGenerateLLMFallbackHint(t *testing.T) {
 		}
 	})
 }
+
+func TestValidateFuzzySearchBlock(t *testing.T) {
+	t.Run("Valid Block", func(t *testing.T) {
+		p := patcheng.FuzzyPatch{Search: "func Old() {\n\t// line 1\n\t// line 2\n}"}
+		if err := ValidateFuzzySearchBlock(p); err != nil {
+			t.Errorf("Expected nil error for valid block, got %v", err)
+		}
+	})
+
+	t.Run("Too Short (Lines)", func(t *testing.T) {
+		p := patcheng.FuzzyPatch{Search: "func SubstantiveButShort() {\n}"}
+		if err := ValidateFuzzySearchBlock(p); err == nil || !strings.Contains(err.Error(), "too small") {
+			t.Errorf("Expected line length error, got %v", err)
+		}
+	})
+
+	t.Run("Too Weak (Substantive)", func(t *testing.T) {
+		p := patcheng.FuzzyPatch{Search: "{\n\n\n\n}"}
+		if err := ValidateFuzzySearchBlock(p); err == nil || !strings.Contains(err.Error(), "substantive characters") {
+			t.Errorf("Expected substantive char error, got %v", err)
+		}
+	})
+
+	t.Run("Invalid Elision", func(t *testing.T) {
+		p := patcheng.FuzzyPatch{Search: "func Old() {\n...\n}"}
+		if err := ValidateFuzzySearchBlock(p); err == nil || !strings.Contains(err.Error(), "unique context on BOTH sides") {
+			t.Errorf("Expected elision context error, got %v", err)
+		}
+	})
+
+	t.Run("Import Ban", func(t *testing.T) {
+		p := patcheng.FuzzyPatch{Search: "import (\n\t\"fmt\"\n\t\"os\"\n)"}
+		if err := ValidateFuzzySearchBlock(p); err == nil || !strings.Contains(err.Error(), "import") {
+			t.Errorf("Expected import ban error, got %v", err)
+		}
+	})
+}
