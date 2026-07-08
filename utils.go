@@ -199,8 +199,6 @@ func ValidateFuzzySearchBlock(p patcheng.FuzzyPatch) error {
 
 	lines := getNonEmptyLines(p.Search)
 
-	// 1. Elision Sandbag Check
-	// 0. The Import Ban
 	// 0. The Import Ban
 	if strings.Contains(p.Search, "import (") || strings.HasPrefix(strings.TrimSpace(p.Search), "import \"") {
 		return fmt.Errorf("REJECTED: Manual patching of Go imports via fuzzy search is strictly forbidden. Rely on background 'goimports', or if you absolutely must modify imports, use 'overwrite' for the entire file.")
@@ -209,8 +207,8 @@ func ValidateFuzzySearchBlock(p patcheng.FuzzyPatch) error {
 	// 1. Elision Sandbag Check
 	for i, l := range lines {
 		if strings.TrimSpace(l) == "..." {
-			if i < 2 || len(lines)-i-1 < 2 {
-				return fmt.Errorf("REJECTED: Invalid use of elision (...). You must provide at least 2 lines of strong, unique context on BOTH sides of the elision.")
+			if i < 1 || len(lines)-i-1 < 1 {
+				return fmt.Errorf("REJECTED: Invalid use of elision (...). You must provide at least 1 line of strictly unique context on BOTH sides of the elision.")
 			}
 		}
 	}
@@ -225,11 +223,6 @@ func ValidateFuzzySearchBlock(p patcheng.FuzzyPatch) error {
 
 	if len(stripped) < 10 {
 		return fmt.Errorf("REJECTED: Fuzzy search block is too weak. It contains fewer than 10 substantive characters. Stop trying to match single braces. Use 'replace_block' or 'replace_symbol'.")
-	}
-
-	// 3. Minimum Line Check
-	if len(lines) < 3 && p.WithinSymbol == "" && p.NearLine == 0 {
-		return fmt.Errorf("REJECTED: Fuzzy search block is too small (%d lines). You MUST include at least 3 lines of context, use 'within <symbol>', or escalate to AST strategies.", len(lines))
 	}
 
 	return nil

@@ -55,7 +55,7 @@ func Strong() {}
 	}
 
 	errMsg, _ := fileObj["error"].(string)
-	if !strings.Contains(errMsg, "too small") && !strings.Contains(errMsg, "too weak") {
-		t.Errorf("Expected weak/small patch rejection error, got: %v", errMsg)
+	if !strings.Contains(errMsg, "too weak") {
+		t.Errorf("Expected weak patch rejection error, got: %v", errMsg)
 	}
 }

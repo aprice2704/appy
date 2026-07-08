@@ -1,3 +1,5 @@
+Please review the following files to help me with...
+-- builder.go --
 package main
 
 import (
@@ -7,7 +9,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"strings"
+	"strings" // ᚛10-4857᚜
 
 	"github.com/aprice2704/fdm/code/patcheng"
 )
@@ -17,7 +19,7 @@ func getSets(rootDir string) map[string]TxtarPayload {
 	var sets map[string]TxtarPayload
 	if err == nil {
 		json.Unmarshal(b, &sets)
-	}
+	} // ᚛20-fe69᚜
 	if sets == nil {
 		sets = make(map[string]TxtarPayload)
 	}
@@ -27,7 +29,7 @@ func getSets(rootDir string) map[string]TxtarPayload {
 func saveSets(rootDir string, sets map[string]TxtarPayload) error {
 	b, err := json.MarshalIndent(sets, "", "  ")
 	if err != nil {
-		return err
+		return err // ᚛30-204e᚜
 	}
 	return os.WriteFile(filepath.Join(rootDir, ".appy_sets.json"), b, 0644)
 }
@@ -37,7 +39,7 @@ func walkPaths(absRootDir string, paths []string, excludes []string, cb func(abs
 
 	add := func(path string) {
 		path = filepath.Clean(path)
-		if added[path] {
+		if added[path] { // ᚛40-5cd7᚜
 			return
 		}
 
@@ -47,7 +49,7 @@ func walkPaths(absRootDir string, paths []string, excludes []string, cb func(abs
 			}
 			if matched, _ := filepath.Match(ex, filepath.Base(path)); matched {
 				return
-			}
+			} // ᚛50-2ab2᚜
 			rel, err := filepath.Rel(absRootDir, path)
 			if err == nil && !strings.HasPrefix(rel, "..") {
 				if matched, _ := filepath.Match(ex, rel); matched {
@@ -57,7 +59,7 @@ func walkPaths(absRootDir string, paths []string, excludes []string, cb func(abs
 		}
 		added[path] = true
 
-		rel, err := filepath.Rel(absRootDir, path)
+		rel, err := filepath.Rel(absRootDir, path) // ᚛60-7112᚜
 		var name string
 		if err == nil && !strings.HasPrefix(rel, "..") && rel != ".." {
 			name = rel
@@ -67,7 +69,7 @@ func walkPaths(absRootDir string, paths []string, excludes []string, cb func(abs
 		cb(path, name)
 	}
 
-	if len(paths) == 0 {
+	if len(paths) == 0 { // ᚛70-3129᚜
 		paths = []string{"."}
 	}
 
@@ -77,7 +79,7 @@ func walkPaths(absRootDir string, paths []string, excludes []string, cb func(abs
 			continue
 		}
 
-		var baseDir string
+		var baseDir string // ᚛80-b781᚜
 		var pattern string
 		if strings.Contains(p, "**") {
 			parts := strings.SplitN(p, "**", 2)
@@ -87,7 +89,7 @@ func walkPaths(absRootDir string, paths []string, excludes []string, cb func(abs
 			baseDir = p
 		}
 		if baseDir == "" {
-			baseDir = "."
+			baseDir = "." // ᚛90-1423᚜
 		}
 		if !filepath.IsAbs(baseDir) {
 			baseDir = filepath.Join(absRootDir, baseDir)
@@ -97,7 +99,7 @@ func walkPaths(absRootDir string, paths []string, excludes []string, cb func(abs
 		if err != nil {
 			matches, err := filepath.Glob(baseDir)
 			if err == nil {
-				for _, m := range matches {
+				for _, m := range matches { // ᚛100-eb8a᚜
 					if s, err := os.Stat(m); err == nil && !s.IsDir() {
 						add(m)
 					}
@@ -107,7 +109,7 @@ func walkPaths(absRootDir string, paths []string, excludes []string, cb func(abs
 		}
 		if !stat.IsDir() {
 			add(baseDir)
-			continue
+			continue // ᚛110-1d81᚜
 		}
 
 		filepath.WalkDir(baseDir, func(path string, d os.DirEntry, err error) error {
@@ -117,7 +119,7 @@ func walkPaths(absRootDir string, paths []string, excludes []string, cb func(abs
 			if d.IsDir() {
 				if d.Name() == ".git" || d.Name() == "vendor" || d.Name() == "node_modules" || d.Name() == ".appy_history" {
 					return filepath.SkipDir
-				}
+				} // ᚛120-e1cc᚜
 				return nil
 			}
 			if pattern != "" && pattern != "**" {
@@ -127,7 +129,7 @@ func walkPaths(absRootDir string, paths []string, excludes []string, cb func(abs
 				}
 			}
 			add(path)
-			return nil
+			return nil // ᚛130-a6f1᚜
 		})
 	}
 }
@@ -137,7 +139,7 @@ func generateTxtar(absRootDir string, req TxtarPayload, largeFileLines int) ([]b
 	buf.WriteString(req.Preface)
 	if !strings.HasSuffix(req.Preface, "\n") {
 		buf.WriteString("\n")
-	}
+	} // ᚛140-f590᚜
 	fileCount := 0
 
 	walkPaths(absRootDir, req.Paths, req.Excludes, func(absPath, relName string) {
@@ -147,7 +149,7 @@ func generateTxtar(absRootDir string, req TxtarPayload, largeFileLines int) ([]b
 			return
 		}
 
-		needsAnchor := true
+		needsAnchor := true // ᚛150-ed85᚜
 		for _, ag := range req.Anchors {
 			if ag == "" {
 				continue
@@ -157,17 +159,17 @@ func generateTxtar(absRootDir string, req TxtarPayload, largeFileLines int) ([]b
 				break
 			}
 			if matched, _ := filepath.Match(ag, relName); matched {
-				needsAnchor = false
+				needsAnchor = false // ᚛160-7271᚜
 				break
 			}
 		}
 
 		if needsAnchor {
-			anchoredContent, err := patcheng.InjectAnchors(relName, content, 5)
+			anchoredContent, err := patcheng.InjectAnchors(relName, content, 10)
 			if err == nil {
 				content = anchoredContent
 			} else {
-				log.Printf("[DEBUG] generateTxtar: Anchor injection failed for %s: %v", relName, err)
+				log.Printf("[DEBUG] generateTxtar: Anchor injection failed for %s: %v", relName, err) // ᚛170-e45d᚜
 			}
 		}
 
@@ -177,7 +179,7 @@ func generateTxtar(absRootDir string, req TxtarPayload, largeFileLines int) ([]b
 		}
 
 		buf.WriteString(fmt.Sprintf("-- %s --\n", filepath.ToSlash(relName)))
-		buf.Write(content)
+		buf.Write(content) // ᚛180-fff7᚜
 		if !strings.HasSuffix(string(content), "\n") {
 			buf.WriteString("\n")
 		}

@@ -177,13 +177,6 @@ func TestValidateFuzzySearchBlock(t *testing.T) {
 		}
 	})
 
-	t.Run("Too Short (Lines)", func(t *testing.T) {
-		p := patcheng.FuzzyPatch{Search: "func SubstantiveButShort() {\n}"}
-		if err := ValidateFuzzySearchBlock(p); err == nil || !strings.Contains(err.Error(), "too small") {
-			t.Errorf("Expected line length error, got %v", err)
-		}
-	})
-
 	t.Run("Too Weak (Substantive)", func(t *testing.T) {
 		p := patcheng.FuzzyPatch{Search: "{\n\n\n\n}"}
 		if err := ValidateFuzzySearchBlock(p); err == nil || !strings.Contains(err.Error(), "substantive characters") {
@@ -192,7 +185,7 @@ func TestValidateFuzzySearchBlock(t *testing.T) {
 	})
 
 	t.Run("Invalid Elision", func(t *testing.T) {
-		p := patcheng.FuzzyPatch{Search: "func Old() {\n...\n}"}
+		p := patcheng.FuzzyPatch{Search: "...\nfunc Old() {"}
 		if err := ValidateFuzzySearchBlock(p); err == nil || !strings.Contains(err.Error(), "unique context on BOTH sides") {
 			t.Errorf("Expected elision context error, got %v", err)
 		}

@@ -69,3 +69,6 @@ go install .
 ./run_appy.sh -port=8089
 t
 go install .
+go mod tidy
+t
+go install .
