@@ -61,17 +61,18 @@
                         style="background: #3b82f6; color: #f8fafc; border: 1px solid #2563eb; padding: 0 16px; font-weight: bold; margin-right: 15px;">📦
                         Build Txtar</button>
 
-                    <div
-                        style="display: flex; gap: 10px; align-items: center; color: #cbd5e1; font-size: 13px; margin-right: 15px;">
-                        <label style="cursor: pointer; display: flex; align-items: center; gap: 4px;">
-                            <input type="radio" name="builderMode" id="modeScratchpad" value="scratchpad" checked
-                                onchange="toggleBuilderMode()"> Scratchpad
-                        </label>
-                        <label style="cursor: pointer; display: flex; align-items: center; gap: 4px;">
-                            <input type="radio" name="builderMode" id="modeSavedSet" value="savedset"
-                                onchange="toggleBuilderMode()"> Saved Set
-                        </label>
-                    </div>
+                                       <div class="builder-mode-selector"
+                       style="display: flex; gap: 10px; align-items: center; font-size: 13px; margin-right: 15px; padding: 4px 10px; border-radius: 4px; border: 1px solid #334155;">
+                       <label id="lblScratchpad" style="cursor: pointer; display: flex; align-items: center; gap: 4px; font-weight: bold; color: #38bdf8;">
+                           <input type="radio" name="builderMode" id="modeScratchpad" value="scratchpad" checked
+                               onchange="toggleBuilderMode()"> 📝 Scratchpad
+                       </label>
+                       <span style="color: #475569;">|</span>
+                       <label id="lblSavedSet" style="cursor: pointer; display: flex; align-items: center; gap: 4px; color: #94a3b8;">
+                           <input type="radio" name="builderMode" id="modeSavedSet" value="savedset"
+                               onchange="toggleBuilderMode()"> 🗃️ Saved Set
+                       </label>
+                   </div>
                     <div id="savedSetControls" style="display: none; align-items: center; gap: 5px;">
                         <select id="setSelect" onchange="loadSelectedSet()"
                             style="min-width: 150px; padding: 6px; background: #0f1420; color: #f8fafc; border: 1px solid #475569; border-radius: 4px;">
@@ -155,20 +156,25 @@
                         onchange="handleTxtarFileSelect(event, true)">
 
                     <div style="display: flex; gap: 15px; margin-top: 5px;">
-                        <div style="flex: 1; display: flex; flex-direction: column; gap: 5px;">
-                            <div style="display: flex; justify-content: space-between; align-items: center;">
-                                <label style="color: #94a3b8; font-size: 13px;">Glob Excludes (one per line):</label>
-                                <button onclick="toggleGlobHelp()"
-                                    style="padding: 2px 8px; font-size: 11px; background: #334155; border: 1px solid #475569; color: #f8fafc; min-width: 0; height: 24px;">❓
-                                    Glob Help</button>
-                            </div>
-                            <textarea id="txtarExcludes"
-                                style="min-height: 120px; height: 120px; padding: 8px; background: #121826; color: #a0aec0; border: 1px solid #2d3748; border-radius: 4px; font-family: monospace; resize: vertical;"
-                                oninput="saveTxtarState()">*_test.go
+                                               <div style="flex: 1; display: flex; flex-direction: column; gap: 5px;">
+                           <div style="display: flex; justify-content: space-between; align-items: center;">
+                               <div style="display: flex; align-items: center; gap: 10px;">
+                                   <label style="color: #94a3b8; font-size: 13px;">Glob Excludes:</label>
+                                   <label style="display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: #cbd5e1; cursor: pointer;">
+                                       <input type="checkbox" id="chkExcludeTests" onchange="toggleExcludeTests(this.checked)"> Exclude *_test.go
+                                   </label>
+                               </div>
+                               <button onclick="toggleGlobHelp()"
+                                   style="padding: 2px 8px; font-size: 11px; background: #334155; border: 1px solid #475569; color: #f8fafc; min-width: 0; height: 24px;">❓
+                                   Glob Help</button>
+                           </div>
+                           <textarea id="txtarExcludes"
+                               style="min-height: 120px; height: 120px; padding: 8px; background: #121826; color: #a0aec0; border: 1px solid #2d3748; border-radius: 4px; font-family: monospace; resize: vertical;"
+                               oninput="onExcludesInput()">*_test.go
 .git
 vendor
 node_modules</textarea>
-                        </div>
+                       </div>
                         <div style="flex: 1; display: flex; flex-direction: column; gap: 5px;">
                             <label
                                 style="color: #94a3b8; font-size: 13px; height: 24px; display: flex; align-items: center;">Semantic

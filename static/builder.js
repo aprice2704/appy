@@ -16,18 +16,85 @@ function setTxtarPaths(paths) {
 }
 
 function addPathRow(val) {
-    const tbody = document.getElementById('txtarPathsBody');
-    if (!tbody) return;
-    const tr = document.createElement('tr');
-    tr.innerHTML = `
-       <td class="stat-files" style="text-align: center; padding: 4px; color: #94a3b8;">-</td>
-       <td class="stat-tokens" style="text-align: center; padding: 4px; color: #94a3b8;">-</td>
-       <td style="padding: 4px;"><input type="text" class="path-input" value="${escapeHtml(val)}" oninput="saveTxtarState()" style="width: 100%; background: transparent; border: none; color: inherit; outline: none; font-family: monospace;"></td>
-       <td style="text-align: center; padding: 4px;"><button onclick="this.closest('tr').remove(); saveTxtarState();"
+   const tbody = document.getElementById('txtarPathsBody');
+   if (!tbody) return;
+   const tr = document.createElement('tr');
+   tr.innerHTML = `
+      <td class="stat-files" style="text-align: center; padding: 4px; color: #94a3b8;">-</td>
+      <td class="stat-tokens" style="text-align: center; padding: 4px; color: #94a3b8;">-</td>
+      <td style="padding: 4px;"><input type="text" class="path-input" value="${escapeHtml(val)}" oninput="saveTxtarState()" onkeydown="handlePathKeydown(event)" style="width: 100%; background: transparent; border: none; color: inherit; outline: none; font-family: monospace;"></td>
+      <td style="text-align: center; padding: 4px;"><button onclick="this.closest('tr').remove(); saveTxtarState();"
 style="background: transparent; padding: 0; min-width: 0; color: #64748b; border: none; height: auto; cursor: pointer; font-size: 16px;"
 onmouseover="this.style.color='#ef4444'" onmouseout="this.style.color='#64748b'" title="Remove path">🗑️</button></td>
-   `;
-    tbody.appendChild(tr);
+  `;
+   tbody.appendChild(tr);
+}
+
+async function handlePathKeydown(e) {
+   if (e.key === 'Tab') {
+       e.preventDefault();
+       const input = e.target;
+       const val = input.value;
+       try {
+           const res = await fetch('/api/autocomplete_path?prefix=' + encodeURIComponent(val));
+           const data = await res.json();
+           if (data.suggestions && data.suggestions.length > 0) {
+               if (data.suggestions.length === 1) {
+                   input.value = data.suggestions[0];
+               } else {
+                   // Compute longest common prefix
+                   let lcp = data.suggestions[0];
+                   for (let s of data.suggestions) {
+                       while (!s.startsWith(lcp) && lcp.length > 0) {
+                           lcp = lcp.slice(0, -1);
+                       }
+                   }
+                   if (lcp.length > val.length) {
+                       input.value = lcp;
+                   } else {
+                       console.log("Completions: " + data.suggestions.join(", "));
+                   }
+               }
+               saveTxtarState();
+           }
+       } catch (err) {
+           console.error("Autocomplete failed:", err);
+       }
+   } else if (e.key === 'Enter') {
+       e.preventDefault();
+       addPathRow('');
+       const inputs = document.querySelectorAll('.path-input');
+       if (inputs.length > 0) {
+           inputs[inputs.length - 1].focus();
+       }
+   }
+}
+
+function syncExcludeTestsCheckbox() {
+   const chk = document.getElementById('chkExcludeTests');
+   if (!chk) return;
+   const excludesText = document.getElementById('txtarExcludes').value;
+   const lines = excludesText.split('\n').map(l => l.trim());
+   chk.checked = lines.includes('*_test.go');
+}
+
+function toggleExcludeTests(checked) {
+   const textarea = document.getElementById('txtarExcludes');
+   let lines = textarea.value.split('\n').map(l => l.trim()).filter(l => l !== '');
+   if (checked) {
+       if (!lines.includes('*_test.go')) {
+           lines.unshift('*_test.go');
+       }
+   } else {
+       lines = lines.filter(l => l !== '*_test.go');
+   }
+   textarea.value = lines.join('\n');
+   saveTxtarState();
+}
+
+function onExcludesInput() {
+   syncExcludeTestsCheckbox();
+   saveTxtarState();
 }
 
 function toggleGlobHelp() {
@@ -132,9 +199,10 @@ function loadTxtarState() {
     } else {
         setTxtarPaths(['.']);
     }
-    if (localStorage.getItem('txtarExcludes_' + root) !== null) {
-        document.getElementById('txtarExcludes').value = localStorage.getItem('txtarExcludes_' + root);
-    }
+       if (localStorage.getItem('txtarExcludes_' + root) !== null) {
+       document.getElementById('txtarExcludes').value = localStorage.getItem('txtarExcludes_' + root);
+   }
+   syncExcludeTestsCheckbox();
     if (localStorage.getItem('txtarAnchors_' + root) !== null) {
         document.getElementById('txtarAnchors').value = localStorage.getItem('txtarAnchors_' + root);
     }
@@ -308,7 +376,8 @@ function loadSelectedSet() {
     const set = configSets[name];
     if (set) {
         setTxtarPaths(set.paths || []);
-        document.getElementById('txtarExcludes').value = set.excludes ? set.excludes.join('\n') : '';
+               document.getElementById('txtarExcludes').value = set.excludes ? set.excludes.join('\n') : '';
+       syncExcludeTestsCheckbox();
         document.getElementById('txtarAnchors').value = set.anchors ? set.anchors.join('\n') : '';
         document.getElementById('txtarPreface').value = set.preface || '';
         if (document.getElementById('txtarFilename')) {
@@ -373,16 +442,31 @@ async function deleteCurrentSet() {
 }
 
 function toggleBuilderMode() {
-    const isScratchpad = document.getElementById('modeScratchpad').checked;
-    const savedControls = document.getElementById('savedSetControls');
+   const isScratchpad = document.getElementById('modeScratchpad').checked;
+   const savedControls = document.getElementById('savedSetControls');
+   const pane = document.getElementById('tab-bundle');
+   const lblScratchpad = document.getElementById('lblScratchpad');
+   const lblSavedSet = document.getElementById('lblSavedSet');
 
-    if (isScratchpad) {
-        savedControls.style.display = 'none';
-        document.getElementById('txtarFilename').value = '';
-        loadTxtarState();
-    } else {
-        saveTxtarState();
-        savedControls.style.display = 'flex';
-        loadSelectedSet();
-    }
+   if (isScratchpad) {
+       if (pane) {
+           pane.classList.remove('mode-savedset');
+           pane.classList.add('mode-scratchpad');
+       }
+       if (lblScratchpad) lblScratchpad.style.color = '#38bdf8';
+       if (lblSavedSet) lblSavedSet.style.color = '#94a3b8';
+       savedControls.style.display = 'none';
+       document.getElementById('txtarFilename').value = '';
+       loadTxtarState();
+   } else {
+       if (pane) {
+           pane.classList.remove('mode-scratchpad');
+           pane.classList.add('mode-savedset');
+       }
+       if (lblScratchpad) lblScratchpad.style.color = '#94a3b8';
+       if (lblSavedSet) lblSavedSet.style.color = '#f59e0b';
+       saveTxtarState();
+       savedControls.style.display = 'flex';
+       loadSelectedSet();
+   }
 }

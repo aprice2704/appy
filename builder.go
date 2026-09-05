@@ -90,7 +90,18 @@ func walkPaths(absRootDir string, paths []string, excludes []string, cb func(abs
 			baseDir = "."
 		}
 		if !filepath.IsAbs(baseDir) {
-			baseDir = filepath.Join(absRootDir, baseDir)
+			targetCandidate := filepath.Join(absRootDir, baseDir)
+			if _, err := os.Stat(targetCandidate); err == nil {
+				baseDir = targetCandidate
+			} else if stat, err := os.Stat(baseDir); err == nil {
+				// Exists at current working directory or relative to appy execution
+				if abs, err := filepath.Abs(baseDir); err == nil {
+					baseDir = abs
+				}
+				_ = stat
+			} else {
+				baseDir = targetCandidate
+			}
 		}
 
 		stat, err := os.Stat(baseDir)

@@ -357,8 +357,13 @@ func (s *AppyServer) handleApply(w http.ResponseWriter, r *http.Request) {
 					if af.Path == filepath.ToSlash(rel) || af.Path == rel {
 						applyFiles[i].Applied = false
 						applyFiles[i].Error = "Compiler Error"
+						extraHint := ""
+						if strings.Contains(e, "undefined:") {
+							extraHint = "\n\nTip: If a package or symbol is missing and goimports skipped it, declare explicit imports at the top of your file block:\n%%% import [optional_alias] \"module/path/pkg\""
+						}
 						applyFiles[i].FailedPatch = &FailedPatch{
-							Error: "Compiler Error:\n" + e,
+							Error:           "Compiler Error:\n" + e + extraHint,
+							LLMFallbackHint: "Use '%%% import <path>' or '%%% import <alias> <path>' to add missing imports without editing the import block.",
 						}
 						break
 					}

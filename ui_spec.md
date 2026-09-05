@@ -1,4 +1,4 @@
-# Appy UI Functional Specification v1.6.5
+# Appy UI Functional Specification v1.6.6
 
 ## 1. Top-Level Layout
 The UI is contained within a fixed-height flex container (`95vh`) and divided into four primary functional zones:
@@ -14,7 +14,10 @@ The UI is contained within a fixed-height flex container (`95vh`) and divided in
 ### 1.1 Builder Tab Constraints
 * **Smart Paste**: The Builder MUST support smart extraction of shell commands (stripping `txtar c`, line continuations, and output redirects) via a dedicated Paste action.
 * **Absolute Paths & Directory Globbing**: The Builder MUST accept absolute file paths from anywhere on the filesystem, automatically appending `/**` for directories added via the picker. The Builder MUST allow files from anywhere on the disk, though the patcher remains restricted to the sandbox.
-* **Config Sets (Bimodal)**: The Builder MUST support a bimodal interface ('Scratchpad' vs 'Saved Set'). Saved sets persist Includes, Excludes, Anchors, Preface, and Output Filename to `.appy_sets.json`, with explicit Save, Delete, and Reload controls. The Scratchpad implicitly auto-saves local state.
+* **Direct Path Preservation**: When adding files or directories that exist on disk, their full path (relative to root or absolute if external) MUST be preserved verbatim without collapsing ambiguous basenames.
+* **CLI-Style Tab Autocomplete**: Path input fields in the builder table MUST support CLI-style path expansion on `Tab` via `/api/autocomplete_path`, completing directories and filenames inline. Pressing `Enter` in a path input adds a new path row.
+* **Config Sets (Bimodal & Distinctive Styling)**: The Builder MUST support a bimodal interface ('Scratchpad' vs 'Saved Set'). Saved sets persist Includes, Excludes, Anchors, Preface, and Output Filename to `.appy_sets.json`, with explicit Save, Delete, and Reload controls. The Scratchpad implicitly auto-saves local state. When in Saved Set mode, the panel MUST present a distinct amber border, badge, and header theme to prevent accidental scratchpad contamination.
+* **Test File Toggling**: The Builder MUST offer a dedicated toggle (`Exclude *_test.go`) synchronized bidirectionally with the raw glob excludes textarea.
 * **Zero-Match Exclusion Rendering**: If an included path or glob evaluates to zero files because of the Exclude Glob, the path MUST render in a `zero_matches` state (styled purple/italicized) rather than showing as a valid green hit.
 * **File Size Defenses**: The backend MUST inject a prominent warning marker (`⚠️ APPY NOTE: This file is overly large...`) below the filename in the generated `txtar` block for files exceeding the configured line threshold (default 350) to discourage LLM truncation and massive unmodified rewrites.
 
@@ -219,8 +222,8 @@ When Appy generates Go source files, metadata must be at the absolute top, one d
 
 :: product: FDM/NS
 :: majorVersion: 1
-:: fileVersion: 33
-:: description: Documented Builder API response contracts following backend modularization.
+:: fileVersion: 34
+:: description: Updated specification to v1.6.6 with Test Excludes toggle, path autocomplete, and Saved Set visual modes.
 :: filename: ui_spec.md
 :: serialization: md
-:: latestChange: Added path_fixes map to TxtarStatsResponse.
+:: latestChange: Added path autocomplete, test file exclusion checkbox, and bimodal Saved Set styling.

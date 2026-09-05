@@ -60,9 +60,33 @@ body {
 }
 
 .tab-pane.active {
-   display: flex;
-   flex-direction: column;
-   gap: 15px;
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+}
+
+/* Visual distinctiveness for Saved Set vs Scratchpad */
+#tab-bundle.mode-savedset {
+   border: 1px solid #ca8a04;
+   border-radius: 6px;
+   padding: 8px;
+   background: rgba(202, 138, 4, 0.03);
+}
+
+#tab-bundle.mode-savedset .tab-controls {
+   background: #1c1917;
+   border-color: #ca8a04;
+}
+
+#tab-bundle.mode-savedset #buildTxtarBtn {
+   background: #d97706;
+   border-color: #b45309;
+}
+
+#tab-bundle.mode-scratchpad {
+   border: 1px solid #1e293b;
+   border-radius: 6px;
+   padding: 8px;
 }
 
 /* TAB CONTROLS (THE COMMAND BAR) */

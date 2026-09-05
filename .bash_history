@@ -72,3 +72,22 @@ go install .
 go mod tidy
 t
 go install .
+appy -build-sets="appy"
+t
+l
+go test ./...
+go install .
+./run_appy.sh -port=8089
+t
+go install .
+cls
+tre
+runappy 
+runappy --port 8090
+t
+rg "1.8.30"
+go install .
+t
+go install .
+x
+./run_appy.sh -port=8089

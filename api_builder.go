@@ -180,21 +180,98 @@ func (s *AppyServer) handleResolvePath(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Force relativity to sandbox if an absolute path leaked in
+	w.Header().Set("Content-Type", "application/json")
+
+	// 1. If it's an absolute path that exists outside the root, preserve full path verbatim
 	if filepath.IsAbs(name) {
-		rel, err := filepath.Rel(s.rootDir, name)
-		if err == nil && !strings.HasPrefix(rel, "..") {
-			name = filepath.ToSlash(rel)
+		if _, err := os.Stat(name); err == nil {
+			rel, err := filepath.Rel(s.rootDir, name)
+			if err == nil && !strings.HasPrefix(rel, "..") && rel != ".." {
+				json.NewEncoder(w).Encode(map[string]string{"path": filepath.ToSlash(rel)})
+			} else {
+				json.NewEncoder(w).Encode(map[string]string{"path": filepath.ToSlash(name)})
+			}
+			return
 		}
 	}
 
+	// 2. If it exists directly inside root, return the exact relative path
+	directPath := filepath.Join(s.rootDir, name)
+	if _, err := os.Stat(directPath); err == nil {
+		json.NewEncoder(w).Encode(map[string]string{"path": filepath.ToSlash(name)})
+		return
+	}
+
+	// 3. Fallback: try finding unique suffix match
 	match := findUniquePathSuffix(s.rootDir, name)
-	w.Header().Set("Content-Type", "application/json")
 	if match != "" {
 		json.NewEncoder(w).Encode(map[string]string{"path": match})
 	} else {
 		json.NewEncoder(w).Encode(map[string]string{"path": filepath.ToSlash(name)})
 	}
+}
+
+func (s *AppyServer) handleAutocompletePath(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	prefix := r.URL.Query().Get("prefix")
+	prefix = strings.TrimSpace(prefix)
+
+	var searchDir string
+	var filePrefix string
+	isAbs := filepath.IsAbs(prefix)
+
+	if isAbs {
+		searchDir = filepath.Dir(prefix)
+		filePrefix = filepath.Base(prefix)
+		if strings.HasSuffix(prefix, "/") || strings.HasSuffix(prefix, "\\") {
+			searchDir = prefix
+			filePrefix = ""
+		}
+	} else {
+		cleanPrefix := filepath.Clean(prefix)
+		if strings.HasSuffix(prefix, "/") || strings.HasSuffix(prefix, "\\") || prefix == "" {
+			searchDir = filepath.Join(s.rootDir, cleanPrefix)
+			filePrefix = ""
+		} else {
+			searchDir = filepath.Join(s.rootDir, filepath.Dir(cleanPrefix))
+			filePrefix = filepath.Base(cleanPrefix)
+		}
+	}
+
+	entries, err := os.ReadDir(searchDir)
+	var suggestions []string
+	if err == nil {
+		for _, e := range entries {
+			name := e.Name()
+			if name == ".git" || name == "node_modules" || name == ".appy_history" {
+				continue
+			}
+			if filePrefix == "" || strings.HasPrefix(strings.ToLower(name), strings.ToLower(filePrefix)) {
+				fullCandidate := filepath.Join(searchDir, name)
+				var outPath string
+				if isAbs {
+					outPath = filepath.ToSlash(fullCandidate)
+				} else {
+					rel, relErr := filepath.Rel(s.rootDir, fullCandidate)
+					if relErr == nil && !strings.HasPrefix(rel, "..") {
+						outPath = filepath.ToSlash(rel)
+					} else {
+						outPath = filepath.ToSlash(fullCandidate)
+					}
+				}
+				if e.IsDir() {
+					outPath += "/"
+				}
+				suggestions = append(suggestions, outPath)
+			}
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{"suggestions": suggestions})
 }
 
 func (s *AppyServer) handleBundle(w http.ResponseWriter, r *http.Request) {
