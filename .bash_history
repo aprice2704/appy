@@ -91,3 +91,7 @@ t
 go install .
 x
 ./run_appy.sh -port=8089
+rm *.txtar
+t
+go install .
+./run_appy.sh -port=8089

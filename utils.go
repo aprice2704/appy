@@ -34,9 +34,9 @@ func isPathSafe(root, target string) bool {
 
 func findUniquePathSuffix(rootDir, targetSuffix string) string {
 	targetSuffix = filepath.Clean(targetSuffix)
+	targetSlash := filepath.ToSlash(targetSuffix)
 	targetSuffixWithSep := string(filepath.Separator) + targetSuffix
-	var match string
-	var count int
+	var matches []string
 
 	filepath.WalkDir(rootDir, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
@@ -54,14 +54,50 @@ func findUniquePathSuffix(rootDir, targetSuffix string) string {
 			return nil
 		}
 		if rel == targetSuffix || strings.HasSuffix(rel, targetSuffixWithSep) {
-			match = rel
-			count++
+			matches = append(matches, filepath.ToSlash(rel))
 		}
 		return nil
 	})
 
-	if count == 1 {
-		return filepath.ToSlash(match)
+	if len(matches) == 1 {
+		return matches[0]
+	}
+	if len(matches) > 1 {
+		// Exact match takes precedence
+		for _, m := range matches {
+			if m == targetSlash {
+				return m
+			}
+		}
+
+		// Disambiguate by matching greatest number of trailing path segments
+		targetParts := strings.Split(targetSlash, "/")
+		bestScore := -1
+		var bestMatch string
+		ambiguous := false
+
+		for _, m := range matches {
+			mParts := strings.Split(m, "/")
+			score := 0
+			tIdx := len(targetParts) - 1
+			mIdx := len(mParts) - 1
+			for tIdx >= 0 && mIdx >= 0 && targetParts[tIdx] == mParts[mIdx] {
+				score++
+				tIdx--
+				mIdx--
+			}
+			if score > bestScore {
+				bestScore = score
+				bestMatch = m
+				ambiguous = false
+			} else if score == bestScore {
+				ambiguous = true
+			}
+		}
+
+		if !ambiguous && bestMatch != "" {
+			return bestMatch
+		}
 	}
 	return ""
 }

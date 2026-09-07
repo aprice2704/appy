@@ -13,7 +13,7 @@ import (
 	_ "github.com/aprice2704/fdm/code/treesitter"
 )
 
-const AppVersion = "v1.9.0"
+const AppVersion = "v1.9.1"
 
 func watchSelfForReload() {
 	execPath, err := os.Executable()
