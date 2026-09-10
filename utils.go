@@ -32,9 +32,8 @@ func isPathSafe(root, target string) bool {
 	return !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && rel != ".."
 }
 
-func findUniquePathSuffix(rootDir, targetSuffix string) string {
+func findAllPathSuffixMatches(rootDir, targetSuffix string) []string {
 	targetSuffix = filepath.Clean(targetSuffix)
-	targetSlash := filepath.ToSlash(targetSuffix)
 	targetSuffixWithSep := string(filepath.Separator) + targetSuffix
 	var matches []string
 
@@ -58,6 +57,13 @@ func findUniquePathSuffix(rootDir, targetSuffix string) string {
 		}
 		return nil
 	})
+	return matches
+}
+
+func findUniquePathSuffix(rootDir, targetSuffix string) string {
+	targetSuffix = filepath.Clean(targetSuffix)
+	targetSlash := filepath.ToSlash(targetSuffix)
+	matches := findAllPathSuffixMatches(rootDir, targetSuffix)
 
 	if len(matches) == 1 {
 		return matches[0]
@@ -100,6 +106,60 @@ func findUniquePathSuffix(rootDir, targetSuffix string) string {
 		}
 	}
 	return ""
+}
+
+func resolveDirectoryUnderRoot(rootDir, dirName string, sampleFiles []string) string {
+	dirName = filepath.Clean(dirName)
+	var candidateDirs []string
+
+	filepath.WalkDir(rootDir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() {
+			name := d.Name()
+			if name == ".git" || name == "vendor" || name == "node_modules" || name == ".appy_history" {
+				return filepath.SkipDir
+			}
+			rel, relErr := filepath.Rel(rootDir, path)
+			if relErr == nil && rel != "." && !strings.HasPrefix(rel, "..") {
+				if d.Name() == dirName || filepath.Base(rel) == dirName || rel == dirName || strings.HasSuffix(rel, string(filepath.Separator)+dirName) {
+					candidateDirs = append(candidateDirs, rel)
+				}
+			}
+		}
+		return nil
+	})
+
+	if len(candidateDirs) == 1 {
+		return candidateDirs[0]
+	}
+
+	if len(candidateDirs) > 1 && len(sampleFiles) > 0 {
+		bestScore := -1
+		var bestDir string
+		for _, cDir := range candidateDirs {
+			score := 0
+			for _, sf := range sampleFiles {
+				fullCheck := filepath.Join(rootDir, cDir, sf)
+				if _, err := os.Stat(fullCheck); err == nil {
+					score++
+				}
+			}
+			if score > bestScore {
+				bestScore = score
+				bestDir = cDir
+			}
+		}
+		if bestScore > 0 && bestDir != "" {
+			return bestDir
+		}
+	}
+
+	if len(candidateDirs) > 0 {
+		return candidateDirs[0]
+	}
+	return dirName
 }
 
 func hashPatch(file, search, replace string) string {

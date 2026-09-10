@@ -35,21 +35,35 @@ func saveSets(rootDir string, sets map[string]TxtarPayload) error {
 func walkPaths(absRootDir string, paths []string, excludes []string, cb func(absPath string, relName string)) {
 	added := make(map[string]bool)
 
+	var cleanExcludes []string
+	for _, ex := range excludes {
+		ex = strings.TrimSpace(ex)
+		if ex != "" {
+			cleanExcludes = append(cleanExcludes, ex)
+		}
+	}
+
 	add := func(path string) {
+		if strings.TrimSpace(path) == "" {
+			return
+		}
 		path = filepath.Clean(path)
 		if added[path] {
 			return
 		}
 
-		for _, ex := range excludes {
-			if ex == "" {
-				continue
-			}
-			if matched, _ := filepath.Match(ex, filepath.Base(path)); matched {
+		baseName := filepath.Base(path)
+		rel, err := filepath.Rel(absRootDir, path)
+		hasValidRel := err == nil && !strings.HasPrefix(rel, "..") && rel != ".."
+
+		for _, ex := range cleanExcludes {
+			if matched, _ := filepath.Match(ex, baseName); matched {
 				return
 			}
-			rel, err := filepath.Rel(absRootDir, path)
-			if err == nil && !strings.HasPrefix(rel, "..") {
+			if hasValidRel {
+				if matched, _ := filepath.Match(ex, filepath.ToSlash(rel)); matched {
+					return
+				}
 				if matched, _ := filepath.Match(ex, rel); matched {
 					return
 				}
@@ -57,9 +71,8 @@ func walkPaths(absRootDir string, paths []string, excludes []string, cb func(abs
 		}
 		added[path] = true
 
-		rel, err := filepath.Rel(absRootDir, path)
 		var name string
-		if err == nil && !strings.HasPrefix(rel, "..") && rel != ".." {
+		if hasValidRel {
 			name = rel
 		} else {
 			name = path
@@ -67,21 +80,23 @@ func walkPaths(absRootDir string, paths []string, excludes []string, cb func(abs
 		cb(path, name)
 	}
 
-	if len(paths) == 0 {
-		paths = []string{"."}
-	}
-
+	var validPaths []string
 	for _, p := range paths {
 		p = strings.TrimSpace(p)
-		if p == "" {
-			continue
+		if p != "" {
+			validPaths = append(validPaths, p)
 		}
+	}
+	if len(validPaths) == 0 {
+		validPaths = []string{"."}
+	}
 
+	for _, p := range validPaths {
 		var baseDir string
 		var pattern string
 		if strings.Contains(p, "**") {
 			parts := strings.SplitN(p, "**", 2)
-			baseDir = parts[0]
+			baseDir = strings.TrimSpace(parts[0])
 			pattern = "**" + parts[1]
 		} else {
 			baseDir = p
@@ -94,7 +109,6 @@ func walkPaths(absRootDir string, paths []string, excludes []string, cb func(abs
 			if _, err := os.Stat(targetCandidate); err == nil {
 				baseDir = targetCandidate
 			} else if stat, err := os.Stat(baseDir); err == nil {
-				// Exists at current working directory or relative to appy execution
 				if abs, err := filepath.Abs(baseDir); err == nil {
 					baseDir = abs
 				}
@@ -106,11 +120,13 @@ func walkPaths(absRootDir string, paths []string, excludes []string, cb func(abs
 
 		stat, err := os.Stat(baseDir)
 		if err != nil {
-			matches, err := filepath.Glob(baseDir)
-			if err == nil {
-				for _, m := range matches {
-					if s, err := os.Stat(m); err == nil && !s.IsDir() {
-						add(m)
+			if strings.TrimSpace(baseDir) != "" && strings.TrimSpace(baseDir) != "." {
+				matches, err := filepath.Glob(baseDir)
+				if err == nil {
+					for _, m := range matches {
+						if s, err := os.Stat(m); err == nil && !s.IsDir() {
+							add(m)
+						}
 					}
 				}
 			}
@@ -126,14 +142,15 @@ func walkPaths(absRootDir string, paths []string, excludes []string, cb func(abs
 				return nil
 			}
 			if d.IsDir() {
-				if d.Name() == ".git" || d.Name() == "vendor" || d.Name() == "node_modules" || d.Name() == ".appy_history" {
+				name := d.Name()
+				if name == ".git" || name == "vendor" || name == "node_modules" || name == ".appy_history" {
 					return filepath.SkipDir
 				}
 				return nil
 			}
 			if pattern != "" && pattern != "**" {
 				suffix := strings.TrimPrefix(pattern, "**")
-				if !strings.HasSuffix(filepath.ToSlash(path), suffix) && !strings.HasSuffix(path, suffix) {
+				if suffix != "" && !strings.HasSuffix(filepath.ToSlash(path), suffix) && !strings.HasSuffix(path, suffix) {
 					return nil
 				}
 			}

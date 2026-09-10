@@ -207,8 +207,40 @@ func (s *AppyServer) handleResolvePath(w http.ResponseWriter, r *http.Request) {
 	if match != "" {
 		json.NewEncoder(w).Encode(map[string]string{"path": match})
 	} else {
+		matches := findAllPathSuffixMatches(s.rootDir, name)
+		if len(matches) > 1 {
+			json.NewEncoder(w).Encode(map[string]any{
+				"path":       filepath.ToSlash(name),
+				"ambiguous":  true,
+				"candidates": matches,
+			})
+			return
+		}
 		json.NewEncoder(w).Encode(map[string]string{"path": filepath.ToSlash(name)})
 	}
+}
+
+type ResolveDirPayload struct {
+	DirName     string   `json:"dir_name"`
+	SampleFiles []string `json:"sample_files"`
+}
+
+func (s *AppyServer) handleResolveDirectory(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var req ResolveDirPayload
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		sendError(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	resolved := resolveDirectoryUnderRoot(s.rootDir, req.DirName, req.SampleFiles)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{
+		"path": filepath.ToSlash(resolved),
+	})
 }
 
 func (s *AppyServer) handleAutocompletePath(w http.ResponseWriter, r *http.Request) {

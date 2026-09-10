@@ -95,3 +95,20 @@ rm *.txtar
 t
 go install .
 ./run_appy.sh -port=8089
+t
+go install .
+t
+go install .
+l
+cls
+go test
+cls
+go install .
+./run_appy.sh -port=8089
+t -quick
+go install .
+prr
+p hello
+cls
+t -quick
+go install .

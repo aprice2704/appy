@@ -11,28 +11,37 @@
 
 <body>
     <div class="container">
-        <div class="header-zone">
-            <h2 style="margin: 0; display: flex; align-items: baseline; gap: 10px;">
-                {TITLE}
-                <span style="font-size: 0.6em; color: #64748b; font-weight: normal;">Appy {VERSION}</span>
-            </h2>
-            <div style="font-size: 13px; color: #64748b; margin-top: 5px; font-family: monospace; margin-bottom: 15px;">
-                Sandboxed to: {ROOT_DIR}
-            </div>
-        </div>
+               <div class="header-zone">
+           <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px;">
+               <div>
+                   <h2 style="margin: 0; display: flex; align-items: baseline; gap: 10px;">
+                       {TITLE}
+                       <span style="font-size: 0.6em; color: #64748b; font-weight: normal;">Appy {VERSION}</span>
+                   </h2>
+                   <div style="font-size: 13px; color: #64748b; margin-top: 5px; font-family: monospace;">
+                       Sandboxed to: {ROOT_DIR}
+                   </div>
+               </div>
+               <div>
+                   <button id="runBashClipBtn" onclick="runBashFromClipboard()" title="Run clipboard script in workspace login shell and auto-copy results"
+                       style="height: 32px; font-size: 12px; padding: 0 14px;">⚡ Run Clip</button>
+               </div>
+           </div>
+       </div>
 
         <div class="tab-bar">
             <button id="btn-tab-patch" class="tab-btn active" onclick="switchTab('tab-patch')">🛠️ Patch</button>
-            <button id="btn-tab-bundle" class="tab-btn" onclick="switchTab('tab-bundle')">📦 Builder</button>
-            <button id="btn-tab-history" class="tab-btn" onclick="switchTab('tab-history')">⏪ History</button>
+                       <button id="btn-tab-bundle" class="tab-btn" onclick="switchTab('tab-bundle')">📦 Builder</button>
+           <button id="btn-tab-explorer" class="tab-btn" onclick="switchTab('tab-explorer')">🗺️ Explorer</button>
+           <button id="btn-tab-history" class="tab-btn" onclick="switchTab('tab-history')">⏪ History</button>
         </div>
 
         <div id="tab-patch" class="tab-pane active">
             <div class="tab-controls">
                 <div class="control-group prep-group">
                     <button id="autoBtn" onclick="runAutoPilot()">🤖 Auto</button>
-                    <button id="clearPasteBtn" onclick="clearAndPaste()">📋 Paste</button>
-                    <button id="fixPathsBtn" onclick="fixFilePaths()" style="display: none;">🔧 Fix Paths</button>
+                                                          <button id="clearPasteBtn" onclick="clearAndPaste()">📋 Paste</button>
+                   <button id="fixPathsBtn" onclick="fixFilePaths()" style="display: none;">🔧 Fix Paths</button>
                 </div>
                 <div class="control-group action-group">
                     <button id="checkBtn" onclick="checkSyntax()" disabled>🧪 Check</button>
@@ -105,18 +114,12 @@
                                 style="display: none; padding: 2px 8px; font-size: 11px; background: #eab308; border: 1px solid #ca8a04; color: #0f1420; min-width: 0; height: 24px;">🔧
                                 Fix Paths</button>
                             <button onclick="replaceTxtarCommand()"
-                                style="padding: 2px 8px; font-size: 11px; min-width: 0; height: 24px; background: #334155; border: 1px solid #475569; color: #f8fafc;">🔄
-                                Replace</button>
-                            <button onclick="pasteTxtarCommand()"
-                                style="padding: 2px 8px; font-size: 11px; min-width: 0; height: 24px; background: #334155; border: 1px solid #475569; color: #f8fafc;">📋
-                                Paste</button>
-                            <button onclick="document.getElementById('txtarFileInput').click()"
-                                style="padding: 2px 8px; font-size: 11px; min-width: 0; height: 24px; background: #334155; border: 1px solid #475569; color: #f8fafc;">📄
-                                Files</button>
-                            <button onclick="document.getElementById('txtarDirInput').click()"
-                                style="padding: 2px 8px; font-size: 11px; min-width: 0; height: 24px; background: #334155; border: 1px solid #475569; color: #f8fafc;">📁
-                                Dir</button>
-                            <button onclick="clearTxtarPaths()"
+                               style="padding: 2px 8px; font-size: 11px; min-width: 0; height: 24px; background: #334155; border: 1px solid #475569; color: #f8fafc;">🔄
+                               Replace</button>
+                           <button onclick="pasteTxtarCommand()"
+                               style="padding: 2px 8px; font-size: 11px; min-width: 0; height: 24px; background: #334155; border: 1px solid #475569; color: #f8fafc;">📋
+                               Paste</button>
+                           <button onclick="clearTxtarPaths()"
                                 style="padding: 2px 8px; font-size: 11px; background: #991b1b; border: 1px solid #7f1d1d; min-width: 0; height: 24px; color: #f8fafc;">🗑️
                                 Clear</button>
                         </div>
@@ -152,8 +155,10 @@
 
                     <input type="file" id="txtarFileInput" multiple style="display: none;"
                         onchange="handleTxtarFileSelect(event, false)">
-                    <input type="file" id="txtarDirInput" webkitdirectory directory multiple style="display: none;"
-                        onchange="handleTxtarFileSelect(event, true)">
+                                       <input type="file" id="txtarDirInput" webkitdirectory directory multiple style="display: none;"
+                       onchange="handleTxtarFileSelect(event, true)">
+                   <input type="file" id="txtarScopeDirInput" webkitdirectory directory multiple style="display: none;"
+                       onchange="handleScopeDirSelect(event)">
 
                     <div style="display: flex; gap: 15px; margin-top: 5px;">
                                                <div style="flex: 1; display: flex; flex-direction: column; gap: 5px;">
@@ -225,7 +230,52 @@ node_modules</textarea>
             </div>
         </div>
 
-        <div id="tab-history" class="tab-pane output"
+               <div id="tab-explorer" class="tab-pane" style="display: none; height: calc(100% - 60px);">
+           <div style="display: flex; gap: 15px; height: 100%;">
+               <!-- Left: Tree View & Filters (55%) -->
+               <div style="flex: 1.2; display: flex; flex-direction: column; gap: 8px; background: #121826; border: 1px solid #2d3748; border-radius: 6px; padding: 12px; min-width: 0;">
+                   <div style="display: flex; gap: 8px; align-items: center;">
+                       <input type="text" id="explorerSearch" placeholder="Filter tree or glob (e.g. passes, *.go)..." oninput="debounceFilterTree()"
+                           style="flex: 1; padding: 6px 10px; background: #0b0f19; border: 1px solid #334155; border-radius: 4px; color: #f8fafc; font-family: monospace; font-size: 13px;">
+                       <button onclick="reloadExplorerRoot()" style="height: 30px; min-width: 0; padding: 0 10px; font-size: 12px; background: #334155; border: 1px solid #475569; color: #cbd5e1;">🔄</button>
+                   </div>
+                   <div style="display: flex; gap: 6px; flex-wrap: wrap; align-items: center; font-size: 11px;">
+                       <span style="color: #64748b;">Quick:</span>
+                       <button class="pill-btn" onclick="appendSuperGlobToken(':go')">:go</button>
+                       <button class="pill-btn" onclick="appendSuperGlobToken('!:test')">!:test</button>
+                       <button class="pill-btn" onclick="appendSuperGlobToken(':md')">:md</button>
+                       <button class="pill-btn" onclick="appendSuperGlobToken(':ndcl')">:ndcl</button>
+                       <button class="pill-btn" onclick="appendSuperGlobToken(':json')">:json</button>
+                       <label style="margin-left: auto; display: flex; align-items: center; gap: 4px; color: #94a3b8; cursor: pointer;">
+                           <input type="checkbox" id="chkShowHidden" onchange="reloadExplorerRoot()"> Hidden
+                       </label>
+                   </div>
+                   <div id="explorerTreeContainer" style="flex: 1; overflow-y: auto; background: #0b0f19; border: 1px solid #1e293b; border-radius: 4px; padding: 8px; font-family: monospace; font-size: 12.5px;">
+                       <em>Loading repository tree...</em>
+                   </div>
+               </div>
+
+               <!-- Right: Super-Glob Spec & Evaluated Files (45%) -->
+               <div style="flex: 1; display: flex; flex-direction: column; gap: 8px; background: #121826; border: 1px solid #2d3748; border-radius: 6px; padding: 12px; min-width: 0;">
+                   <div style="display: flex; justify-content: space-between; align-items: center;">
+                       <label style="font-size: 13px; font-weight: bold; color: #38bdf8;">Super-Glob Spec:</label>
+                       <button onclick="sendExplorerToBuilder()" style="background: #2563eb; color: #f8fafc; border: 1px solid #3b82f6; height: 28px; font-size: 12px; padding: 0 12px;">🚀 Send to Builder</button>
+                   </div>
+                   <textarea id="superGlobInput" placeholder="code/{passes,cmd}/{:go !:test}" oninput="debounceSuperGlobEval()"
+                       style="height: 110px; min-height: 110px; max-height: 150px; padding: 8px; background: #0b0f19; color: #a5f3fc; border: 1px solid #334155; border-radius: 4px; font-family: monospace; font-size: 13px; resize: vertical;"></textarea>
+
+                   <div style="display: flex; justify-content: space-between; align-items: center; padding: 4px 0;">
+                       <span style="font-size: 12px; color: #94a3b8;">Evaluated Manifest (<span id="sgFileCount">0</span> files, ~<span id="sgTokens">0</span>k tok):</span>
+                       <button onclick="clearSuperGlob()" style="background: transparent; border: none; color: #f87171; font-size: 11px; cursor: pointer; padding: 0;">Clear</button>
+                   </div>
+                   <div id="superGlobManifest" style="flex: 1; overflow-y: auto; background: #0b0f19; border: 1px solid #1e293b; border-radius: 4px; padding: 8px; font-family: monospace; font-size: 12px; color: #cbd5e1;">
+                       <em style="color: #64748b;">No files matched.</em>
+                   </div>
+               </div>
+           </div>
+       </div>
+
+       <div id="tab-history" class="tab-pane output"
             style="display: none; padding: 0; background: transparent; border: none; box-shadow: none;">
             <div class="tab-controls">
                 <div class="control-group prep-group">
@@ -239,10 +289,54 @@ node_modules</textarea>
         </div>
     </div>
 
-    <script>window.AppyRootDir = "{ROOT_DIR}";</script>
+       <!-- Modal: Scoped File Chooser -->
+   <div id="scopedFileModal" class="appy-modal-backdrop" style="display: none;">
+       <div class="appy-modal">
+           <div class="appy-modal-header">
+               <div>
+                   <h3 id="scopedModalTitle" style="margin: 0; font-size: 16px; color: #f8fafc;">Select Files in Directory</h3>
+                   <div id="scopedModalSubtitle" style="font-size: 12px; color: #94a3b8; font-family: monospace; margin-top: 4px;"></div>
+               </div>
+               <button onclick="closeScopedModal()" class="appy-modal-close">✕</button>
+           </div>
+           <div class="appy-modal-filter-bar">
+               <input type="text" id="scopedModalFilter" placeholder="Filter files (e.g. types, .go)..." oninput="filterScopedModalList()">
+               <button onclick="toggleSelectAllScoped(true)" class="appy-modal-btn">Select All</button>
+               <button onclick="toggleSelectAllScoped(false)" class="appy-modal-btn">Clear</button>
+           </div>
+           <div id="scopedModalList" class="appy-modal-list"></div>
+           <div class="appy-modal-footer">
+               <span id="scopedModalCount" style="font-size: 12px; color: #94a3b8;">0 selected</span>
+               <div style="display: flex; gap: 8px;">
+                   <button onclick="closeScopedModal()" class="appy-modal-btn">Cancel</button>
+                   <button onclick="confirmScopedModal()" class="appy-modal-btn primary">Add Selected</button>
+               </div>
+           </div>
+       </div>
+   </div>
+
+      <!-- Slide-in Bash Console Drawer -->
+   <div id="bashDrawer" class="bash-drawer" style="display: none;">
+       <div class="bash-drawer-header">
+           <div style="display: flex; align-items: center; gap: 8px;">
+               <strong style="color: #38bdf8;">⚡ Terminal Output</strong>
+               <span id="bashStatusChip" class="status-badge" style="background: rgba(34, 197, 94, 0.2); color: #4ade80;">OK</span>
+               <span id="bashDuration" style="font-size: 11px; color: #94a3b8; font-family: monospace;"></span>
+               <span id="bashClipNotice" style="font-size: 11px; color: #4ade80; font-weight: bold; display: none;">✓ Output copied to clipboard!</span>
+           </div>
+           <div style="display: flex; gap: 6px; align-items: center;">
+               <button onclick="copyBashOutput()" class="appy-modal-btn">📋 Copy</button>
+               <button onclick="closeBashDrawer()" class="appy-modal-close">✕</button>
+           </div>
+       </div>
+       <pre id="bashConsoleOutput" class="bash-drawer-body"></pre>
+   </div>
+
+   <script>window.AppyRootDir = "{ROOT_DIR}";</script>
     <script src="/static/app.js"></script>
     <script src="/static/api.js"></script>
-    <script src="/static/builder.js"></script>
+       <script src="/static/builder.js"></script>
+   <script src="/static/explorer.js"></script>
     <script src="/static/history.js"></script>
     <script src="/static/render_preview.js"></script>
     <script src="/static/render_result.js"></script>

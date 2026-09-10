@@ -129,8 +129,296 @@ async function pasteTxtarCommand() {
 }
 
 function clearTxtarPaths() {
-    setTxtarPaths([]);
-    saveTxtarState();
+   setTxtarPaths([]);
+   saveTxtarState();
+}
+
+// Scoped Modal State
+let scopedModalFiles = [];
+
+async function triggerScopeDirChooser() {
+   // Modern API avoids the browser "Upload all files" warning banner
+   if (window.showDirectoryPicker) {
+       try {
+           const dirHandle = await window.showDirectoryPicker();
+           scopedModalFiles = [];
+           await readDirectoryHandle(dirHandle, '');
+           
+           // Sample up to 5 filenames to accurately fingerprint the directory location
+           const samples = scopedModalFiles.slice(0, 5).map(f => f.path);
+           let truePrefix = dirHandle.name;
+
+           try {
+               const res = await fetch('/api/resolve_directory', {
+                   method: 'POST',
+                   headers: { 'Content-Type': 'application/json' },
+                   body: JSON.stringify({ dir_name: dirHandle.name, sample_files: samples })
+               });
+               const data = await res.json();
+               if (data.path) {
+                   truePrefix = data.path;
+               }
+           } catch (err) {
+               console.error("Directory resolution failed:", err);
+           }
+
+           // Prefix all scanned file subpaths with the canonical relative path
+           scopedModalFiles.forEach(item => {
+               item.path = truePrefix + '/' + item.path;
+           });
+
+           openScopedModal(truePrefix);
+           return;
+       } catch (err) {
+           if (err.name === 'AbortError') return;
+           console.warn("showDirectoryPicker failed, falling back to input:", err);
+       }
+   }
+   document.getElementById('txtarScopeDirInput').click();
+}
+
+async function readDirectoryHandle(dirHandle, pathPrefix) {
+   for await (const entry of dirHandle.values()) {
+       if (entry.name.startsWith('.') || entry.name === 'node_modules' || entry.name === 'vendor') continue;
+       const entryPath = pathPrefix ? `${pathPrefix}/${entry.name}` : entry.name;
+       if (entry.kind === 'file') {
+           scopedModalFiles.push({ path: entryPath, selected: true });
+       } else if (entry.kind === 'directory') {
+           await readDirectoryHandle(entry, entryPath);
+       }
+   }
+}
+
+async function handleScopeDirSelect(event) {
+   const files = event.target.files;
+   if (!files || files.length === 0) return;
+
+   let dirName = "";
+   scopedModalFiles = [];
+
+   for (let f of files) {
+       let rel = f.webkitRelativePath || f.name;
+       if (!dirName && f.webkitRelativePath) {
+           dirName = f.webkitRelativePath.split('/')[0];
+       }
+       scopedModalFiles.push({
+           path: rel.replace(/\\/g, '/'),
+           selected: true
+       });
+   }
+
+   // Try to resolve the base dir against server root
+   if (dirName) {
+       try {
+           const res = await fetch('/api/resolve_path?name=' + encodeURIComponent(dirName));
+           const data = await res.json();
+           if (data.path && data.path !== dirName) {
+               const prefix = data.path.replace(/\/\*\*$/, '');
+               scopedModalFiles.forEach(item => {
+                   const rest = item.path.substring(dirName.length);
+                   item.path = (prefix + rest).replace(/^\//, '');
+               });
+               dirName = prefix;
+           }
+       } catch (err) {
+           console.error("Path resolution failed:", err);
+       }
+   }
+
+   openScopedModal(dirName);
+   event.target.value = '';
+}
+
+function openScopedModal(dirName) {
+   const modal = document.getElementById('scopedFileModal');
+   const sub = document.getElementById('scopedModalSubtitle');
+   const filterInput = document.getElementById('scopedModalFilter');
+   if (sub) sub.innerText = dirName ? `Directory: ${dirName}` : '';
+   if (filterInput) filterInput.value = '';
+   renderScopedModalList();
+   if (modal) modal.style.display = 'flex';
+}
+
+function closeScopedModal() {
+   const modal = document.getElementById('scopedFileModal');
+   if (modal) modal.style.display = 'none';
+}
+
+function renderScopedModalList() {
+   const listContainer = document.getElementById('scopedModalList');
+   if (!listContainer) return;
+   listContainer.innerHTML = '';
+
+   scopedModalFiles.sort((a, b) => a.path.localeCompare(b.path));
+
+   scopedModalFiles.forEach((item, idx) => {
+       const row = document.createElement('label');
+       row.className = 'appy-modal-item';
+       row.id = `scoped-item-${idx}`;
+       row.innerHTML = `
+           <input type="checkbox" id="chk-scoped-${idx}" ${item.selected ? 'checked' : ''} onchange="onScopedCheckboxChange(${idx}, this.checked)">
+           <span class="item-path">${escapeHtml(item.path)}</span>
+       `;
+       listContainer.appendChild(row);
+   });
+   updateScopedModalCount();
+}
+
+function onScopedCheckboxChange(idx, checked) {
+   if (scopedModalFiles[idx]) {
+       scopedModalFiles[idx].selected = checked;
+   }
+   updateScopedModalCount();
+}
+
+function filterScopedModalList() {
+   const q = (document.getElementById('scopedModalFilter').value || '').toLowerCase().trim();
+   scopedModalFiles.forEach((item, idx) => {
+       const el = document.getElementById(`scoped-item-${idx}`);
+       if (el) {
+           if (!q || item.path.toLowerCase().includes(q)) {
+               el.classList.remove('hidden');
+           } else {
+               el.classList.add('hidden');
+           }
+       }
+   });
+}
+
+function toggleSelectAllScoped(val) {
+   const q = (document.getElementById('scopedModalFilter').value || '').toLowerCase().trim();
+   scopedModalFiles.forEach((item, idx) => {
+       if (!q || item.path.toLowerCase().includes(q)) {
+           item.selected = val;
+           const chk = document.getElementById(`chk-scoped-${idx}`);
+           if (chk) chk.checked = val;
+       }
+   });
+   updateScopedModalCount();
+}
+
+function updateScopedModalCount() {
+   const cnt = scopedModalFiles.filter(i => i.selected).length;
+   const lbl = document.getElementById('scopedModalCount');
+   if (lbl) lbl.innerText = `${cnt} of${scopedModalFiles.length} selected`;
+}
+
+function confirmScopedModal() {
+   let existing = getTxtarPaths();
+   scopedModalFiles.filter(i => i.selected).forEach(item => {
+       if (!existing.includes(item.path)) {
+           existing.push(item.path);
+       }
+   });
+   setTxtarPaths(existing);
+   saveTxtarState();
+   closeScopedModal();
+}
+
+// Drag and Drop Implementation
+function initTableDragAndDrop() {
+   const dropZone = document.querySelector('.table-container');
+   if (!dropZone) return;
+
+   ['dragenter', 'dragover'].forEach(eventName => {
+       dropZone.addEventListener(eventName, (e) => {
+           e.preventDefault();
+           e.stopPropagation();
+           dropZone.classList.add('drag-over');
+       }, false);
+   });
+
+   ['dragleave', 'drop'].forEach(eventName => {
+       dropZone.addEventListener(eventName, (e) => {
+           e.preventDefault();
+           e.stopPropagation();
+           dropZone.classList.remove('drag-over');
+       }, false);
+   });
+
+   dropZone.addEventListener('drop', async (e) => {
+       const dt = e.dataTransfer;
+       if (!dt) return;
+
+       // 1. Text drop (e.g. dragging path text from IDE/terminal)
+       const droppedText = dt.getData('text/plain');
+       if (droppedText && (!dt.files || dt.files.length === 0)) {
+           let lines = droppedText.split(/[\r\n]+/).map(s => s.trim()).filter(s => s.length > 0);
+           let current = getTxtarPaths();
+           for (let line of lines) {
+               if (!current.includes(line)) current.push(line);
+           }
+           setTxtarPaths(current);
+           saveTxtarState();
+           return;
+       }
+
+       // 2. File / Folder drop with webkitGetAsEntry traversal
+       let addedPaths = [];
+       if (dt.items && dt.items.length > 0) {
+           for (let i = 0; i < dt.items.length; i++) {
+               const item = dt.items[i];
+               if (item.webkitGetAsEntry) {
+                   const entry = item.webkitGetAsEntry();
+                   if (entry) {
+                       await traverseFileTree(entry, '', addedPaths);
+                   }
+               }
+           }
+       } else if (dt.files && dt.files.length > 0) {
+           for (let f of dt.files) {
+               let p = f.path || f.webkitRelativePath || f.name;
+               addedPaths.push(p);
+           }
+       }
+
+       // Resolve dropped paths against backend root
+       if (addedPaths.length > 0) {
+           let current = getTxtarPaths();
+           for (let rawPath of addedPaths) {
+               try {
+                   const res = await fetch('/api/resolve_path?name=' + encodeURIComponent(rawPath));
+                   const data = await res.json();
+                   const finalPath = data.path || rawPath;
+                   if (!current.includes(finalPath)) {
+                       current.push(finalPath);
+                   }
+               } catch (err) {
+                   if (!current.includes(rawPath)) {
+                       current.push(rawPath);
+                   }
+               }
+           }
+           setTxtarPaths(current);
+           saveTxtarState();
+       }
+   }, false);
+}
+
+async function traverseFileTree(item, path, collector) {
+   path = path || "";
+   if (item.isFile) {
+       collector.push((path + item.name).replace(/^\//, ''));
+   } else if (item.isDirectory) {
+       const dirReader = item.createReader();
+       const readEntries = () => new Promise((resolve) => {
+           dirReader.readEntries((entries) => resolve(entries));
+       });
+       let entries;
+       do {
+           entries = await readEntries();
+           for (let i = 0; i < entries.length; i++) {
+               await traverseFileTree(entries[i], path + item.name + "/", collector);
+           }
+       } while (entries && entries.length > 0);
+   }
+}
+
+// Attach drag & drop after DOM is loaded
+if (document.readyState === 'loading') {
+   document.addEventListener('DOMContentLoaded', initTableDragAndDrop);
+} else {
+   initTableDragAndDrop();
 }
 
 async function handleTxtarFileSelect(event, isDir) {
@@ -158,23 +446,27 @@ async function handleTxtarFileSelect(event, isDir) {
         if (pathStr && !lines.includes(p)) {
             lines.push(p);
         }
-    } else {
-        for (let file of event.target.files) {
-            let p = file.path || file.name;
-            if (p) {
-                try {
-                    const res = await fetch('/api/resolve_path?name=' + encodeURIComponent(p));
-                    const data = await res.json();
-                    if (data.path) p = data.path;
-                } catch (e) {
-                    console.error("Path resolution failed", e);
-                }
-            }
-            if (p && !lines.includes(p)) {
-                lines.push(p);
-            }
-        }
-    }
+          } else {
+       for (let file of event.target.files) {
+           let p = file.path || (file.webkitRelativePath ? file.webkitRelativePath : file.name);
+           if (p) {
+               try {
+                   const res = await fetch('/api/resolve_path?name=' + encodeURIComponent(p));
+                   const data = await res.json();
+                                      if (data.candidates && data.candidates.length > 0) {
+                       p = data.candidates[0];
+                   } else if (data.path) {
+                       p = data.path;
+                   }
+               } catch (e) {
+                   console.error("Path resolution failed", e);
+               }
+           }
+           if (p && !lines.includes(p)) {
+               lines.push(p);
+           }
+       }
+   }
     setTxtarPaths(lines);
     saveTxtarState();
     event.target.value = '';

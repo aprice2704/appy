@@ -39,7 +39,11 @@ func newServer(rootDir string, largeFileLines int) *http.ServeMux {
 	mux.HandleFunc("/api/txtar", withRecoveryAndCORS(s.handleTxtar))
 	mux.HandleFunc("/api/txtar_stats", withRecoveryAndCORS(s.handleTxtarStats))
 	mux.HandleFunc("/api/resolve_path", withRecoveryAndCORS(s.handleResolvePath))
+	mux.HandleFunc("/api/resolve_directory", withRecoveryAndCORS(s.handleResolveDirectory))
 	mux.HandleFunc("/api/autocomplete_path", withRecoveryAndCORS(s.handleAutocompletePath))
+	mux.HandleFunc("/api/fs/tree", withRecoveryAndCORS(s.handleFSTree))
+	mux.HandleFunc("/api/superglob/eval", withRecoveryAndCORS(s.handleSuperGlobEval))
+	mux.HandleFunc("/api/exec_bash", withRecoveryAndCORS(s.handleExecBash))
 	mux.HandleFunc("/api/bundle", withRecoveryAndCORS(s.handleBundle))
 
 	// Patching & History API endpoints

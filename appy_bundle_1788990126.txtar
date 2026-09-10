@@ -1,0 +1,780 @@
+Please review the following files to help me with...
+-- static/index.html --
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8"> <!-- ᚛5-b6de᚜
+    <link rel="icon"
+        href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">🚀</text></svg>'>
+    <title>{TITLE}</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head> <!-- ᚛10-8204᚜
+
+<body>
+    <div class="container">
+        <div class="header-zone">
+            <h2 style="margin: 0; display: flex; align-items: baseline; gap: 10px;"> <!-- ᚛15-5a49᚜
+                {TITLE}
+                <span style="font-size: 0.6em; color: #64748b; font-weight: normal;">Appy {VERSION}</span>
+            </h2>
+            <div style="font-size: 13px; color: #64748b; margin-top: 5px; font-family: monospace; margin-bottom: 15px;">
+                Sandboxed to: {ROOT_DIR} <!-- ᚛20-c25b᚜
+            </div>
+        </div>
+
+        <div class="tab-bar">
+            <button id="btn-tab-patch" class="tab-btn active" onclick="switchTab('tab-patch')">🛠️ Patch</button> <!-- ᚛25-f875᚜
+            <button id="btn-tab-bundle" class="tab-btn" onclick="switchTab('tab-bundle')">📦 Builder</button>
+            <button id="btn-tab-history" class="tab-btn" onclick="switchTab('tab-history')">⏪ History</button>
+        </div>
+
+        <div id="tab-patch" class="tab-pane active"> <!-- ᚛30-9bd8᚜
+            <div class="tab-controls">
+                <div class="control-group prep-group">
+                    <button id="autoBtn" onclick="runAutoPilot()">🤖 Auto</button>
+                    <button id="clearPasteBtn" onclick="clearAndPaste()">📋 Paste</button>
+                    <button id="fixPathsBtn" onclick="fixFilePaths()" style="display: none;">🔧 Fix Paths</button> <!-- ᚛35-6dcb᚜
+                </div>
+                <div class="control-group action-group">
+                    <button id="checkBtn" onclick="checkSyntax()" disabled>🧪 Check</button>
+                    <button id="applyBtn" onclick="applyBundle()" disabled>🚀 Apply</button>
+                    <button id="retestBtn" onclick="runRetest()" style="display: none;">🔄 Retest</button> <!-- ᚛40-9395᚜
+                    <button id="cancelRetestBtn" onclick="cancelRetest()" style="display: none;">⏹️ Stop</button>
+                </div>
+                <div class="control-group export-group">
+                    <button id="copyTraceBtn" onclick="copyTraceReport()" style="display: none;">📋 Logs</button>
+                </div> <!-- ᚛45-165a᚜
+            </div>
+
+            <textarea id="bundleInput"
+                placeholder="Paste the raw LLM output here (including the markdown code blocks and %%% syntax)..."
+                oninput="debouncePreview()"></textarea> <!-- ᚛50-cf57᚜
+
+            <div id="output" class="output">
+                <em>Waiting for input...</em>
+            </div>
+        </div> <!-- ᚛55-be2c᚜
+
+        <div id="tab-bundle" class="tab-pane" style="display: none;">
+            <div class="tab-controls">
+                <div class="control-group prep-group">
+                    <button id="buildTxtarBtn" onclick="buildTxtar()" <!-- ᚛60-d5a6᚜
+                        style="background: #3b82f6; color: #f8fafc; border: 1px solid #2563eb; padding: 0 16px; font-weight: bold; margin-right: 15px;">📦
+                        Build Txtar</button>
+
+                                       <div class="builder-mode-selector"
+                       style="display: flex; gap: 10px; align-items: center; font-size: 13px; margin-right: 15px; padding: 4px 10px; border-radius: 4px; border: 1px solid #334155;"> <!-- ᚛65-20f2᚜
+                       <label id="lblScratchpad" style="cursor: pointer; display: flex; align-items: center; gap: 4px; font-weight: bold; color: #38bdf8;">
+                           <input type="radio" name="builderMode" id="modeScratchpad" value="scratchpad" checked
+                               onchange="toggleBuilderMode()"> 📝 Scratchpad
+                       </label>
+                       <span style="color: #475569;">|</span> <!-- ᚛70-a026᚜
+                       <label id="lblSavedSet" style="cursor: pointer; display: flex; align-items: center; gap: 4px; color: #94a3b8;">
+                           <input type="radio" name="builderMode" id="modeSavedSet" value="savedset"
+                               onchange="toggleBuilderMode()"> 🗃️ Saved Set
+                       </label>
+                   </div> <!-- ᚛75-4e58᚜
+                    <div id="savedSetControls" style="display: none; align-items: center; gap: 5px;">
+                        <select id="setSelect" onchange="loadSelectedSet()"
+                            style="min-width: 150px; padding: 6px; background: #0f1420; color: #f8fafc; border: 1px solid #475569; border-radius: 4px;">
+                        </select>
+                        <input type="text" id="newSetName" placeholder="New set name..." <!-- ᚛80-d41e᚜
+                            style="padding: 6px; background: #0f1420; color: #f8fafc; border: 1px solid #475569; border-radius: 4px; width: 140px;">
+                        <button onclick="saveCurrentSet()"
+                            style="background: #16a34a; color: #f8fafc; border: 1px solid #15803d; height: 32px; padding: 0 12px; font-size: 13px;"
+                            title="Save Set">💾 Save</button>
+                        <button onclick="loadSelectedSet()" <!-- ᚛85-a852᚜
+                            style="background: #ca8a04; color: #f8fafc; border: 1px solid #a16207; height: 32px; padding: 0 12px; font-size: 13px;"
+                            title="Reload from Disk">🔄 Reload</button>
+                        <button onclick="deleteCurrentSet()"
+                            style="background: #991b1b; color: #f8fafc; border: 1px solid #7f1d1d; height: 32px; padding: 0 12px; font-size: 13px;"
+                            title="Delete Set">🗑️ Delete</button> <!-- ᚛90-c83e᚜
+                    </div>
+                </div>
+                <div class="control-group action-group">
+                </div>
+                <div class="control-group export-group"> <!-- ᚛95-4792᚜
+                </div>
+            </div>
+
+            <div style="display: flex; gap: 20px; height: calc(100% - 60px);">
+                <div style="flex: 1; display: flex; flex-direction: column; gap: 10px;"> <!-- ᚛100-6b82᚜
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <label style="color: #94a3b8; font-size: 13px;">Include (one per line):</label>
+                        <div style="display: flex; gap: 5px;">
+                            <button id="builderFixPathsBtn" onclick="fixBuilderPaths()"
+                                style="display: none; padding: 2px 8px; font-size: 11px; background: #eab308; border: 1px solid #ca8a04; color: #0f1420; min-width: 0; height: 24px;">🔧 <!-- ᚛105-13cd᚜
+                                Fix Paths</button>
+                            <button onclick="replaceTxtarCommand()"
+                                style="padding: 2px 8px; font-size: 11px; min-width: 0; height: 24px; background: #334155; border: 1px solid #475569; color: #f8fafc;">🔄
+                                Replace</button>
+                            <button onclick="pasteTxtarCommand()" <!-- ᚛110-b6f4᚜
+                                style="padding: 2px 8px; font-size: 11px; min-width: 0; height: 24px; background: #334155; border: 1px solid #475569; color: #f8fafc;">📋
+                                Paste</button>
+                            <button onclick="document.getElementById('txtarFileInput').click()"
+                                style="padding: 2px 8px; font-size: 11px; min-width: 0; height: 24px; background: #334155; border: 1px solid #475569; color: #f8fafc;">📄
+                                Files</button> <!-- ᚛115-3a2e᚜
+                            <button onclick="document.getElementById('txtarDirInput').click()"
+                                style="padding: 2px 8px; font-size: 11px; min-width: 0; height: 24px; background: #334155; border: 1px solid #475569; color: #f8fafc;">📁
+                                Dir</button>
+                            <button onclick="clearTxtarPaths()"
+                                style="padding: 2px 8px; font-size: 11px; background: #991b1b; border: 1px solid #7f1d1d; min-width: 0; height: 24px; color: #f8fafc;">🗑️ <!-- ᚛120-33fe᚜
+                                Clear</button>
+                        </div>
+                    </div>
+
+                    <div class="table-container" <!-- ᚛125-7c65᚜
+                        style="flex: 1; overflow-y: auto; background: #121826; border: 1px solid #2d3748; border-radius: 4px;">
+                        <table id="txtarPathsTable" class="builder-table">
+                            <thead style="position: sticky; top: 0; background: #1e293b; z-index: 10;">
+                                <tr>
+                                    <th style="width:60px; padding: 8px;">Files</th> <!-- ᚛130-db58᚜
+                                    <th style="width:80px; padding: 8px;">~kTok</th>
+                                    <th style="padding: 8px; text-align: left;">Glob / Path</th>
+                                    <th style="width:40px;"></th>
+                                </tr>
+                            </thead> <!-- ᚛135-5b04᚜
+                            <tbody id="txtarPathsBody">
+                            </tbody>
+                            <tfoot style="position: sticky; bottom: 0; background: #1e293b; z-index: 10;">
+                                <tr>
+                                    <td id="totFiles" style="padding: 8px; text-align: center; color: #e2e8f0;">0</td> <!-- ᚛140-4793᚜
+                                    <td id="totTokens" style="padding: 8px; text-align: center; color: #e2e8f0;">0</td>
+                                    <td colspan="2" style="padding: 8px; font-weight: bold; color: #cbd5e1;">Total</td>
+                                </tr>
+                            </tfoot>
+                        </table> <!-- ᚛145-c1fc᚜
+                        <div style="padding: 10px;">
+                            <button onclick="addPathRow('')"
+                                style="background: #334155; color: #f8fafc; height: 28px; font-size: 12px; min-width: auto; border: 1px solid #475569; border-radius: 4px; cursor: pointer;">+
+                                Add Path</button>
+                        </div> <!-- ᚛150-145f᚜
+                    </div>
+
+                    <input type="file" id="txtarFileInput" multiple style="display: none;"
+                        onchange="handleTxtarFileSelect(event, false)">
+                    <input type="file" id="txtarDirInput" webkitdirectory directory multiple style="display: none;" <!-- ᚛155-39bb᚜
+                        onchange="handleTxtarFileSelect(event, true)">
+
+                    <div style="display: flex; gap: 15px; margin-top: 5px;">
+                                               <div style="flex: 1; display: flex; flex-direction: column; gap: 5px;">
+                           <div style="display: flex; justify-content: space-between; align-items: center;"> <!-- ᚛160-5d66᚜
+                               <div style="display: flex; align-items: center; gap: 10px;">
+                                   <label style="color: #94a3b8; font-size: 13px;">Glob Excludes:</label>
+                                   <label style="display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: #cbd5e1; cursor: pointer;">
+                                       <input type="checkbox" id="chkExcludeTests" onchange="toggleExcludeTests(this.checked)"> Exclude *_test.go
+                                   </label> <!-- ᚛165-59c4᚜
+                               </div>
+                               <button onclick="toggleGlobHelp()"
+                                   style="padding: 2px 8px; font-size: 11px; background: #334155; border: 1px solid #475569; color: #f8fafc; min-width: 0; height: 24px;">❓
+                                   Glob Help</button>
+                           </div> <!-- ᚛170-3fa4᚜
+                           <textarea id="txtarExcludes"
+                               style="min-height: 120px; height: 120px; padding: 8px; background: #121826; color: #a0aec0; border: 1px solid #2d3748; border-radius: 4px; font-family: monospace; resize: vertical;"
+                               oninput="onExcludesInput()">*_test.go
+.git
+vendor <!-- ᚛175-f3df᚜
+node_modules</textarea>
+                       </div>
+                        <div style="flex: 1; display: flex; flex-direction: column; gap: 5px;">
+                            <label
+                                style="color: #94a3b8; font-size: 13px; height: 24px; display: flex; align-items: center;">Semantic <!-- ᚛180-bbb9᚜
+                                Anchors Exclude Glob:</label>
+                            <textarea id="txtarAnchors"
+                                style="min-height: 120px; height: 120px; padding: 8px; background: #121826; color: #a0aec0; border: 1px solid #2d3748; border-radius: 4px; font-family: monospace; resize: vertical;"
+                                oninput="saveTxtarState()"
+                                placeholder="Leave empty to anchor all supported files">*.ndcl</textarea> <!-- ᚛185-01bc᚜
+                        </div>
+                    </div>
+
+                    <div id="globHelp"
+                        style="display: none; background: #0f1420; padding: 12px; border-radius: 4px; border: 1px dashed #3b82f6; font-size: 12.5px; color: #94a3b8; font-family: monospace; margin-top: 5px;"> <!-- ᚛190-6edf᚜
+                        <strong>*</strong> : Matches any sequence of non-separator chars (e.g., *.go)<br>
+                        <strong>**</strong> : Matches any sequence of chars, including separators (e.g.,
+                        src/**/*.js)<br>
+                        <strong>?</strong> : Matches any single non-separator char (e.g., test?.go)
+                    </div> <!-- ᚛195-d6ba᚜
+                </div>
+
+                <div style="flex: 1; display: flex; flex-direction: column; gap: 10px;">
+                    <label style="color: #94a3b8; font-size: 13px;">Output Filename:</label>
+                    <div style="display: flex; gap: 5px; margin-bottom: 10px;"> <!-- ᚛200-a193᚜
+                        <input type="text" id="txtarFilename" placeholder="appy_bundle_xxx.txtar (Auto)"
+                            style="flex: 1; padding: 8px; background: #121826; color: #a0aec0; border: 1px solid #2d3748; border-radius: 4px; font-family: monospace;">
+                        <button onclick="document.getElementById('txtarFilename').value = ''"
+                            style="height: auto; padding: 0 12px; font-size: 12px; background: #334155; border: 1px solid #475569; color: #f8fafc;">Auto</button>
+                    </div> <!-- ᚛205-d307᚜
+
+                    <div id="txtarResult"
+                        style="margin-top: 5px; margin-bottom: 15px; padding: 15px; background: #1e293b; border-radius: 6px; display: none; align-items: center; gap: 15px; border: 1px solid #334155;">
+                        <a id="txtarDownloadLink" href="#" draggable="true"
+                            style="font-size: 3em; text-decoration: none; cursor: grab;" <!-- ᚛210-d8f7᚜
+                            title="Drag me to another window!">📦</a>
+                        <div>
+                            <div style="font-weight: bold; color: #4ade80;">Success!</div>
+                            <div id="txtarResultStats" style="color: #cbd5e1; font-size: 0.9em; margin-top: 4px;"></div>
+                            <div style="color: #94a3b8; font-size: 0.8em; margin-top: 5px;">Click the icon to download, <!-- ᚛215-4af1᚜
+                                or drag to your OS.</div>
+                        </div>
+                    </div>
+
+                    <label style="color: #94a3b8; font-size: 13px;">Preface Text:</label> <!-- ᚛220-bcd6᚜
+                    <textarea id="txtarPreface"
+                        style="flex: 1; padding: 8px; background: #121826; color: #a0aec0; border: 1px solid #2d3748; border-radius: 4px; font-family: monospace;"
+                        oninput="saveTxtarState()">Please review the following files to help me with...</textarea>
+                </div>
+            </div> <!-- ᚛225-68d2᚜
+        </div>
+
+        <div id="tab-history" class="tab-pane output"
+            style="display: none; padding: 0; background: transparent; border: none; box-shadow: none;">
+            <div class="tab-controls"> <!-- ᚛230-aa3c᚜
+                <div class="control-group prep-group">
+                    <button onclick="loadHistory()">🔄 Refresh History</button>
+                </div>
+            </div>
+            <div id="historyContent" <!-- ᚛235-db15᚜
+                style="padding: 20px; background: #0f1420; border: 1px solid #2d3748; border-radius: 6px; flex: 1; overflow-y: auto;">
+                <em>Loading history...</em>
+            </div>
+        </div>
+    </div> <!-- ᚛240-71b5᚜
+
+    <script>window.AppyRootDir = "{ROOT_DIR}";</script>
+    <script src="/static/app.js"></script>
+    <script src="/static/api.js"></script>
+    <script src="/static/builder.js"></script> <!-- ᚛245-3663᚜
+    <script src="/static/history.js"></script>
+    <script src="/static/render_preview.js"></script>
+    <script src="/static/render_result.js"></script>
+    <script src="/static/retest.js"></script>
+    <script> <!-- ᚛250-57f7᚜
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', () => { loadTxtarState(); fetchSets(); });
+        } else {
+            loadTxtarState();
+            fetchSets(); <!-- ᚛255-06a5᚜
+        }
+        syncUIState();
+    </script>
+</body>
+
+</html>
+-- static/style.css --
+⚠️ APPY NOTE: This file is overly large. If you need to touch it, please split it into sensible pieces if possible.
+
+body {
+   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Helvetica Neue", sans-serif;
+   background: #0b0f19;
+   color: #e2e8f0;
+   margin: 0;
+   padding: 20px;
+   font-size: 15px;
+}
+
+.container {
+   display: flex;
+   flex-direction: column;
+   height: 95vh;
+   max-width: 1400px;
+   margin: 0 auto;
+   gap: 0; /* Gap managed explicitly between tabs and controls now */
+}
+
+.header-zone {
+   display: flex;
+   flex-direction: column;
+}
+
+/* TABS */
+.tab-bar {
+   display: flex;
+   gap: 5px;
+   border-bottom: 2px solid #2563eb;
+   margin-bottom: 0;
+}
+
+.tab-btn {
+   background: #121826;
+   color: #94a3b8;
+   border: 1px solid #2d3748;
+   border-bottom: none;
+   border-radius: 6px 6px 0 0;
+   padding: 8px 16px;
+   font-weight: 600;
+   cursor: pointer;
+   transition: all 0.2s;
+   height: 40px;
+}
+
+.tab-btn:hover {
+   background: #1e293b;
+   color: #cbd5e1;
+}
+
+.tab-btn.active {
+   background: #2563eb;
+   color: #f8fafc;
+   border-color: #2563eb;
+}
+
+.tab-pane {
+   display: none;
+   flex: 1;
+   min-height: 0;
+}
+
+.tab-pane.active {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+}
+
+/* Visual distinctiveness for Saved Set vs Scratchpad */
+#tab-bundle.mode-savedset {
+   border: 1px solid #ca8a04;
+   border-radius: 6px;
+   padding: 8px;
+   background: rgba(202, 138, 4, 0.03);
+}
+
+#tab-bundle.mode-savedset .tab-controls {
+   background: #1c1917;
+   border-color: #ca8a04;
+}
+
+#tab-bundle.mode-savedset #buildTxtarBtn {
+   background: #d97706;
+   border-color: #b45309;
+}
+
+#tab-bundle.mode-scratchpad {
+   border: 1px solid #1e293b;
+   border-radius: 6px;
+   padding: 8px;
+}
+
+/* TAB CONTROLS (THE COMMAND BAR) */
+.tab-controls {
+   display: flex;
+   justify-content: space-between;
+   align-items: center;
+   background: #121826;
+   padding: 10px 16px;
+   border: 1px solid #2d3748;
+   border-top: none;
+   border-radius: 0 0 6px 6px;
+   margin-bottom: 10px;
+}
+
+.control-group {
+   display: flex;
+   gap: 8px;
+   align-items: center;
+}
+
+.prep-group {
+   justify-content: flex-start;
+}
+
+.action-group {
+   justify-content: center;
+}
+
+.export-group {
+   justify-content: flex-end;
+   position: relative;
+}
+
+textarea {
+   flex: 1;
+   background: #121826;
+   color: #a0aec0;
+   border: 1px solid #2d3748;
+   padding: 18px;
+   font-family: 'Consolas', 'JetBrains Mono', monospace;
+   font-size: 14px;
+   resize: none;
+   border-radius: 6px;
+   outline: none;
+   box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.2);
+   transition: border-color 0.2s;
+}
+
+textarea:focus {
+   border-color: #3b82f6;
+   box-shadow: 0 0 0 1px #3b82f6, inset 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+/* Syntax Highlighting text areas */
+.backdrop-container {
+   position: relative;
+   background: #121826;
+   border: 1px solid #2d3748;
+   border-radius: 4px;
+   overflow: hidden;
+   box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+.backdrop-content {
+   position: absolute;
+   top: 0; left: 0; right: 0; bottom: 0;
+   padding: 8px;
+   font-family: 'Consolas', 'JetBrains Mono', monospace;
+   font-size: 14px;
+   line-height: normal;
+   white-space: pre;
+   overflow: hidden; 
+   color: #a0aec0;
+   pointer-events: none;
+   z-index: 1;
+}
+.overlay-textarea {
+   position: absolute;
+   top: 0; left: 0; right: 0; bottom: 0;
+   width: 100%; height: 100%;
+   padding: 8px;
+   font-family: 'Consolas', 'JetBrains Mono', monospace;
+   font-size: 14px;
+   background: transparent !important;
+   color: transparent !important;
+   caret-color: #e2e8f0;
+   border: none !important;
+   outline: none;
+   z-index: 2;
+   resize: none;
+   white-space: pre;
+   box-shadow: none !important;
+}
+
+.builder-table { width: 100%; border-collapse: collapse; color: #a0aec0; font-family: monospace; font-size: 13px; }
+.builder-table th { border-bottom: 1px solid #475569; color: #cbd5e1; font-weight: bold; }
+.builder-table td { border-bottom: 1px solid #2d3748; }
+.builder-table input.path-input { width: 100%; background: transparent; border: none; color: inherit; outline: none; font-family: inherit; font-size: inherit; }
+
+.overlay-textarea::selection {
+   background: rgba(59, 130, 246, 0.3);
+   color: transparent;
+}
+tr.hl-valid td, tr.hl-valid input { color: #4ade80 !important; font-weight: bold; }
+tr.hl-missing td, tr.hl-missing input { color: #f87171 !important; text-decoration: line-through; }
+tr.hl-empty td, tr.hl-empty input { color: #c084fc !important; font-style: italic; }
+
+button {
+   padding: 0 16px;
+   height: 38px;
+   min-width: 100px;
+   justify-content: center;
+   border: none;
+   border-radius: 4px;
+   font-size: 14px;
+   cursor: pointer;
+   font-weight: 600;
+   transition: all 0.2s ease;
+   letter-spacing: 0.3px;
+   display: flex;
+   align-items: center;
+   gap: 6px;
+   white-space: nowrap;
+   box-sizing: border-box;
+}
+
+button:hover {
+   filter: brightness(1.15);
+   transform: translateY(-1px);
+}
+
+button:active {
+   transform: translateY(0);
+}
+
+button:disabled {
+   opacity: 0.4;
+   cursor: not-allowed;
+   transform: none;
+   filter: none;
+}
+
+#clearPasteBtn {
+   background: #3f3f46;
+   color: #f8fafc;
+   border: 1px solid #52525b;
+}
+
+#checkBtn {
+   background: #ca8a04;
+   color: #f8fafc;
+   border: 1px solid #eab308;
+}
+
+#applyBtn {
+   background: #2563eb;
+   color: #f8fafc;
+   border: 1px solid #3b82f6;
+}
+
+#applyBtn.ready {
+   background: #16a34a;
+   border-color: #22c55e;
+   box-shadow: 0 0 10px rgba(34, 197, 94, 0.3);
+}
+
+#fixPathsBtn {
+   background: #0891b2;
+   color: #f8fafc;
+   border: 1px solid #06b6d4;
+}
+
+#retestBtn {
+   background: #0284c7;
+   color: #f8fafc;
+   border: 1px solid #06b6d4;
+}
+
+#cancelRetestBtn {
+   background: #dc2626;
+   color: #f8fafc;
+   border: 1px solid #ef4444;
+}
+
+#autoBtn {
+   background: #0f766e;
+   color: #f8fafc;
+   border: 1px solid #06b6d4;
+}
+
+#copyTraceBtn.trace-blue {
+  background: #0f172a;
+  color: #38bdf8;
+  border: 1px solid #0284c7;
+}
+
+#copyTraceBtn.trace-purple {
+  background: #1e1b4b;
+  color: #a78bfa;
+  border: 1px solid #7c3aed;
+}
+
+#copyTraceBtn.trace-red {
+  background: #450a0a;
+  color: #fca5a5;
+  border: 1px solid #991b1b;
+}
+
+.output {
+   flex: 1;
+   background: #0f1420;
+   border: 1px solid #2d3748;
+   padding: 20px;
+   overflow-y: auto;
+   border-radius: 6px;
+   font-family: 'Consolas', 'JetBrains Mono', monospace;
+   font-size: 13.5px;
+   line-height: 1.6;
+   box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.file-block {
+   margin-bottom: 16px;
+   border: 1px solid #334155;
+   border-radius: 6px;
+   overflow: hidden;
+   background: #1e293b;
+   transition: all 0.2s;
+   box-shadow: 0 2px 5px rgba(0, 0, 0, 0.15);
+}
+
+.file-block.status-ready {
+   border-color: #16a34a;
+}
+
+.file-block.status-ready .file-header {
+   background: rgba(22, 163, 74, 0.15);
+   color: #bbf7d0;
+   border-bottom: 1px solid rgba(22, 163, 74, 0.3);
+}
+
+.file-block.status-applied {
+   border-color: #475569;
+   opacity: 0.85;
+}
+
+.file-block.status-applied .file-header {
+   background: rgba(71, 85, 105, 0.2);
+   color: #cbd5e1;
+   border-bottom: 1px solid rgba(71, 85, 105, 0.4);
+}
+
+.file-block.status-error {
+   border-color: #ef4444;
+}
+
+.file-block.status-error .file-header {
+   background: rgba(239, 68, 68, 0.15);
+   color: #fecaca;
+   border-bottom: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.file-block.status-ignored {
+   border-color: #f59e0b;
+}
+
+.file-block.status-ignored .file-header {
+   background: rgba(245, 158, 11, 0.15);
+   color: #fef08a;
+   border-bottom: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+.file-header {
+   background: #1e293b;
+   padding: 10px 16px;
+   cursor: pointer;
+   display: flex;
+   justify-content: space-between;
+   align-items: center;
+   user-select: none;
+   transition: background 0.2s;
+   font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+   letter-spacing: 0.2px;
+}
+
+.file-header:hover {
+   filter: brightness(1.2);
+}
+
+.file-content {
+   padding: 14px 16px;
+}
+
+.file-block[open] .file-content {
+   display: block;
+}
+
+.patch-block {
+   margin-bottom: 18px;
+   padding-bottom: 18px;
+   border-bottom: 1px dashed #475569;
+}
+
+.patch-block:last-child {
+   border-bottom: none;
+   margin-bottom: 0;
+   padding-bottom: 0;
+}
+
+.status-badge {
+   padding: 3px 10px;
+   border-radius: 12px;
+   font-size: 11px;
+   font-weight: 700;
+   text-transform: uppercase;
+   letter-spacing: 0.5px;
+}
+
+.status-ready {
+   background: rgba(34, 197, 94, 0.2);
+   color: #4ade80;
+   border: 1px solid rgba(34, 197, 94, 0.3);
+}
+
+.status-error {
+   background: rgba(239, 68, 68, 0.2);
+   color: #f87171;
+   border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.status-ignored {
+   background: rgba(245, 158, 11, 0.2);
+   color: #fbbf24;
+   border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+.status-applied {
+   background: rgba(100, 116, 139, 0.2);
+   color: #94a3b8;
+   border: 1px solid rgba(100, 116, 139, 0.3);
+}
+
+.net-lines {
+   font-family: 'Consolas', monospace;
+   font-size: 11px;
+   color: #94a3b8;
+   margin-left: 12px;
+   padding: 2px 6px;
+   background: rgba(0, 0, 0, 0.25);
+   border-radius: 4px;
+   border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.file-type-tag {
+   font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+   font-size: 11px;
+   padding: 2px 6px;
+   background: rgba(0, 0, 0, 0.25);
+   border-radius: 4px;
+   margin-right: 10px;
+   display: inline-flex;
+   align-items: center;
+   gap: 4px;
+   color: #cbd5e1;
+   border: 1px solid rgba(255, 255, 255, 0.05);
+   letter-spacing: 0.3px;
+}
+
+.rhs-chips {
+   display: flex;
+   align-items: center;
+   gap: 8px;
+}
+
+.error-msg {
+   color: #f87171;
+   margin-top: 8px;
+   font-size: 13px;
+   font-weight: 500;
+}
+
+.replace-block {
+   color: #86efac;
+   margin-top: 8px;
+   white-space: pre-wrap;
+   background: rgba(34, 197, 94, 0.08);
+   padding: 10px 12px;
+   border-left: 3px solid #22c55e;
+   border-radius: 0 4px 4px 0;
+}
+
+.replace-block.applied {
+   color: #94a3b8;
+   background: rgba(100, 116, 139, 0.08);
+   border-left: 3px solid #64748b;
+}
+
+.hint-block {
+   color: #7dd3fc;
+   margin-top: 8px;
+   white-space: pre-wrap;
+   background: rgba(6, 182, 212, 0.08);
+   padding: 10px 12px;
+   border-left: 3px dashed #06b6d4;
+   border-radius: 0 4px 4px 0;
+}
+
+::-webkit-scrollbar {
+   width: 8px;
+   height: 8px;
+}
+
+::-webkit-scrollbar-track {
+   background: #0f1420;
+   border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+   background: #334155;
+   border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+   background: #475569;
+}

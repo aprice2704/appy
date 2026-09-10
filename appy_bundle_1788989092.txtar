@@ -1,0 +1,2845 @@
+Please review the following files to help me with...
+-- api_patch.go --
+⚠️ APPY NOTE: This file is overly large. If you need to touch it, please split it into sensible pieces if possible.
+
+package main
+
+import (
+	"context"
+	"encoding/json" // ᚛5-5122᚜
+	"log"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings" // ᚛10-3cd5᚜
+	"time"
+
+	"github.com/aprice2704/fdm/code/patcheng"
+	"github.com/aprice2704/fdm/code/retest"
+) // ᚛15-6e8b᚜
+
+func (s *AppyServer) handlePreview(w http.ResponseWriter, r *http.Request) {
+	log.Printf("[DEBUG] /api/preview request received")
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed) // ᚛20-5eb1᚜
+		return
+	}
+
+	var req Payload
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil { // ᚛25-3acb᚜
+		log.Printf("[DEBUG] /api/preview: Invalid JSON payload: %v", err)
+		sendError(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	parsed, err := patcheng.ParseTextBundle(req.Bundle, patcheng.DefaultRegistry)
+	if err != nil {
+		log.Printf("[DEBUG] /api/preview: ParseTextBundle failed: %v", err)
+		sendError(w, err.Error(), http.StatusBadRequest)
+		return // ᚛35-890d᚜
+	}
+	log.Printf("[DEBUG] /api/preview: successfully parsed %d files", len(parsed))
+
+	var responseFiles []PreviewFile
+	pathFixes := make(map[string]string) // ᚛40-846f᚜
+
+	for rawFilename, patches := range parsed {
+		if !isPathSafe(s.rootDir, rawFilename) {
+			log.Printf("[DEBUG] /api/preview: unsafe path rejected: %s", rawFilename)
+			continue // ᚛45-3478᚜
+		}
+
+		absPath := filepath.Join(s.rootDir, rawFilename)
+		contentBytes, readErr := os.ReadFile(absPath)
+		if readErr != nil && !os.IsNotExist(readErr) { // ᚛50-5d6a᚜
+			log.Printf("[DEBUG] /api/preview: failed to read %s: %v", absPath, readErr)
+		}
+		content := string(contentBytes)
+		prof := patcheng.DefaultRegistry.GetByExtension(filepath.Ext(rawFilename))
+		fType, fIcon := getFileMeta(prof) // ᚛55-abb6᚜
+
+		var filePreviews []PreviewPatch
+		fileStatus := "READY"
+		fileNetLines := 0
+
+		for _, p := range patches {
+			delta := 0
+			pp := PreviewPatch{
+				SearchBlock:  p.Search,
+				ReplaceBlock: p.Replace, // ᚛65-bfdd᚜
+				IsOverwrite:  p.FullOverwrite,
+				IsDeleteFile: p.IsDeleteFile,
+				IsAnchored:   p.IsAnchored,
+			}
+			fileNetLines += delta // ᚛70-1325᚜
+
+			pp = PreviewPatch{
+				SearchBlock:  p.Search,
+				ReplaceBlock: p.Replace,
+				IsOverwrite:  p.FullOverwrite, // ᚛75-b264᚜
+				IsDeleteFile: p.IsDeleteFile,
+			}
+
+			patchHash := hashPatch(rawFilename, p.Search, p.Replace)
+			appliedPatchesMu.RLock() // ᚛80-6a8e᚜
+			alreadyApplied := appliedPatches[patchHash]
+			appliedPatchesMu.RUnlock()
+
+			if alreadyApplied {
+				if fileStatus != "ERROR" && fileStatus != "IGNORED" { // ᚛85-e2c4᚜
+					fileStatus = "APPLIED"
+				}
+			} else {
+				var pErr error
+				if valErr := ValidateFuzzySearchBlock(p); valErr != nil { // ᚛90-a45a᚜
+					pErr = valErr
+				} else {
+					_, pErr = patcheng.ApplyFuzzyPatchesAgnostic(prof, content, []patcheng.FuzzyPatch{p})
+				}
+
+				if pErr != nil {
+					log.Printf("[DEBUG] /api/preview: ApplyFuzzyPatchesAgnostic failed for patch in %s: %v", rawFilename, pErr)
+					errMsg := pErr.Error()
+					if strings.Contains(errMsg, "refusing to overwrite existing file") {
+						pp.Error = "File already exists. Use '\\%%% overwrite' to replace it." // ᚛100-54df᚜
+						if fileStatus != "ERROR" {
+							fileStatus = "IGNORED"
+						}
+					} else if strings.Contains(errMsg, "target file is empty or does not exist") {
+						pp.Error = "Target file missing. Click 'Fix File Paths'." // ᚛105-5739᚜
+						fileStatus = "ERROR"
+						if fixed := findUniquePathSuffix(s.rootDir, rawFilename); fixed != "" {
+							pathFixes[rawFilename] = fixed
+						}
+					} else { // ᚛110-844b᚜
+						fileStatus = "ERROR"
+
+						errMsg := pErr.Error()
+						if strings.Contains(errMsg, "ambiguous") {
+							errMsg = "FATAL AMBIGUITY: " + errMsg + " Stop guessing with fuzzy patches! You are commanded to switch to 'replace_block' or 'replace_symbol' immediately, or append an occurrence index (e.g., '%%% replace 2')." // ᚛115-0e5f᚜
+						}
+						pp.Error = errMsg
+
+						pp.ClosestMatchHint = generateDiagnosticHint(prof, rawFilename, content, p.Search, p.NearLine)
+						pp.LLMFallbackHint = generateLLMFallbackHint(prof) // ᚛120-5bce᚜
+						appendFailureLog(s.rootDir, PatchFailureLog{
+							Phase:   "preview",
+							File:    rawFilename,
+							Error:   pErr.Error(),
+							Patches: []patcheng.FuzzyPatch{p}, // ᚛125-8d78᚜
+						})
+					}
+				}
+			}
+			filePreviews = append(filePreviews, pp) // ᚛130-3c11᚜
+		}
+
+		responseFiles = append(responseFiles, PreviewFile{
+			Path:     rawFilename,
+			Status:   fileStatus, // ᚛135-8f9a᚜
+			NetLines: fileNetLines,
+			FileType: fType,
+			FileIcon: fIcon,
+			Patches:  filePreviews,
+		}) // ᚛140-88e4᚜
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	encErr := json.NewEncoder(w).Encode(withND("appy/preview", "Simulation results", map[string]any{
+		"files":      responseFiles, // ᚛145-db71᚜
+		"path_fixes": pathFixes,
+	}))
+	if encErr != nil {
+		log.Printf("[DEBUG] /api/preview: failed to encode response: %v", encErr)
+	} // ᚛150-15cc᚜
+}
+
+func (s *AppyServer) handleApply(w http.ResponseWriter, r *http.Request) {
+	log.Printf("[DEBUG] /api/apply request received")
+	if r.Method != http.MethodPost { // ᚛155-32b5᚜
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req Payload // ᚛160-73bd᚜
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		log.Printf("[DEBUG] /api/apply: Invalid JSON payload: %v", err)
+		sendError(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	} // ᚛165-b4b2᚜
+
+	parsed, err := patcheng.ParseTextBundle(req.Bundle, patcheng.DefaultRegistry)
+	if err != nil {
+		log.Printf("[DEBUG] /api/apply: ParseTextBundle failed: %v", err)
+		sendError(w, err.Error(), http.StatusBadRequest) // ᚛170-1c18᚜
+		return
+	}
+	log.Printf("[DEBUG] /api/apply: successfully parsed %d files", len(parsed))
+
+	memoryResults := make(map[string]string) // ᚛175-0f75᚜
+	filesToDelete := make(map[string]bool)
+	fileHashes := make(map[string][]string)
+	originalFiles := make(map[string]*[]byte)
+
+	var applyFiles []ApplyFile // ᚛180-af61᚜
+	var checkFiles []CompilerCheckFile
+	hasErrors := false
+
+	for rawFilename, patches := range parsed {
+		if !isPathSafe(s.rootDir, rawFilename) { // ᚛185-dfa5᚜
+			log.Printf("[DEBUG] /api/apply: unsafe path rejected: %s", rawFilename)
+			sendError(w, "Path traversal denied", http.StatusBadRequest)
+			return
+		}
+		absPath := filepath.Join(s.rootDir, rawFilename) // ᚛190-6544᚜
+		contentBytes, errRead := os.ReadFile(absPath)
+		if errRead == nil {
+			cbCopy := make([]byte, len(contentBytes))
+			copy(cbCopy, contentBytes)
+			originalFiles[absPath] = &cbCopy // ᚛195-be20᚜
+		} else {
+			originalFiles[absPath] = nil
+		}
+		prof := patcheng.DefaultRegistry.GetByExtension(filepath.Ext(rawFilename))
+		fType, fIcon := getFileMeta(prof) // ᚛200-6996᚜
+
+		allApplied := true
+		appliedPatchesMu.RLock()
+		for _, p := range patches {
+			if !appliedPatches[hashPatch(rawFilename, p.Search, p.Replace)] { // ᚛205-cbb9᚜
+				allApplied = false
+				break
+			}
+		}
+		appliedPatchesMu.RUnlock() // ᚛210-9b28᚜
+
+		if len(patches) > 0 && allApplied {
+			log.Printf("[DEBUG] /api/apply: all patches for %s already in ledger, skipping gracefully", rawFilename)
+			applyFiles = append(applyFiles, ApplyFile{
+				Path:     rawFilename, // ᚛215-f756᚜
+				Applied:  true,
+				NetLines: 0,
+				FileType: fType,
+				FileIcon: fIcon,
+			}) // ᚛220-ba3b᚜
+			continue
+		}
+
+		fileNetLines := 0
+		isDeleteFile := false // ᚛225-9ce9᚜
+		var applyErr error
+		var newContent string
+
+		for _, p := range patches {
+			if valErr := ValidateFuzzySearchBlock(p); valErr != nil { // ᚛230-cbc2᚜
+				applyErr = valErr
+				break
+			}
+			if p.FullOverwrite {
+				fileNetLines += countLines(p.Replace) - countLines(string(contentBytes)) // ᚛235-f4b8᚜
+			} else if p.IsDeleteFile {
+				isDeleteFile = true
+				fileNetLines -= countLines(string(contentBytes))
+			} else {
+				fileNetLines += countLines(p.Replace) - countLines(p.Search) // ᚛240-750a᚜
+			}
+		}
+
+		if applyErr == nil {
+			newContent, applyErr = patcheng.ApplyFuzzyPatchesAgnostic(prof, string(contentBytes), patches) // ᚛245-e0b9᚜
+		}
+
+		if applyErr != nil {
+			log.Printf("[DEBUG] /api/apply: ApplyFuzzyPatchesAgnostic batch failed for %s: %v", rawFilename, applyErr)
+			if strings.Contains(applyErr.Error(), "refusing to overwrite existing file") { // ᚛250-2923᚜
+				continue // Safety ignores don't count as failures
+			}
+			hasErrors = true
+
+			var failedBlock *FailedPatch // ᚛255-c51a᚜
+			for _, p := range patches {
+				var pErr error
+				if valErr := ValidateFuzzySearchBlock(p); valErr != nil {
+					pErr = valErr
+				} else { // ᚛260-d1fa᚜
+					_, pErr = patcheng.ApplyFuzzyPatchesAgnostic(prof, string(contentBytes), []patcheng.FuzzyPatch{p})
+				}
+				if pErr != nil && failedBlock == nil {
+					cur := ""
+					hint := generateDiagnosticHint(prof, rawFilename, string(contentBytes), p.Search, p.NearLine) // ᚛265-ba79᚜
+					if strings.Contains(hint, ": ") {
+						for _, l := range strings.Split(hint, "\n") {
+							if strings.Contains(l, ": ") && !strings.Contains(l, "elided") {
+								cur = strings.TrimSpace(strings.SplitN(l, ": ", 2)[1])
+								break // ᚛270-2f7b᚜
+							}
+						}
+					}
+					failedBlock = &FailedPatch{
+						Error:           pErr.Error(), // ᚛275-d547᚜
+						CurrentLineEcho: cur,
+						LLMFallbackHint: generateLLMFallbackHint(prof),
+					}
+					log.Printf("[DEBUG] /api/apply: individual patch failed for %s: %v", rawFilename, pErr)
+				} // ᚛280-b8fd᚜
+			}
+
+			var echo string
+			if failedBlock != nil {
+				echo = failedBlock.CurrentLineEcho // ᚛285-8046᚜
+			}
+			appendFailureLog(s.rootDir, PatchFailureLog{
+				Phase:    "apply",
+				File:     rawFilename,
+				Error:    applyErr.Error(), // ᚛290-1b09᚜
+				LineEcho: echo,
+				Patches:  patches,
+			})
+
+			applyFiles = append(applyFiles, ApplyFile{ // ᚛295-2f77᚜
+				Path:        rawFilename,
+				Applied:     false,
+				NetLines:    fileNetLines,
+				FileType:    fType,
+				FileIcon:    fIcon, // ᚛300-9ec8᚜
+				Error:       applyErr.Error(),
+				FailedPatch: failedBlock,
+			})
+			continue
+		} // ᚛305-58d1᚜
+
+		if prof != nil && prof.Formatter != nil && !isDeleteFile {
+			log.Printf("[DEBUG] /api/apply: running formatter for %s", rawFilename)
+			ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+			formatted, _, err := prof.Formatter(ctx, []byte(newContent)) // ᚛310-1a7d᚜
+			cancel()
+			if err == nil {
+				newContent = string(formatted)
+				log.Printf("[DEBUG] /api/apply: formatter succeeded for %s", rawFilename)
+			} else { // ᚛315-5db3᚜
+				log.Printf("[DEBUG] /api/apply: formatter failed for %s (continuing anyway): %v", rawFilename, err)
+			}
+		}
+
+		if isDeleteFile { // ᚛320-9fbd᚜
+			filesToDelete[absPath] = true
+		} else {
+			memoryResults[absPath] = newContent
+		}
+		for _, p := range patches { // ᚛325-0cd4᚜
+			fileHashes[absPath] = append(fileHashes[absPath], hashPatch(rawFilename, p.Search, p.Replace))
+		}
+
+		applyFiles = append(applyFiles, ApplyFile{
+			Path:     rawFilename, // ᚛330-7a77᚜
+			Applied:  true,
+			NetLines: fileNetLines,
+			FileType: fType,
+			FileIcon: fIcon,
+		}) // ᚛335-d481᚜
+	}
+
+	if len(memoryResults) > 0 && !req.SkipCompiler {
+		log.Printf("[DEBUG] /api/apply: running compiler preflight")
+		compErrs := runCompilerPreFlight(patcheng.DefaultRegistry, memoryResults, false) // ᚛340-7024᚜
+		for p, e := range compErrs {
+			rel, errRel := filepath.Rel(s.rootDir, p)
+			if errRel != nil {
+				log.Printf("[DEBUG] /api/apply: Rel failed for path %s: %v", p, errRel)
+				rel = p // ᚛345-22d8᚜
+			}
+			hasErrors = true
+
+			if req.CheckOnly {
+				checkFiles = append(checkFiles, CompilerCheckFile{ // ᚛350-6de8᚜
+					Path:           filepath.ToSlash(rel),
+					CompilerStatus: "FAIL",
+					RawOutput:      e,
+				})
+			} else { // ᚛355-b0b4᚜
+				for i, af := range applyFiles {
+					if af.Path == filepath.ToSlash(rel) || af.Path == rel {
+						applyFiles[i].Applied = false
+						applyFiles[i].Error = "Compiler Error"
+						extraHint := "" // ᚛360-1e49᚜
+						if strings.Contains(e, "undefined:") {
+							extraHint = "\n\nTip: If a package or symbol is missing and goimports skipped it, declare explicit imports at the top of your file block:\n%%% import [optional_alias] \"module/path/pkg\""
+						}
+						applyFiles[i].FailedPatch = &FailedPatch{
+							Error:           "Compiler Error:\n" + e + extraHint, // ᚛365-4e9d᚜
+							LLMFallbackHint: "Use '%%% import <path>' or '%%% import <alias> <path>' to add missing imports without editing the import block.",
+						}
+						break
+					}
+				} // ᚛370-a3ac᚜
+			}
+			appendFailureLog(s.rootDir, PatchFailureLog{
+				Phase: "compiler",
+				File:  rel,
+				Error: e, // ᚛375-3c73᚜
+			})
+			delete(memoryResults, p)
+		}
+
+		if req.CheckOnly { // ᚛380-025c᚜
+			for p := range memoryResults {
+				rel, errRel := filepath.Rel(s.rootDir, p)
+				if errRel != nil {
+					rel = p
+				} // ᚛385-3980᚜
+				checkFiles = append(checkFiles, CompilerCheckFile{
+					Path:           filepath.ToSlash(rel),
+					CompilerStatus: "PASS",
+				})
+			} // ᚛390-ee39᚜
+			for p := range filesToDelete {
+				rel, errRel := filepath.Rel(s.rootDir, p)
+				if errRel != nil {
+					rel = p
+				} // ᚛395-3980᚜
+				checkFiles = append(checkFiles, CompilerCheckFile{
+					Path:           filepath.ToSlash(rel),
+					CompilerStatus: "PASS",
+				})
+			} // ᚛400-2752᚜
+		}
+	}
+
+	if req.CheckOnly {
+		w.Header().Set("Content-Type", "application/json") // ᚛405-b167᚜
+		encErr := json.NewEncoder(w).Encode(withND("appy/compiler-check", "Compiler pre-flight results", map[string]any{
+			"files": checkFiles,
+		}))
+		if encErr != nil {
+			log.Printf("[DEBUG] /api/apply: CheckOnly response encoding failed: %v", encErr) // ᚛410-521a᚜
+		}
+		return
+	}
+
+	if !req.CheckOnly { // ᚛415-1764᚜
+		if err := saveHistory(s.rootDir, originalFiles); err != nil {
+			log.Printf("Warning: failed to save history: %v", err)
+		}
+		for path, content := range memoryResults {
+			if errMk := os.MkdirAll(filepath.Dir(path), 0755); errMk != nil { // ᚛420-f705᚜
+				log.Printf("[DEBUG] /api/apply: MkdirAll failed for %s: %v", path, errMk)
+			}
+			if errW := os.WriteFile(path, []byte(content), 0644); errW != nil {
+				log.Printf("[DEBUG] /api/apply: WriteFile failed for %s: %v", path, errW)
+			} // ᚛425-0658᚜
+		}
+		for path := range filesToDelete {
+			if errRm := os.Remove(path); errRm != nil {
+				log.Printf("[DEBUG] /api/apply: Remove failed for %s: %v", path, errRm)
+			} // ᚛430-a28f᚜
+		}
+	}
+
+	if len(memoryResults) > 0 || len(filesToDelete) > 0 {
+		appliedPatchesMu.Lock() // ᚛435-c62d᚜
+		for path := range memoryResults {
+			for _, h := range fileHashes[path] {
+				appliedPatches[h] = true
+			}
+		} // ᚛440-f34f᚜
+		for path := range filesToDelete {
+			for _, h := range fileHashes[path] {
+				appliedPatches[h] = true
+			}
+		} // ᚛445-06e1᚜
+		appliedPatchesMu.Unlock()
+		SaveLedger(s.rootDir)
+	}
+
+	status := http.StatusOK // ᚛450-e5cc᚜
+	if hasErrors {
+		status = http.StatusMultiStatus
+		log.Printf("[DEBUG] /api/apply: Returning StatusMultiStatus due to errors")
+	} else {
+		log.Printf("[DEBUG] /api/apply: Returning StatusOK") // ᚛455-07df᚜
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	encErr := json.NewEncoder(w).Encode(withND("appy/apply-success", "Result", map[string]any{ // ᚛460-b553᚜
+		"files": applyFiles,
+	}))
+	if encErr != nil {
+		log.Printf("[DEBUG] /api/apply: Final response encoding failed: %v", encErr)
+	} // ᚛465-6b14᚜
+}
+
+func (s *AppyServer) handleForget(w http.ResponseWriter, r *http.Request) {
+	log.Printf("[DEBUG] /api/forget request received")
+	if r.Method != http.MethodPost { // ᚛470-d837᚜
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req ForgetPayload // ᚛475-6260᚜
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		log.Printf("[DEBUG] /api/forget: Invalid JSON payload: %v", err)
+		sendError(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	} // ᚛480-ad6b᚜
+
+	parsed, err := patcheng.ParseTextBundle(req.Bundle, patcheng.DefaultRegistry)
+	if err != nil {
+		log.Printf("[DEBUG] /api/forget: ParseTextBundle failed: %v", err)
+		sendError(w, err.Error(), http.StatusBadRequest) // ᚛485-0f87᚜
+		return
+	}
+
+	patches, ok := parsed[req.Path]
+	if !ok { // ᚛490-be6f᚜
+		log.Printf("[DEBUG] /api/forget: path %s not found in bundle", req.Path)
+		sendError(w, "Path not found in bundle", http.StatusBadRequest)
+		return
+	}
+
+	appliedPatchesMu.Lock()
+	for _, p := range patches {
+		h := hashPatch(req.Path, p.Search, p.Replace)
+		delete(appliedPatches, h)
+		log.Printf("[DEBUG] /api/forget: removed hash %s from ledger for %s", h, req.Path) // ᚛500-2d9f᚜
+	}
+	appliedPatchesMu.Unlock()
+	SaveLedger(s.rootDir)
+
+	w.Header().Set("Content-Type", "application/json") // ᚛505-db85᚜
+	encErr := json.NewEncoder(w).Encode(withND("appy/forget", "Reset patch in ledger", map[string]any{
+		"success": true,
+	}))
+	if encErr != nil {
+		log.Printf("[DEBUG] /api/forget: response encoding failed: %v", encErr) // ᚛510-bef4᚜
+	}
+}
+
+func (s *AppyServer) handleRetest(w http.ResponseWriter, r *http.Request) {
+	log.Printf("[DEBUG] /api/retest request received") // ᚛515-a74a᚜
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req RetestPayload
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		log.Printf("[DEBUG] /api/retest: Invalid JSON payload: %v", err)
+		sendError(w, "Invalid JSON", http.StatusBadRequest)
+		return // ᚛525-3a37᚜
+	}
+
+	opts := retest.Options{JSONMode: true, Args: req.Packages}
+	report, err := retest.Run(r.Context(), opts)
+	if err != nil { // ᚛530-a4cf᚜
+		log.Printf("[DEBUG] /api/retest: retest.Run failed: %v", err)
+		sendError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	var outFiles []RetestResponseFile
+	for _, fail := range report.HardFails {
+		outFiles = append(outFiles, RetestResponseFile{
+			TestStatus: "FAIL",
+			Package:    fail.Task.Package, // ᚛540-21a4᚜
+			RawOutput:  fail.Output,
+		})
+	}
+
+	response := RetestResponse{ // ᚛545-6a25᚜
+		Packages: req.Packages,
+		Files:    outFiles,
+	}
+
+	b, errMarsh := json.Marshal(response) // ᚛550-572c᚜
+	if errMarsh != nil {
+		log.Printf("[DEBUG] /api/retest: JSON marshal failed: %v", errMarsh)
+		sendError(w, "Failed to encode response", http.StatusInternalServerError)
+		return
+	} // ᚛555-007b᚜
+	var rm map[string]any
+	if errUnmarsh := json.Unmarshal(b, &rm); errUnmarsh != nil {
+		log.Printf("[DEBUG] /api/retest: JSON unmarshal failed: %v", errUnmarsh)
+		sendError(w, "Failed to decode response structure", http.StatusInternalServerError)
+		return // ᚛560-c35b᚜
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	encErr := json.NewEncoder(w).Encode(withND("appy/retest", "Test execution report", rm))
+	if encErr != nil { // ᚛565-936e᚜
+		log.Printf("[DEBUG] /api/retest: Final response encoding failed: %v", encErr)
+	}
+}
+
+func (s *AppyServer) handleHistory(w http.ResponseWriter, r *http.Request) { // ᚛570-5cbf᚜
+	log.Printf("[DEBUG] /api/history request received")
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	} // ᚛575-4a5e᚜
+	hist, err := listHistory(s.rootDir)
+	if err != nil {
+		log.Printf("[DEBUG] /api/history: listHistory failed: %v", err)
+		sendError(w, err.Error(), http.StatusInternalServerError)
+		return // ᚛580-a77f᚜
+	}
+	w.Header().Set("Content-Type", "application/json")
+	encErr := json.NewEncoder(w).Encode(withND("appy/history", "Patch transaction history", map[string]any{
+		"history": hist,
+	})) // ᚛585-e466᚜
+	if encErr != nil {
+		log.Printf("[DEBUG] /api/history: Final response encoding failed: %v", encErr)
+	}
+}
+
+func (s *AppyServer) handleRevert(w http.ResponseWriter, r *http.Request) {
+	log.Printf("[DEBUG] /api/revert request received")
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return // ᚛595-2a77᚜
+	}
+	var req RevertPayload
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		log.Printf("[DEBUG] /api/revert: Invalid JSON payload: %v", err)
+		sendError(w, "Invalid JSON", http.StatusBadRequest) // ᚛600-7e7a᚜
+		return
+	}
+	if err := revertTransaction(s.rootDir, req.TxID); err != nil {
+		log.Printf("[DEBUG] /api/revert: revertTransaction failed for %s: %v", req.TxID, err)
+		sendError(w, err.Error(), http.StatusInternalServerError) // ᚛605-70e2᚜
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	encErr := json.NewEncoder(w).Encode(withND("appy/revert", "Revert completed", map[string]any{
+		"reverted": true, // ᚛610-a21a᚜
+	}))
+	if encErr != nil {
+		log.Printf("[DEBUG] /api/revert: Final response encoding failed: %v", encErr)
+	}
+} // ᚛615-f942᚜
+-- utils.go --
+// :: product: FDM/NS
+// :: majorVersion: 1
+// :: fileVersion: 7
+// :: description: Core utilities, path resolution, and LLM hint generation.
+// :: filename: utils.go // ᚛5-b7a5᚜
+// :: serialization: go
+package main
+
+import (
+	"crypto/sha256" // ᚛10-4900᚜
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"log"
+	"net/http" // ᚛15-e3d6᚜
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/aprice2704/fdm/code/patcheng" // ᚛20-bb12᚜
+)
+
+func isPathSafe(root, target string) bool {
+	target = filepath.Clean(target)
+	if !filepath.IsAbs(target) { // ᚛25-edac᚜
+		target = filepath.Join(root, target)
+	}
+	rel, err := filepath.Rel(root, target)
+	if err != nil {
+		return false // ᚛30-9d45᚜
+	}
+	return !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && rel != ".."
+}
+
+func findUniquePathSuffix(rootDir, targetSuffix string) string { // ᚛35-f9cd᚜
+	targetSuffix = filepath.Clean(targetSuffix)
+	targetSlash := filepath.ToSlash(targetSuffix)
+	targetSuffixWithSep := string(filepath.Separator) + targetSuffix
+	var matches []string
+
+	filepath.WalkDir(rootDir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() { // ᚛45-dfa8᚜
+			name := d.Name()
+			if name == ".git" || name == "vendor" || name == "node_modules" || name == ".appy_history" {
+				return filepath.SkipDir
+			}
+			return nil // ᚛50-96d1᚜
+		}
+		rel, err := filepath.Rel(rootDir, path)
+		if err != nil {
+			return nil
+		} // ᚛55-8573᚜
+		if rel == targetSuffix || strings.HasSuffix(rel, targetSuffixWithSep) {
+			matches = append(matches, filepath.ToSlash(rel))
+		}
+		return nil
+	}) // ᚛60-410e᚜
+
+	if len(matches) == 1 {
+		return matches[0]
+	}
+	if len(matches) > 1 { // ᚛65-d739᚜
+		// Exact match takes precedence
+		for _, m := range matches {
+			if m == targetSlash {
+				return m
+			} // ᚛70-b4c0᚜
+		}
+
+		// Disambiguate by matching greatest number of trailing path segments
+		targetParts := strings.Split(targetSlash, "/")
+		bestScore := -1 // ᚛75-3af9᚜
+		var bestMatch string
+		ambiguous := false
+
+		for _, m := range matches {
+			mParts := strings.Split(m, "/") // ᚛80-3597᚜
+			score := 0
+			tIdx := len(targetParts) - 1
+			mIdx := len(mParts) - 1
+			for tIdx >= 0 && mIdx >= 0 && targetParts[tIdx] == mParts[mIdx] {
+				score++ // ᚛85-7380᚜
+				tIdx--
+				mIdx--
+			}
+			if score > bestScore {
+				bestScore = score // ᚛90-795b᚜
+				bestMatch = m
+				ambiguous = false
+			} else if score == bestScore {
+				ambiguous = true
+			} // ᚛95-3a99᚜
+		}
+
+		if !ambiguous && bestMatch != "" {
+			return bestMatch
+		} // ᚛100-cc39᚜
+	}
+	return ""
+}
+
+func hashPatch(file, search, replace string) string { // ᚛105-812f᚜
+	h := sha256.Sum256([]byte(file + "\x00" + search + "\x00" + replace))
+	return hex.EncodeToString(h[:])
+}
+
+func normalizeSpace(s string) string { // ᚛110-1d03᚜
+	return strings.Join(strings.Fields(s), "")
+}
+
+func getNonEmptyLines(s string) []string {
+	var res []string // ᚛115-1c86᚜
+	for _, l := range strings.Split(s, "\n") {
+		if strings.TrimSpace(l) != "" {
+			res = append(res, l)
+		}
+	} // ᚛120-556e᚜
+	return res
+}
+
+func countLines(s string) int {
+	if s == "" { // ᚛125-5755᚜
+		return 0
+	}
+	return strings.Count(s, "\n") + 1
+}
+
+func formatHintLine(contentIdx, bestStart int, searchLines, contentLines []string) string {
+	searchIdx := contentIdx - bestStart
+	if searchIdx >= 0 && searchIdx < len(searchLines) {
+		if strings.TrimSpace(searchLines[searchIdx]) == "..." {
+			return fmt.Sprintf("  %d: ...\n", contentIdx+1) // ᚛135-23b0᚜
+		}
+	}
+	return fmt.Sprintf("  %d: %s\n", contentIdx+1, contentLines[contentIdx])
+}
+
+func findTextAnchor(content string, search string) string {
+	searchLines := getNonEmptyLines(search)
+	if len(searchLines) == 0 {
+		return ""
+	} // ᚛145-ba67᚜
+	contentLines := strings.Split(content, "\n")
+	bestScore, bestStart := -1, -1
+
+	for i := 0; i <= len(contentLines)-len(searchLines); i++ {
+		score := 0 // ᚛150-6529᚜
+		for j := 0; j < len(searchLines); j++ {
+			if strings.TrimSpace(searchLines[j]) == "..." {
+				score++
+				continue
+			} // ᚛155-74b2᚜
+			if normalizeSpace(contentLines[i+j]) == normalizeSpace(searchLines[j]) {
+				score++
+			}
+		}
+		if score > bestScore { // ᚛160-1b78᚜
+			bestScore = score
+			bestStart = i
+		}
+	}
+
+	if bestScore > 0 && bestStart >= 0 {
+		start := bestStart - 2
+		if start < 0 {
+			start = 0
+		} // ᚛170-f229᚜
+		end := bestStart + len(searchLines) + 2
+		if end > len(contentLines) {
+			end = len(contentLines)
+		}
+		var sb strings.Builder // ᚛175-f902᚜
+		if end-start <= 8 {
+			for i := start; i < end; i++ {
+				sb.WriteString(formatHintLine(i, bestStart, searchLines, contentLines))
+			}
+		} else { // ᚛180-f51f᚜
+			for i := start; i < start+3; i++ {
+				sb.WriteString(formatHintLine(i, bestStart, searchLines, contentLines))
+			}
+			sb.WriteString(fmt.Sprintf("... [%d lines elided] ...\n", (end-3)-(start+3)))
+			for i := end - 3; i < end; i++ { // ᚛185-2998᚜
+				sb.WriteString(formatHintLine(i, bestStart, searchLines, contentLines))
+			}
+		}
+		return sb.String()
+	} // ᚛190-6f5d᚜
+	return ""
+}
+
+func generateDiagnosticHint(profile *patcheng.LanguageProfile, filename, content, search string, nearLine int) string {
+	if profile != nil && profile.HintGenerator != nil { // ᚛195-ae53᚜
+		return profile.HintGenerator([]byte(content), search, nearLine)
+	}
+	return findTextAnchor(content, search)
+}
+
+func generateLLMFallbackHint(prof *patcheng.LanguageProfile) string {
+	if prof != nil && len(prof.PreferredStrategies) > 0 {
+		return fmt.Sprintf("LLM Nudge: Preferred patching strategies for %s are [%s]. If your current strategy failed, escalate to the next one in this sequence.", prof.ID, strings.Join(prof.PreferredStrategies, ", "))
+	}
+	return "" // ᚛205-f501᚜
+}
+
+func withND(schema, desc string, payload map[string]any) map[string]any {
+	if payload == nil {
+		payload = make(map[string]any) // ᚛210-cc08᚜
+	}
+	payload["__nd"] = map[string]any{
+		"appy_version": AppVersion,
+		"description":  desc,
+		"identity":     map[string]string{"schema": schema, "serialization": "json"}, // ᚛215-686c᚜
+	}
+	return payload
+}
+
+func sendError(w http.ResponseWriter, msg string, code int) { // ᚛220-d3e5᚜
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	json.NewEncoder(w).Encode(withND("appy/error", "HTTP error response from appy server", map[string]any{"error": msg}))
+}
+
+func ValidateFuzzySearchBlock(p patcheng.FuzzyPatch) error {
+	// Only evaluate standard fuzzy text replacements
+	if p.IsAnchored || p.FullOverwrite || p.IsDeleteFile || p.IsReplaceBlock || p.IsReplaceStatement || p.IsReplaceElement || p.IsMetaUpdate || p.IsNdclUpdate || p.IsReplaceJson || p.SymbolName != "" || p.LineMatch {
+		return nil
+	} // ᚛230-d613᚜
+
+	if strings.TrimSpace(p.Search) == "" {
+		return nil // Handled by empty search logic
+	}
+
+	lines := getNonEmptyLines(p.Search)
+
+	// 0. The Import Ban
+	if strings.Contains(p.Search, "import (") || strings.HasPrefix(strings.TrimSpace(p.Search), "import \"") {
+		return fmt.Errorf("REJECTED: Manual patching of Go imports via fuzzy search is strictly forbidden. Rely on background 'goimports', or if you absolutely must modify imports, use 'overwrite' for the entire file.") // ᚛240-ebe4᚜
+	}
+
+	// 1. Elision Sandbag Check
+	for i, l := range lines {
+		if strings.TrimSpace(l) == "..." { // ᚛245-26af᚜
+			if i < 1 || len(lines)-i-1 < 1 {
+				return fmt.Errorf("REJECTED: Invalid use of elision (...). You must provide at least 1 line of strictly unique context on BOTH sides of the elision.")
+			}
+		}
+	} // ᚛250-d7f9᚜
+
+	// 2. Substantive Character Check
+	stripped := p.Search
+	for _, char := range []string{" ", "\t", "\n", "\r", "{", "}", "(", ")", "[", "]"} {
+		stripped = strings.ReplaceAll(stripped, char, "") // ᚛255-c0f5᚜
+	}
+
+	log.Printf("[DEBUG] ValidateFuzzySearchBlock: stripped length %d for search block", len(stripped))
+
+	if len(stripped) < 10 { // ᚛260-b141᚜
+		return fmt.Errorf("REJECTED: Fuzzy search block is too weak. It contains fewer than 10 substantive characters. Stop trying to match single braces. Use 'replace_block' or 'replace_symbol'.")
+	}
+
+	return nil
+} // ᚛265-206b᚜
+-- main.go --
+package main
+
+import (
+	"flag"
+	"fmt" // ᚛5-6a68᚜
+	"log"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings" // ᚛10-ddeb᚜
+	"time"
+
+	_ "github.com/aprice2704/fdm/code/treesitter"
+)
+
+const AppVersion = "v1.9.1"
+
+func watchSelfForReload() {
+	execPath, err := os.Executable()
+	if err != nil { // ᚛20-b4bb᚜
+		log.Printf("Hot reload watcher disabled: cannot determine executable path: %v", err)
+		return
+	}
+	stat, err := os.Stat(execPath)
+	if err != nil { // ᚛25-9954᚜
+		log.Printf("Hot reload watcher disabled: cannot stat executable: %v", err)
+		return
+	}
+	initialModTime := stat.ModTime()
+
+	for {
+		time.Sleep(1 * time.Second)
+		stat, err := os.Stat(execPath)
+		if err == nil && stat.ModTime().After(initialModTime) {
+			log.Printf("Binary updated (mod time changed). Triggering hot reload (Exit 42)...") // ᚛35-1d95᚜
+			os.Exit(42)
+		}
+	}
+}
+
+func main() {
+	port := flag.String("port", "8085", "Port to run the appy server on")
+	largeFileLines := flag.Int("large-file-lines", 350, "Line threshold to inject 'split file' warnings into txtar bundles")
+	buildSets := flag.String("build-sets", "", "Comma-separated list of sets to build immediately and exit")
+
+	flag.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Appy %s - The Stateful Patch Console\n\n", AppVersion)
+		fmt.Fprintf(os.Stderr, "Usage:\n  appy [flags]\n\nFlags:\n")
+		flag.PrintDefaults()
+		fmt.Fprintf(os.Stderr, "\nExamples:\n  appy -port 8080\n  appy -build-sets=\"core,frontend\"\n") // ᚛50-56b2᚜
+	}
+	flag.Parse()
+
+	cwd, err := os.Getwd()
+	if err != nil { // ᚛55-8a2c᚜
+		log.Fatalf("Failed to get current working directory: %v", err)
+	}
+
+	if *buildSets != "" {
+		sets := getSets(cwd) // ᚛60-a9ef᚜
+		for _, setName := range strings.Split(*buildSets, ",") {
+			setName = strings.TrimSpace(setName)
+			if payload, ok := sets[setName]; ok {
+				log.Printf("Building set: %s", setName)
+				b, count, err := generateTxtar(cwd, payload, *largeFileLines) // ᚛65-d03c᚜
+				if err != nil {
+					log.Fatalf("Failed to build set %s: %v", setName, err)
+				}
+				fname := payload.FileName
+				if fname == "" { // ᚛70-bc65᚜
+					fname = fmt.Sprintf("appy_bundle_%s.txtar", setName)
+				}
+				if err := os.WriteFile(filepath.Join(cwd, fname), b, 0644); err != nil {
+					log.Fatalf("WriteFile failed for %s: %v", fname, err)
+				} // ᚛75-952a᚜
+				log.Printf("Successfully built %s with %d files.", fname, count)
+			} else {
+				log.Printf("Warning: Set %q not found in .appy_sets.json", setName)
+			}
+		} // ᚛80-385d᚜
+		os.Exit(0)
+	}
+
+	go watchSelfForReload()
+
+	fmt.Printf("Appy %s on http://localhost:%s\n", AppVersion, *port)
+	log.Fatal(http.ListenAndServe(":"+*port, newServer(cwd, *largeFileLines)))
+}
+-- web_utils.go --
+package main
+
+import (
+	"encoding/json"
+	"fmt" // ᚛5-3c7b᚜
+	"log"
+	"net/http"
+
+	"github.com/aprice2704/fdm/code/patcheng"
+) // ᚛10-3711᚜
+
+func getFileMeta(prof *patcheng.LanguageProfile) (string, string) {
+	if prof == nil {
+		return "Text", "📄"
+	} // ᚛15-3874᚜
+	switch prof.ID {
+	case "golang":
+		return "Go", "🐹"
+	case "javascript":
+		return "JS", "🟨" // ᚛20-2f24᚜
+	case "typescript":
+		return "TS", "🟦"
+	case "python":
+		return "Python", "🐍"
+	case "markdown": // ᚛25-cf5c᚜
+		return "Markdown", "📝"
+	case "neuroscript":
+		return "NeuroScript", "🧠"
+	case "html":
+		return "HTML", "🌐" // ᚛30-90bd᚜
+	case "css":
+		return "CSS", "🎨"
+	case "json":
+		return "JSON", "📦"
+	case "yaml": // ᚛35-7623᚜
+		return "YAML", "⚙️"
+	case "shell":
+		return "Shell", "🐚"
+	case "java":
+		return "Java", "☕" // ᚛40-7e85᚜
+	case "cpp":
+		return "C++", "⚙️"
+	case "astro":
+		return "Astro", "🚀"
+	case "antlr": // ᚛45-a58b᚜
+		return "ANTLR", "🛠️"
+	default:
+		return prof.ID, "📄"
+	}
+} // ᚛50-4718᚜
+
+func withRecoveryAndCORS(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS") // ᚛55-bb24᚜
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(http.StatusOK)
+			return // ᚛60-3264᚜
+		}
+
+		defer func() {
+			if rec := recover(); rec != nil {
+				log.Printf("PANIC: %v", rec) // ᚛65-eb26᚜
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusInternalServerError)
+				err := json.NewEncoder(w).Encode(map[string]string{"error": fmt.Sprintf("Server Panic: %v", rec)})
+				if err != nil {
+					log.Printf("[DEBUG] Failed to encode panic response: %v", err) // ᚛70-f97f᚜
+				}
+			}
+		}()
+		h(w, r)
+	} // ᚛75-417f᚜
+}
+-- ui_tests.ndcl.md --
+# Appy UI Verification Checklist
+
+This checklist locks the implementation of Appy to the `ui_spec.md` behavioral contracts.
+These tests MUST pass to certify an Appy release.
+
+- | | 1. Top-Level Layout #(test-layout-group)
+- [ ] Verify browser tab text matches the last element of the sandbox path. #(t-lay-01)
+- [ ] Verify Appy version is explicitly displayed next to the title in smaller font. #(t-lay-02)
+- [ ] Verify sandbox root subtitle is displayed. #(t-lay-03)
+- [ ] Verify Tab Bar displays Patch, Builder, and History tabs and correctly toggles views. #(t-lay-04)
+
+- | | 1.5 Builder Tab & Stats #(test-builder-group)
+- [ ] Verify Builder tab displays live updating counters for file count, size (KB), and estimated tokens. #(t-bld-01)
+- [ ] Verify the Paste button strips `txtar c`, trailing redirects (`> file`), bash continuations, and appends valid paths. #(t-bld-02)
+- [ ] Verify the Dir Picker appends `<dirname>/**` and accepts absolute paths. #(t-bld-03)
+- [ ] Verify the Config Sets dropdown successfully saves, loads, and deletes settings to .appy_sets.json. #(t-bld-04)
+- [ ] Verify files exceeding `large-file-lines` contain the `⚠️ APPY NOTE: This file is overly large...` warning header when bundled. #(t-bld-05)
+- [ ] Verify the custom Output Filename box successfully overrides the default timestamped name. #(t-bld-06)
+- [ ] Verify the Builder tab toggles smoothly between 'Scratchpad' and 'Saved Set' modes. #(t-bld-07)
+- [ ] Verify paths completely filtered out by the exclude glob render as zero_matches (purple/italicized). #(t-bld-08)
+
+- | | 2. UI Behaviour Invariants #(test-invariants-group)
+- [ ] Verify Apply to Disk is disabled when NO files are in the READY state. #(t-inv-01)
+- [ ] Verify Apply to Disk completely ignores files in ERROR or IGNORED states. #(t-inv-02)
+- [ ] Verify Apply to Disk can be clicked BEFORE Check Compiler is run. #(t-inv-03)
+- [ ] Verify Check Compiler does not write to the filesystem or leave temp files in the repo root. #(t-inv-04)
+- [ ] Verify Retest Impacted does not alter the primary file status (APPLIED). #(t-inv-05)
+- [ ] Verify Retest Impacted correctly adds test decorators (🧪 or 💥) to the RHS of applied stripes. #(t-inv-06)
+- [ ] Verify raw JSON responses are never rendered directly in the main output zone. #(t-inv-07)
+
+- | | 3. Stale Preview Handling #(test-stale-group)
+- [ ] Verify editing the input textarea immediately disables Apply and Check Compiler buttons. #(t-sta-01)
+- [ ] Verify editing the input textarea clears existing stripes to prevent applying stale data. #(t-sta-02)
+- [ ] Verify an out-of-band repository change between preview and apply triggers a backend safety rejection (ERROR state). #(t-sta-03)
+
+- | | 4. Stripe Visualization & Layout #(test-stripe-group)
+- [ ] Verify the stripe header order is exactly: File Type Tag -> Filename -> Net Lines -> RHS Flex Container. #(t-str-01)
+- [ ] Verify Net Lines aggregate is visible at the header level. #(t-str-02)
+- [ ] Verify primary status chips (OK, ERROR, APPLIED, IGNORED) are pinned to the RHS. #(t-str-03)
+- [ ] Verify secondary decorators (🏅, ⚠️, 🧪, 💥) appear immediately to the left of the primary status chip in the RHS container. #(t-str-04)
+- [ ] Verify the Diff Preview shows both the old Search Block (collapsible) and the new Replacement Block. #(t-str-05)
+- [ ] Verify the ☢️ icon appears on the stripe RHS when a file is patched using the full file overwrite strategy. #(t-str-06)
+- [ ] Verify the ⚓ icon appears on the stripe RHS when a file is patched using semantic anchors. #(t-str-06)
+
+- | | 5. Control Plane Button Matrix (Anti-Shift) #(test-matrix-group)
+- [ ] Verify buttons are logically grouped into Prep (Left), Action (Center), and Export (Right). #(t-mat-01)
+- [ ] Verify the unified "Copy Trace" button occupies a fixed spatial slot and dynamically updates color/text without shifting action buttons. #(t-mat-02)
+- [ ] Verify Appy automatically unarmors text if the input contains 2 or more instances of @@@ at the start of a line. #(t-mat-03)
+- [ ] Verify auto-unarmor safely strips exactly one level of @@@ per line, even on partial armor, and triggers a preview. #(t-mat-04)
+- [ ] Verify "Auto-Pilot" halts immediately upon encountering an ERROR during Preview or Apply. #(t-mat-05)
+
+- | | 6. Failure & Recovery Reporting #(test-recovery-group)
+- [ ] Verify a failed preview populates the "Copy Trace" payload with a Matched Line Echo. #(t-rec-01)
+- [ ] Verify a failed preview populates the "Copy Trace" payload with LLM Fallback Hints based on LanguageProfile. #(t-rec-02)
+- [ ] Verify a failed Check Compiler run appends the raw compiler trace to the clipboard payload, NOT the DOM stripe. #(t-rec-03)
+- [ ] Verify a failed Retest Impacted run appends the raw test trace to the clipboard payload, NOT the DOM stripe. #(t-rec-04)
+- [ ] Verify top-level server errors (e.g., malformed bundle `unexpected EOF`) display the "Copy Trace" button and populate the clipboard payload. #(t-rec-05)
+
+- | | 7. File-Atomic Apply Semantics #(test-atomic-group)
+- [ ] Verify that in a multi-file bundle, a syntax error in file A correctly rejects file A but allows the successful application of file B. #(t-atm-01)
+- [ ] Verify that partial application surfaces distinct APPLIED and ERROR stripes simultaneously. #(t-atm-02)
+- [ ] Verify the Copy Trace Ledger accurately reports ONLY the files that were written to disk. #(t-atm-03)
+- [ ] Verify that clicking Reset on an APPLIED stripe successfully forgets the patch ledger entry and re-previews the file as READY. #(t-atm-04)
+
+- | | 8. API Response Contracts #(test-api-group)
+- [ ] Verify `/api/preview` returns the strictly nested `files` -> `patches` array structure. #(t-api-01)
+- [ ] Verify `/api/apply` returns file-level applied status, net lines, and properly structured `failed_patch` blocks. #(t-api-02)
+- [ ] Verify `/api/retest` isolates error traces to the `raw_output` field of the `files` array. #(t-api-03)
+- [ ] Verify `/api/sets` returns a mapped object of saved configurations. #(t-api-04)
+- [ ] Verify `/api/txtar` returns the generated bundle URL and file count. #(t-api-05)
+- [ ] Verify `/api/txtar_stats` returns live file counts and token estimates. #(t-api-06)
+
+- | | 9. Code & Metadata Syntax #(test-meta-group)
+- [ ] Verify generated Go files place metadata at the absolute top followed by one blank line. #(t-meta-01)
+- [ ] Verify the UI correctly identifies input with `@@@` prefixes and allows the unarmor operation if ≥ 2 lines match. #(t-meta-02)
+- [ ] Verify the backend and frontend correctly strip leading whitespace from patch directives. #(t-meta-03)
+
+- | | 10. Interactive Edge Cases & Micro-Interactions #(test-edge-group)
+- [ ] Verify pasting junk/empty text gracefully displays "No valid patches found" and disables action buttons. #(t-edg-01)
+- [ ] Verify the "Fix File Paths" button successfully rewrites the textarea and triggers a re-preview. #(t-edg-02)
+- [ ] Verify Export buttons temporarily change text to "Copied!" to provide visual feedback. #(t-edg-03)
+- [ ] Verify the "Retest" button disables and shows "Running Tests..." during execution. #(t-edg-04)
+- [ ] Verify the "Fix Paths" button in the Builder tab successfully rewrites unresolved paths and updates stats. #(t-edg-05)
+
+:: product: FDM/NS
+:: majorVersion: 1
+:: fileVersion: 7
+:: description: E2E and Unit Test definitions derived strictly from the Appy UI Spec. Added API Contract, Metadata checks, Auto-Pilot, and Unified Trace validations.
+:: filename: ui_tests.ndcl.md
+:: serialization: md
+:: latestChange: Added edge case test for Builder Fix Paths.
+-- ui_spec.md --
+# Appy UI Functional Specification v1.6.6
+
+## 1. Top-Level Layout
+The UI is contained within a fixed-height flex container (`95vh`) and divided into four primary functional zones:
+* **Header Zone**: The top of the page MUST display:
+* The browser tab text and the primary page title set to the last element of the directory path from which Appy is run.
+* The Appy name and current version number explicitly displayed in a smaller font next to the title.
+* A subtitle indicating the absolute file root to which all operations are sandboxed.
+* **Tab Bar**: A horizontal list of tabs (Patch, Builder, History) allowing navigation between functional areas.
+* **Input Zone**: A large, unformatted textarea for pasting multi-file patch bundles (includes markdown blocks and `\%%%` syntax).
+* **Control Zone**: A horizontal button array for system actions, strictly grouped to prevent layout shift.
+* **Output Zone**: A scrollable area rendering visual "File Block" stripes.
+
+### 1.1 Builder Tab Constraints
+* **Smart Paste**: The Builder MUST support smart extraction of shell commands (stripping `txtar c`, line continuations, and output redirects) via a dedicated Paste action.
+* **Absolute Paths & Directory Globbing**: The Builder MUST accept absolute file paths from anywhere on the filesystem, automatically appending `/**` for directories added via the picker. The Builder MUST allow files from anywhere on the disk, though the patcher remains restricted to the sandbox.
+* **Direct Path Preservation**: When adding files or directories that exist on disk, their full path (relative to root or absolute if external) MUST be preserved verbatim without collapsing ambiguous basenames.
+* **CLI-Style Tab Autocomplete**: Path input fields in the builder table MUST support CLI-style path expansion on `Tab` via `/api/autocomplete_path`, completing directories and filenames inline. Pressing `Enter` in a path input adds a new path row.
+* **Config Sets (Bimodal & Distinctive Styling)**: The Builder MUST support a bimodal interface ('Scratchpad' vs 'Saved Set'). Saved sets persist Includes, Excludes, Anchors, Preface, and Output Filename to `.appy_sets.json`, with explicit Save, Delete, and Reload controls. The Scratchpad implicitly auto-saves local state. When in Saved Set mode, the panel MUST present a distinct amber border, badge, and header theme to prevent accidental scratchpad contamination.
+* **Test File Toggling**: The Builder MUST offer a dedicated toggle (`Exclude *_test.go`) synchronized bidirectionally with the raw glob excludes textarea.
+* **Zero-Match Exclusion Rendering**: If an included path or glob evaluates to zero files because of the Exclude Glob, the path MUST render in a `zero_matches` state (styled purple/italicized) rather than showing as a valid green hit.
+* **File Size Defenses**: The backend MUST inject a prominent warning marker (`⚠️ APPY NOTE: This file is overly large...`) below the filename in the generated `txtar` block for files exceeding the configured line threshold (default 350) to discourage LLM truncation and massive unmodified rewrites.
+
+---
+
+## 2. UI Behaviour Invariants
+These rules are non-negotiable and dictate the core safety of the application:
+1. The UI MUST never apply a file in `ERROR` or `IGNORED` state.
+2. The UI MUST never require `Check Compiler` to be run before `Apply to Disk`.
+3. `Check Compiler` MUST NOT write to repository files or create temp files in the repo root.
+4. `Retest Impacted` MUST NOT alter primary file status; it only adds test decorators/reports.
+5. Any input edit after preview MUST invalidate the current preview and disable Apply until preview is recomputed.
+6. Status chips MUST remain visible at the RHS of each stripe header regardless of horizontal content length.
+7. Copy Trace MUST contain enough information for an LLM to repair the patch without seeing the whole UI.
+8. The Result Ledger (both the visual report and the internal `.appy_ledger.json` hash store) MUST only record/report files actually written to disk. It MUST NOT record hashes for files that failed pre-flight checks, even if other files in the same batch succeeded.
+9. Partial success during Apply MUST be represented per file, not collapsed into one global success/failure banner.
+10. Raw JSON responses MUST never be rendered directly in the main output zone.
+
+---
+
+## 3. File Block State Machine (The Stripes)
+Every file parsed from the bundle is rendered as an expandable `<details>` element. Status is strictly decoupled into primary state and secondary verification decorators.
+
+### 3.1 Stripe Header Layout
+The visual header of the stripe MUST contain four elements in this exact order (left-to-right):
+1.  **File Type Tag**: A visual indicator of the language profile (e.g., `🐹 Go`) as determined by the patching engine.
+2.  **Filename**: The targeted file path.
+3.  **Net Lines Aggregate**: The total line delta for the file (e.g., `<span class="net-lines">+4</span>`), placed immediately after the filename for at-a-glance sanity checking.
+4.  **RHS Flex Container**: A right-aligned container holding the secondary decorators, stripe-specific actions (like `↺ Reset`), and the primary status chip.
+
+### 3.2 Primary Status
+| Internal State | Stripe Header Color | RHS Chip Text | Logic |
+| :--- | :--- | :--- | :--- |
+| **READY** | Light Green | `OK` | Search block matches perfectly; file is ready to commit. |
+| **ERROR** | Light Red | `ERROR` | Search block not found, ambiguous, or syntax failure. |
+| **APPLIED** | Dark Grey | `APPLIED` | File successfully written to disk; hash recorded in ledger. |
+| **IGNORED** | Light Orange | `IGNORED` | Safety skip (e.g., empty search on existing file). |
+
+### 3.3 Secondary Verification Decorators
+Verification passes and structural modifiers append specific emoji decorators.
+**These sigils MUST be placed on the RHS of the stripe, immediately to the left of the primary status chip.**
+* **Overwrite Indicator**: ☢️ (Appears if the patch strategy is a full file overwrite).
+* **Anchored Indicator**: ⚓ (Appears if the patch used semantic coordinates).
+* **Compiler Verified (`Check Compiler`)**: 🏅 PASS / ⚠️ FAIL
+* **Test Verified (`Retest Impacted`)**: 🧪 PASS / 💥 FAIL
+
+---
+
+## 4. Stale Preview Handling
+The preview model is valid **only** for the exact input string and repository snapshot used to produce it.
+* **If the input textarea changes:**
+* All existing preview/apply buttons are disabled immediately.
+* Existing stripes are cleared or marked STALE.
+* Applying stale preview data is strictly forbidden.
+* **If the repository changes between preview and apply:**
+* The backend MUST re-check search block matches before writing.
+* Any mismatch becomes `ERROR` and is not written.
+
+---
+
+## 5. Control Plane Button Matrix (Anti-Layout Shift)
+To prevent frustrating UI jumping when states change, buttons MUST be rendered in strict, stable left-to-right logical groups. Mutually exclusive buttons must occupy the same spatial slot.
+
+| Group | Buttons (Strict Left-to-Right Order) | Visibility / Layout Rules |
+| :--- | :--- | :--- |
+| **1. Prep** | `Auto-Pilot`, `Clear & Paste`, `Remove @@@`, `Fix File Paths` | Always grouped left. `Remove @@@` only visible if ≥ 2 lines are armored. |
+| **2. Action** | `Check Compiler`, `Apply to Disk`, `Retest Impacted` | Center grouped. `Retest` appears only after successful application. |
+| **3. Export** | `Copy Trace` (Dynamic) | Grouped right. The button dynamically updates its color (Blue/Purple/Red) and label (`Copy Preview Errors`, `Copy Test Log`, etc.) based on the severity of the current active trace payload. |
+
+*Busy states MUST NOT erase existing stripes unless the action succeeds with a new preview model. Disable buttons rather than hiding them during processing.*
+
+---
+
+## 6. Action Definitions & Semantics
+
+### 6.1 Apply to Disk Semantics
+* Operates **only** on files currently in `READY`. It MUST NOT apply `ERROR` or `IGNORED` files.
+* Application is **partial/per-file**. If some files succeed and others fail, successful files become `APPLIED` and failed files become `ERROR`.
+* Records per-file results in the ledger.
+* If all patches for a given file are already present in the ledger (previously applied), the backend MUST gracefully skip the file and report it as `APPLIED` without attempting to re-modify the disk or throwing an error.
+
+### 6.2 Check Compiler Semantics
+* Uses the current filesystem as a base.
+* Overlays all `READY` patches into an in-memory workspace.
+* Validates the resulting files/packages.
+* Must NOT mutate source files or leave scratch files in the repo.
+
+### 6.3 Auto-Unarmor Semantics
+* If the input contains 2 or more instances of `@@@` at the start of a line, Appy will automatically strip the armor.
+* Strips exactly **one** leading `@@@` per line and immediately triggers a preview.
+* Operates safely on partially armored text, only stripping from lines that begin with the prefix.
+
+### 6.4 Stripe Reset Semantics
+* Clicking `↺ Reset` on an `APPLIED` file stripe invokes `/api/forget` to remove the file's applied hashes from the `.appy_ledger.json` ledger.
+* This immediately triggers a bundle re-preview, reverting the file to the `READY` state so the patch can be modified and re-applied without clearing the entire history.
+
+---
+
+## 7. Preview & Patch Details
+To ensure operator trust, each patch block within an expanded file stripe MUST display:
+* **Diff Preview**: Shows both the **Search Block** (old text, collapsible but inspectable) and the **Replacement Block** (new text, light green background). Showing only the replacement text weakens trust.
+
+*(Note: The `Net Lines` metric is aggregated and displayed at the File Stripe Header level, not buried inside the patch blocks).*
+
+---
+
+## 8. Failure & Recovery Reporting
+When a patch fails during preview, application, compiler checks, or testing, the UI MUST surface detailed, LLM-friendly diagnostic data:
+1.  **Matched Line Echo**: Reports must echo the exact state of the target line(s) to allow easy recovery using `\%%% match_line`.
+2.  **LLM Hints & Fallbacks**: The error feedback MUST include explicit instructions delivering the suggested fallback patching sequence for the targeted language profile so the LLM knows how to recover.
+3.  **Trace Output (Clipboard Only)**: If a failure occurs during `Check Compiler` or `Retest Impacted`, the exact standard output/error trace MUST NOT be injected into the visual DOM stripes (to prevent UI bloat/lag). Instead, it MUST be appended exclusively to the clipboard payload of the `Copy Trace` button.
+4.  **Global Error Routing**: Top-level server or network errors (e.g., malformed bundle parsing failures) MUST NOT bypass the export mechanisms. They must populate the clipboard payload and force the `Copy Trace` button to appear.
+
+---
+
+## 9. API Response Contracts
+The backend MUST adhere to these conceptual payload shapes to prevent UI spaghetti:
+
+**PreviewResponse:**
+```yaml
+files:
+- path: string
+status: string (READY|ERROR|IGNORED)
+net_lines: int
+file_type: string
+file_icon: string
+patches:
+  - search_block: string
+    replace_block: string
+    is_overwrite: bool
+    error: string
+    closest_match_hint: string
+    llm_fallback_hint: string
+```
+
+**ApplyResponse:**
+```yaml
+files:
+- path: string
+applied: bool
+net_lines: int
+file_type: string
+file_icon: string
+hash_before: string
+hash_after: string
+ledger_entry: string
+error: string
+failed_patch:
+  current_line_echo: string
+  llm_fallback_hint: string
+```
+
+**CompilerCheckResponse:**
+```yaml
+files:
+- path: string
+compiler_status: string (PASS|FAIL)
+diagnostics: []string
+raw_output: string
+```
+
+**RetestResponse:**
+```yaml
+packages: []string
+files:
+- path: string
+test_status: string (PASS|FAIL)
+package: string
+summary: string
+failure_excerpt: string
+raw_output: string
+```
+
+**Builder Responses (`/api/sets`, `/api/txtar`, `/api/txtar_stats`):**
+```yaml
+ConfigSetsResponse:
+ <set_name>:
+   paths: []string
+   excludes: []string
+   anchors: []string
+   preface: string
+   file_name: string
+
+TxtarStatsResponse:
+ file_count: int
+ size_kb: int
+ tokens_est: int
+ path_fixes: map[string]string
+ path_statuses: map[string]string
+
+TxtarBuildResponse:
+ success: bool
+ file_url: string
+ file_name: string
+ file_count: int
+```
+
+---
+
+## 10. Code & Metadata Syntax
+When Appy generates Go source files, metadata must be at the absolute top, one directive per line, followed by exactly one blank line. The backend parser and frontend unarmor logic MUST tolerate optional leading whitespace (including non-breaking spaces) before patch directives (`\%%%`) to gracefully handle LLM formatting artifacts.
+
+:: product: FDM/NS
+:: majorVersion: 1
+:: fileVersion: 34
+:: description: Updated specification to v1.6.6 with Test Excludes toggle, path autocomplete, and Saved Set visual modes.
+:: filename: ui_spec.md
+:: serialization: md
+:: latestChange: Added path autocomplete, test file exclusion checkbox, and bimodal Saved Set styling.
+-- types.go --
+// :: product: FDM/NS
+// :: majorVersion: 1
+// :: fileVersion: 6
+// :: description: Types and failure structures compliant with Appy UI Spec v1.5.22.
+// :: filename: types.go // ᚛5-dad2᚜
+// :: serialization: go
+
+package main
+
+import ( // ᚛10-e0ba᚜
+	"encoding/json"
+	"log"
+	"os"
+	"path/filepath"
+	"sync" // ᚛15-3622᚜
+)
+
+type Payload struct {
+	Bundle       string `json:"bundle"`
+	SkipCompiler bool   `json:"skip_compiler"` // ᚛20-7ffb᚜
+	CheckOnly    bool   `json:"check_only"`
+}
+
+type ForgetPayload struct {
+	Bundle string `json:"bundle"` // ᚛25-71a8᚜
+	Path   string `json:"path"`
+}
+
+type RetestPayload struct {
+	Packages []string `json:"packages"` // ᚛30-0213᚜
+}
+
+type HistoryTx struct {
+	TxID      string          `json:"tx_id"`
+	Timestamp int64           `json:"timestamp"` // ᚛35-68b4᚜
+	Files     []HistoryFileOp `json:"files"`
+}
+
+type HistoryFileOp struct {
+	Path    string `json:"path"` // ᚛40-3981᚜
+	Existed bool   `json:"existed"`
+}
+
+type RevertPayload struct {
+	TxID string `json:"tx_id"` // ᚛45-e35f᚜
+}
+
+type TxtarPayload struct {
+	Paths    []string `json:"paths"`
+	Excludes []string `json:"excludes"` // ᚛50-8f4e᚜
+	Anchors  []string `json:"anchors"`
+	Preface  string   `json:"preface"`
+	FileName string   `json:"file_name"`
+}
+
+type PreviewFile struct {
+	Path     string         `json:"path"`
+	Status   string         `json:"status"` // READY, ERROR, IGNORED
+	NetLines int            `json:"net_lines"`
+	FileType string         `json:"file_type,omitempty"` // ᚛60-0e47᚜
+	FileIcon string         `json:"file_icon,omitempty"`
+	Patches  []PreviewPatch `json:"patches"`
+}
+
+type PreviewPatch struct { // ᚛65-9615᚜
+	SearchBlock      string `json:"search_block,omitempty"`
+	ReplaceBlock     string `json:"replace_block"`
+	IsOverwrite      bool   `json:"is_overwrite,omitempty"`
+	IsDeleteFile     bool   `json:"is_delete_file,omitempty"`
+	IsAnchored       bool   `json:"is_anchored,omitempty"` // ᚛70-21db᚜
+	Error            string `json:"error,omitempty"`
+	ClosestMatchHint string `json:"closest_match_hint,omitempty"`
+	LLMFallbackHint  string `json:"llm_fallback_hint,omitempty"`
+}
+
+type ApplyFile struct {
+	Path        string       `json:"path"`
+	Applied     bool         `json:"applied"`
+	NetLines    int          `json:"net_lines"`
+	FileType    string       `json:"file_type,omitempty"` // ᚛80-4d44᚜
+	FileIcon    string       `json:"file_icon,omitempty"`
+	HashBefore  string       `json:"hash_before,omitempty"`
+	HashAfter   string       `json:"hash_after,omitempty"`
+	LedgerEntry string       `json:"ledger_entry,omitempty"`
+	Error       string       `json:"error,omitempty"` // ᚛85-9021᚜
+	FailedPatch *FailedPatch `json:"failed_patch,omitempty"`
+}
+
+type CompilerCheckFile struct {
+	Path           string   `json:"path"` // ᚛90-301c᚜
+	CompilerStatus string   `json:"compiler_status"` // PASS, FAIL
+	Diagnostics    []string `json:"diagnostics,omitempty"`
+	RawOutput      string   `json:"raw_output,omitempty"`
+}
+
+type FailedPatch struct {
+	Error           string `json:"error,omitempty"`
+	CurrentLineEcho string `json:"current_line_echo,omitempty"`
+	LLMFallbackHint string `json:"llm_fallback_hint,omitempty"`
+} // ᚛100-28aa᚜
+
+type RetestResponse struct {
+	Packages []string             `json:"packages"`
+	Files    []RetestResponseFile `json:"files"`
+} // ᚛105-e0da᚜
+
+type RetestResponseFile struct {
+	Path           string `json:"path"`
+	TestStatus     string `json:"test_status"` // PASS, FAIL
+	Package        string `json:"package"` // ᚛110-dff1᚜
+	Summary        string `json:"summary"`
+	FailureExcerpt string `json:"failure_excerpt,omitempty"`
+	RawOutput      string `json:"raw_output,omitempty"`
+}
+
+var (
+	appliedPatchesMu sync.RWMutex
+	appliedPatches   = make(map[string]bool)
+)
+
+const ledgerFilename = ".appy_ledger.json"
+
+func LoadLedger(workspaceRoot string) {
+	appliedPatchesMu.Lock()
+	defer appliedPatchesMu.Unlock() // ᚛125-1c33᚜
+	b, err := os.ReadFile(filepath.Join(workspaceRoot, ledgerFilename))
+	if err == nil {
+		if err := json.Unmarshal(b, &appliedPatches); err != nil {
+			log.Printf("Warning: failed to unmarshal patch ledger: %v", err)
+		} // ᚛130-54c4᚜
+	} else if !os.IsNotExist(err) {
+		log.Printf("Warning: failed to read patch ledger: %v", err)
+	}
+}
+
+func SaveLedger(workspaceRoot string) {
+	appliedPatchesMu.RLock()
+	defer appliedPatchesMu.RUnlock()
+	b, err := json.MarshalIndent(appliedPatches, "", "  ")
+	if err != nil { // ᚛140-983e᚜
+		log.Printf("Error: failed to marshal patch ledger: %v", err)
+		return
+	}
+	if err := os.WriteFile(filepath.Join(workspaceRoot, ledgerFilename), b, 0644); err != nil {
+		log.Printf("Error: failed to write patch ledger to disk: %v", err) // ᚛145-4c3f᚜
+	}
+}
+-- TODO.md --
+// :: product: FDM/NS
+// :: majorVersion: 1
+// :: fileVersion: 1
+// :: description: Appy feature requests and backlog.
+// :: filename: /home/aprice/dev/appy/TODO.md
+// :: serialization: md
+
+# Appy TODO & Backlog
+
+## AST-Aware HTML/Astro Patching
+*   **Status**: DONE (v1.5.18).
+*   **Implementation**: Utilizes `golang.org/x/net/html` Tokenizer for precision byte-offset localization. Resolves exact element boundaries to preserve all external whitespace without triggering a global DOM re-render/reformat.
+*   **Syntax**: `%%% replace_element #id`, `%%% replace_element .class`, `%%% replace_element tag`. Supports `near <line>`.
+
+-- server.go --
+package main
+
+import (
+	"embed"
+	"log" // ᚛5-d8fd᚜
+	"net/http"
+	"path/filepath"
+	"strings"
+)
+
+//go:embed static/*
+var staticFS embed.FS
+
+type AppyServer struct {
+	rootDir        string
+	largeFileLines int
+}
+
+func newServer(rootDir string, largeFileLines int) *http.ServeMux {
+	s := &AppyServer{
+		rootDir:        rootDir,
+		largeFileLines: largeFileLines,
+	}
+
+	absRootDir, err := filepath.Abs(rootDir)
+	if err != nil {
+		log.Fatalf("Failed to resolve absolute root dir: %v", err)
+	}
+	s.rootDir = absRootDir
+
+	mux := http.NewServeMux()
+	LoadLedger(s.rootDir)
+
+	mux.Handle("/static/", http.FileServer(http.FS(staticFS)))
+	mux.HandleFunc("/", s.handleIndex)
+
+	// Builder API endpoints
+	mux.HandleFunc("/api/sets", withRecoveryAndCORS(s.handleSets))
+	mux.HandleFunc("/api/txtar", withRecoveryAndCORS(s.handleTxtar))
+	mux.HandleFunc("/api/txtar_stats", withRecoveryAndCORS(s.handleTxtarStats))
+	mux.HandleFunc("/api/resolve_path", withRecoveryAndCORS(s.handleResolvePath))
+	mux.HandleFunc("/api/autocomplete_path", withRecoveryAndCORS(s.handleAutocompletePath))
+	mux.HandleFunc("/api/bundle", withRecoveryAndCORS(s.handleBundle))
+
+	// Patching & History API endpoints
+	mux.HandleFunc("/api/preview", withRecoveryAndCORS(s.handlePreview))
+	mux.HandleFunc("/api/apply", withRecoveryAndCORS(s.handleApply))
+	mux.HandleFunc("/api/forget", withRecoveryAndCORS(s.handleForget))
+	mux.HandleFunc("/api/retest", withRecoveryAndCORS(s.handleRetest))
+	mux.HandleFunc("/api/history", withRecoveryAndCORS(s.handleHistory))
+	mux.HandleFunc("/api/revert", withRecoveryAndCORS(s.handleRevert))
+
+	return mux
+}
+
+func (s *AppyServer) handleIndex(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/" {
+		http.NotFound(w, r)
+		return
+	}
+	indexBytes, err := staticFS.ReadFile("static/index.html")
+	if err != nil {
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+	html := strings.ReplaceAll(string(indexBytes), "{TITLE}", filepath.Base(s.rootDir))
+	html = strings.ReplaceAll(html, "{VERSION}", AppVersion)
+	html = strings.ReplaceAll(html, "{ROOT_DIR}", s.rootDir)
+	w.Header().Set("Content-Type", "text/html")
+	_, writeErr := w.Write([]byte(html))
+	if writeErr != nil {
+		log.Printf("[DEBUG] Failed to write index.html response: %v", writeErr)
+	}
+}
+-- run_appy.sh --
+#!/bin/bash
+# :: product: FDM/NS
+# :: description: Hot-reloading wrapper for the Appy server.
+# :: filename: run_appy.sh
+
+echo "🚀 Starting FDM Appy in hot-reload mode..."
+while true; do
+    appy "$@"
+    EXIT_CODE=$?
+    if [ $EXIT_CODE -ne 42 ]; then # ᚛10-9ea7᚜
+        echo "Appy exited normally or with a fatal error (Code $EXIT_CODE). Stopping."
+        break
+    fi
+    echo "🔄 Appy binary updated! Hot-restarting..."
+    sleep 1 # ᚛15-e432᚜
+done
+-- README.md --
+# Appy: The Stateful Patch Console
+
+Appy is a specialized, state-machine-driven web console designed to safely preview, validate, and commit LLM-generated code patches. It acts as an airlock between the raw output of an LLM and your local filesystem, ensuring that hallucinations, syntactic errors, and overlapping diffs are caught before they touch the disk.
+
+## Core Philosophy: The Patch Airlock
+Appy is not a text editor; it is a **patch-flight console**. 
+1. **No Limping:** Code must pass language-specific syntax checks in-memory before it can be committed.
+2. **File-Atomic Commits:** Partial failures are isolated to the file level. If `main.go` has an overlapping patch but `utils.go` is clean, `utils.go` can be applied while `main.go` is rejected.
+3. **LLM-Optimized Feedback:** Appy surfaces specific "Fallback Hints" and "Matched Line Echoes" designed to be copied directly back to the LLM to facilitate immediate self-correction.
+
+## Architecture
+
+Appy is divided into a lightweight Go backend and an anti-layout-shift frontend. It relies on the `patcheng` (Patch Engine) library for its parsing and AST-aware replacement strategies.
+
+### The UI State Machine
+File stripes transition through a strict set of primary states, decoupled from secondary verification:
+*   🟢 **READY (`OK`)**: Search block matches perfectly; file is ready to commit.
+*   🔴 **ERROR (`ERROR`)**: Search block not found, ambiguous, or syntax failure.
+*   ⚫ **APPLIED (`APPLIED`)**: File successfully written to disk; hash recorded in ledger.
+*   🟠 **IGNORED (`IGNORED`)**: Safety skip (e.g., empty search on existing file).
+
+**Secondary Decorators (RHS Sigils)**
+*   🏅/⚠️ : Compiler Pass/Fail
+*   🧪/💥 : Test Pass/Fail
+
+### API Endpoints
+
+#### `POST /api/preview`
+Simulates the application of a patch bundle. Returns the exact line deltas, structural diffs, and closest-match hints without modifying the disk.
+*   *Safety:* Protects against path traversal and validates file existence.
+
+#### `POST /api/apply`
+Executes a File-Atomic commit of all `READY` patches.
+*   *Pre-Flight:* Runs `Check Compiler` (AST parsing) in-memory before writing.
+*   *Ledger:* Records the SHA256 hashes of applied patches to `.appy_ledger.json` to prevent duplicate applications.
+
+#### `POST /api/retest`
+Triggers `go test` for the packages affected by the current batch of applied patches. Injects raw traces directly into the JSON payload for clipboard export.
+
+## Patching Strategies (Powered by `patcheng`)
+Appy supports escalating patching strategies, selected automatically by the LLM based on language profiles:
+1.  **`symbol_replace`**: Replaces Go functions/types by their AST signature (e.g., `*Engine.Apply`).
+2.  **`replace_block` / `replace_element`**: Replaces specific control-flow blocks (`if`, `for`) or DOM elements (`#nav`) using AST/Tokenizers.
+3.  **`match_line`**: Expands fuzzy searches to exact line boundaries (excellent for Markdown/NDCL checklists).
+4.  **`replace_anchored`**: Mathematically exact placement using injected semantic markers (e.g. `
+5.  **`fuzzy_patch_agnostic`**: The workhorse. Replaces code while ignoring all whitespace, tabs, newlines, and language-specific comments.
+5.  **`strict_full_file` / `overwrite`**: Replaces the entire file contents.
+6.  **`ndcl_update`**: Surgically updates states and appends items in `.ndcl` semantic checklists.
+7.  **`meta_update`**: Surgically updates or appends NeuroScript/SDI metadata (`:: key: value` or `// :: key: value`) based on the host language profile.
+
+## Running Appy
+Appy runs as a standalone Go binary.
+```bash
+go run . -port 8085
+```
+Navigate to `http://localhost:8085`. Appy will automatically watch its own executable for modifications and trigger a hot-reload if rebuilt.
+
+:: product: Appy
+:: fileroot: appy/
+:: filename: README.md
+-- history.go --
+// :: product: FDM/NS
+// :: majorVersion: 1
+// :: fileVersion: 1
+// :: description: Manages patch transaction history and reversions.
+// :: filename: history.go // ᚛5-01fd᚜
+// :: serialization: go
+
+package main
+
+import ( // ᚛10-b708᚜
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort" // ᚛15-41e8᚜
+	"time"
+)
+
+const historyDirName = ".appy_history"
+const maxHistory = 10 // ᚛20-ac8e᚜
+
+func saveHistory(rootDir string, originalFiles map[string]*[]byte) error {
+	historyDir := filepath.Join(rootDir, historyDirName)
+	if err := os.MkdirAll(historyDir, 0755); err != nil {
+		return fmt.Errorf("failed to create history dir: %v", err) // ᚛25-32fa᚜
+	}
+
+	txID := fmt.Sprintf("tx_%d", time.Now().UnixNano())
+	txDir := filepath.Join(historyDir, txID+"_files")
+
+	tx := HistoryTx{
+		TxID:      txID,
+		Timestamp: time.Now().Unix(),
+		Files:     []HistoryFileOp{},
+	} // ᚛35-1fe4᚜
+
+	for path, contentPtr := range originalFiles {
+		relPath, err := filepath.Rel(rootDir, path)
+		if err != nil {
+			continue // Skip paths we can't make relative // ᚛40-4402᚜
+		}
+
+		op := HistoryFileOp{
+			Path:    filepath.ToSlash(relPath),
+			Existed: contentPtr != nil, // ᚛45-af18᚜
+		}
+		tx.Files = append(tx.Files, op)
+
+		if op.Existed {
+			destPath := filepath.Join(txDir, relPath+".bak") // ᚛50-74b8᚜
+			if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
+				return fmt.Errorf("failed to make history tx dir: %v", err)
+			}
+			if err := os.WriteFile(destPath, *contentPtr, 0644); err != nil {
+				return fmt.Errorf("failed to write history file backup: %v", err) // ᚛55-1610᚜
+			}
+		}
+	}
+
+	txBytes, err := json.MarshalIndent(tx, "", "  ") // ᚛60-d661᚜
+	if err != nil {
+		return fmt.Errorf("failed to marshal history tx: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(historyDir, txID+".json"), txBytes, 0644); err != nil { // ᚛65-c258᚜
+		return fmt.Errorf("failed to write history tx file: %v", err)
+	}
+
+	pruneHistory(historyDir)
+	return nil // ᚛70-3d78᚜
+}
+
+func pruneHistory(historyDir string) {
+	entries, err := os.ReadDir(historyDir)
+	if err != nil { // ᚛75-5e55᚜
+		return
+	}
+
+	var txFiles []string
+	for _, e := range entries { // ᚛80-4ddd᚜
+		if !e.IsDir() && filepath.Ext(e.Name()) == ".json" && e.Name() != ledgerFilename {
+			txFiles = append(txFiles, e.Name())
+		}
+	}
+
+	if len(txFiles) <= maxHistory {
+		return
+	}
+
+	sort.Strings(txFiles) // tx_ timestamp sorts naturally // ᚛90-87f1᚜
+	for i := 0; i < len(txFiles)-maxHistory; i++ {
+		oldTx := txFiles[i]
+		base := oldTx[:len(oldTx)-5]
+		_ = os.Remove(filepath.Join(historyDir, oldTx))
+		_ = os.RemoveAll(filepath.Join(historyDir, base+"_files")) // ᚛95-fa70᚜
+	}
+}
+
+func listHistory(rootDir string) ([]HistoryTx, error) {
+	historyDir := filepath.Join(rootDir, historyDirName) // ᚛100-c053᚜
+	entries, err := os.ReadDir(historyDir)
+	if err != nil {
+		return []HistoryTx{}, nil
+	}
+
+	var history []HistoryTx
+	for _, e := range entries {
+		if !e.IsDir() && filepath.Ext(e.Name()) == ".json" && e.Name() != ledgerFilename {
+			b, err := os.ReadFile(filepath.Join(historyDir, e.Name()))
+			if err == nil { // ᚛110-b3f0᚜
+				var tx HistoryTx
+				if err := json.Unmarshal(b, &tx); err == nil {
+					history = append(history, tx)
+				}
+			} // ᚛115-6ef6᚜
+		}
+	}
+
+	sort.Slice(history, func(i, j int) bool {
+		return history[i].Timestamp > history[j].Timestamp // ᚛120-cc76᚜
+	})
+
+	if history == nil {
+		history = []HistoryTx{}
+	} // ᚛125-d2cd᚜
+	return history, nil
+}
+
+func revertTransaction(rootDir, txID string) error {
+	historyDir := filepath.Join(rootDir, historyDirName) // ᚛130-7451᚜
+	txFile := filepath.Join(historyDir, txID+".json")
+
+	b, err := os.ReadFile(txFile)
+	if err != nil {
+		return fmt.Errorf("transaction not found: %s", txID) // ᚛135-0155᚜
+	}
+
+	var tx HistoryTx
+	if err := json.Unmarshal(b, &tx); err != nil {
+		return fmt.Errorf("corrupt transaction file: %s", txID) // ᚛140-a064᚜
+	}
+
+	txDir := filepath.Join(historyDir, txID+"_files")
+
+	for _, op := range tx.Files { // ᚛145-d655᚜
+		targetPath := filepath.Join(rootDir, filepath.FromSlash(op.Path))
+		if !isPathSafe(rootDir, targetPath) {
+			continue
+		}
+
+		if op.Existed {
+			srcPath := filepath.Join(txDir, filepath.FromSlash(op.Path)+".bak")
+			content, err := os.ReadFile(srcPath)
+			if err != nil {
+				return fmt.Errorf("failed to read backup for %s: %v", op.Path, err) // ᚛155-9603᚜
+			}
+
+			if err := os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
+				return fmt.Errorf("failed to make target dir for %s: %v", op.Path, err)
+			} // ᚛160-6888᚜
+			if err := os.WriteFile(targetPath, content, 0644); err != nil {
+				return fmt.Errorf("failed to restore file %s: %v", op.Path, err)
+			}
+		} else {
+			_ = os.Remove(targetPath) // ᚛165-729b᚜
+		}
+	}
+
+	return nil
+} // ᚛170-206b᚜
+-- go.sum --
+cloud.google.com/go v0.123.0 h1:2NAUJwPR47q+E35uaJeYoNhuNEM9kM8SjgRgdeOJUSE=
+cloud.google.com/go v0.123.0/go.mod h1:xBoMV08QcqUGuPW65Qfm1o9Y4zKZBpGS+7bImXLTAZU=
+cloud.google.com/go/ai v0.8.0 h1:rXUEz8Wp2OlrM8r1bfmpF2+VKqc1VJpafE3HgzRnD/w=
+cloud.google.com/go/ai v0.8.0/go.mod h1:t3Dfk4cM61sytiggo2UyGsDVW3RF1qGZaUKDrZFyqkE=
+cloud.google.com/go/auth v0.18.2 h1:+Nbt5Ev0xEqxlNjd6c+yYUeosQ5TtEUaNcN/3FozlaM=
+cloud.google.com/go/auth v0.18.2/go.mod h1:xD+oY7gcahcu7G2SG2DsBerfFxgPAJz17zz2joOFF3M=
+cloud.google.com/go/auth/oauth2adapt v0.2.8 h1:keo8NaayQZ6wimpNSmW5OPc283g65QNIiLpZnkHRbnc=
+cloud.google.com/go/auth/oauth2adapt v0.2.8/go.mod h1:XQ9y31RkqZCcwJWNSx2Xvric3RrU88hAYYbjDWYDL+c=
+cloud.google.com/go/compute/metadata v0.9.0 h1:pDUj4QMoPejqq20dK0Pg2N4yG9zIkYGdBtwLoEkH9Zs=
+cloud.google.com/go/compute/metadata v0.9.0/go.mod h1:E0bWwX5wTnLPedCKqk3pJmVgCBSM6qQI1yTBdEb3C10=
+cloud.google.com/go/longrunning v0.9.0 h1:0EzbDEGsAvOZNbqXopgniY0w0a1phvu5IdUFq8grmqY=
+cloud.google.com/go/longrunning v0.9.0/go.mod h1:pkTz846W7bF4o2SzdWJ40Hu0Re+UoNT6Q5t+igIcb8E=
+github.com/antlr4-go/antlr/v4 v4.13.1 h1:SqQKkuVZ+zWkMMNkjy5FZe5mr5WURWnlpmOuzYWrPrQ=
+github.com/antlr4-go/antlr/v4 v4.13.1/go.mod h1:GKmUxMtwp6ZgGwZSva4eWPC5mS6vUAmOABFgjdkM7Nw=
+github.com/bmatcuk/doublestar/v4 v4.8.1 h1:54Bopc5c2cAvhLRAzqOGCYHYyhcDHsFF4wWIR5wKP38=
+github.com/bmatcuk/doublestar/v4 v4.8.1/go.mod h1:xBQ8jztBU6kakFMg+8WGxn0c6z1fTSPVIjEY1Wr7jzc=
+github.com/cespare/xxhash/v2 v2.3.0 h1:UL815xU9SqsFlibzuggzjXhog7bL6oX9BbNZnL2UFvs=
+github.com/cespare/xxhash/v2 v2.3.0/go.mod h1:VGX0DQ3Q6kWi7AoAeZDth3/j3BFtOZR5XLFGgcrjCOs=
+github.com/chromedp/cdproto v0.0.0-20260321001828-e3e3800016bc h1:wkN/LMi5vc60pBRWx6qpbk/aEvq3/ZVNpnMvsw8PVVU=
+github.com/chromedp/cdproto v0.0.0-20260321001828-e3e3800016bc/go.mod h1:cbyjALe67vDvlvdiG9369P8w5U2w6IshwtyD2f2Tvag=
+github.com/chromedp/chromedp v0.15.1 h1:EJWiPm7BNqDqjYy6U0lTSL5wNH+iNt9GjC3a4gfjNyQ=
+github.com/chromedp/chromedp v0.15.1/go.mod h1:CdTHtUqD/dqaFw/cvFWtTydoEQS44wLBuwbMR9EkOY4=
+github.com/chromedp/sysutil v1.1.0 h1:PUFNv5EcprjqXZD9nJb9b/c9ibAbxiYo4exNWZyipwM=
+github.com/chromedp/sysutil v1.1.0/go.mod h1:WiThHUdltqCNKGc4gaU50XgYjwjYIhKWoHGPTUfWTJ8=
+github.com/cncf/xds/go v0.0.0-20251210132809-ee656c7534f5 h1:6xNmx7iTtyBRev0+D/Tv1FZd4SCg8axKApyNyRsAt/w=
+github.com/cncf/xds/go v0.0.0-20251210132809-ee656c7534f5/go.mod h1:KdCmV+x/BuvyMxRnYBlmVaq4OLiKW6iRQfvC62cvdkI=
+github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
+github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
+github.com/dlclark/regexp2 v1.11.5 h1:Q/sSnsKerHeCkc/jSTNq1oCm7KiVgUMZRDUoRu0JQZQ=
+github.com/dlclark/regexp2 v1.11.5/go.mod h1:DHkYz0B9wPfa6wondMfaivmHpzrQ3v9q8cnmRbL6yW8=
+github.com/envoyproxy/go-control-plane v0.14.0 h1:hbG2kr4RuFj222B6+7T83thSPqLjwBIfQawTkC++2HA=
+github.com/envoyproxy/go-control-plane/envoy v1.36.0 h1:yg/JjO5E7ubRyKX3m07GF3reDNEnfOboJ0QySbH736g=
+github.com/envoyproxy/go-control-plane/envoy v1.36.0/go.mod h1:ty89S1YCCVruQAm9OtKeEkQLTb+Lkz0k8v9W0Oxsv98=
+github.com/envoyproxy/protoc-gen-validate v1.3.0 h1:TvGH1wof4H33rezVKWSpqKz5NXWg5VPuZ0uONDT6eb4=
+github.com/envoyproxy/protoc-gen-validate v1.3.0/go.mod h1:HvYl7zwPa5mffgyeTUHA9zHIH36nmrm7oCbo4YKoSWA=
+github.com/felixge/httpsnoop v1.0.4 h1:NFTV2Zj1bL4mc9sqWACXbQFVBBg2W3GPvqp8/ESS2Wg=
+github.com/felixge/httpsnoop v1.0.4/go.mod h1:m8KPJKqk1gH5J9DgRY2ASl2lWCfGKXixSwevea8zH2U=
+github.com/go-json-experiment/json v0.0.0-20260214004413-d219187c3433 h1:vymEbVwYFP/L05h5TKQxvkXoKxNvTpjxYKdF1Nlwuao=
+github.com/go-json-experiment/json v0.0.0-20260214004413-d219187c3433/go.mod h1:tphK2c80bpPhMOI4v6bIc2xWywPfbqi1Z06+RcrMkDg=
+github.com/go-logr/logr v1.2.2/go.mod h1:jdQByPbusPIv2/zmleS9BjJVeZ6kBagPoEUsqbVz/1A=
+github.com/go-logr/logr v1.4.3 h1:CjnDlHq8ikf6E492q6eKboGOC0T8CDaOvkHCIg8idEI=
+github.com/go-logr/logr v1.4.3/go.mod h1:9T104GzyrTigFIr8wt5mBrctHMim0Nb2HLGrmQ40KvY=
+github.com/go-logr/stdr v1.2.2 h1:hSWxHoqTgW2S2qGc0LTAI563KZ5YKYRhT3MFKZMbjag=
+github.com/go-logr/stdr v1.2.2/go.mod h1:mMo/vtBO5dYbehREoey6XUKy/eSumjCCveDpRre4VKE=
+github.com/gobwas/httphead v0.1.0 h1:exrUm0f4YX0L7EBwZHuCF4GDp8aJfVeBrlLQrs6NqWU=
+github.com/gobwas/httphead v0.1.0/go.mod h1:O/RXo79gxV8G+RqlR/otEwx4Q36zl9rqC5u12GKvMCM=
+github.com/gobwas/pool v0.2.1 h1:xfeeEhW7pwmX8nuLVlqbzVc7udMDrwetjEv+TZIz1og=
+github.com/gobwas/pool v0.2.1/go.mod h1:q8bcK0KcYlCgd9e7WYLm9LpyS+YeLd8JVDW6WezmKEw=
+github.com/gobwas/ws v1.4.0 h1:CTaoG1tojrh4ucGPcoJFiAQUAsEWekEWvLy7GsVNqGs=
+github.com/gobwas/ws v1.4.0/go.mod h1:G3gNqMNtPppf5XUz7O4shetPpcZ1VJ7zt18dlUeakrc=
+github.com/golang/protobuf v1.5.4 h1:i7eJL8qZTpSEXOPTxNKhASYpMn+8e5Q6AdndVa1dWek=
+github.com/golang/protobuf v1.5.4/go.mod h1:lnTiLA8Wa4RWRcIUkrtSVa5nRhsEGBg48fD6rSs7xps=
+github.com/google/generative-ai-go v0.19.0 h1:R71szggh8wHMCUlEMsW2A/3T+5LdEIkiaHSYgSpUgdg=
+github.com/google/generative-ai-go v0.19.0/go.mod h1:JYolL13VG7j79kM5BtHz4qwONHkeJQzOCkKXnpqtS/E=
+github.com/google/go-cmp v0.7.0 h1:wk8382ETsv4JYUZwIsn6YpYiWiBsYLSJiTsyBybVuN8=
+github.com/google/go-cmp v0.7.0/go.mod h1:pXiqmnSA92OHEEa9HXL2W4E7lf9JzCmGVUdgjX3N/iU=
+github.com/google/s2a-go v0.1.9 h1:LGD7gtMgezd8a/Xak7mEWL0PjoTQFvpRudN895yqKW0=
+github.com/google/s2a-go v0.1.9/go.mod h1:YA0Ei2ZQL3acow2O62kdp9UlnvMmU7kA6Eutn0dXayM=
+github.com/google/uuid v1.6.0 h1:NIvaJDMOsjHA8n1jAhLSgzrAzy1Hgr+hNrb57e+94F0=
+github.com/google/uuid v1.6.0/go.mod h1:TIyPZe4MgqvfeYDBFedMoGGpEw/LqOeaOT+nhxU+yHo=
+github.com/googleapis/enterprise-certificate-proxy v0.3.14 h1:yh8ncqsbUY4shRD5dA6RlzjJaT4hi3kII+zYw8wmLb8=
+github.com/googleapis/enterprise-certificate-proxy v0.3.14/go.mod h1:vqVt9yG9480NtzREnTlmGSBmFrA+bzb0yl0TxoBQXOg=
+github.com/googleapis/gax-go/v2 v2.21.0 h1:h45NjjzEO3faG9Lg/cFrBh2PgegVVgzqKzuZl/wMbiI=
+github.com/googleapis/gax-go/v2 v2.21.0/go.mod h1:But/NJU6TnZsrLai/xBAQLLz+Hc7fHZJt/hsCz3Fih4=
+github.com/gorilla/websocket v1.5.3 h1:saDtZ6Pbx/0u+bgYQ3q96pZgCzfhKXGPqt7kZ72aNNg=
+github.com/gorilla/websocket v1.5.3/go.mod h1:YR8l580nyteQvAITg2hZ9XVh4b55+EU/adAjf1fMHhE=
+github.com/h2non/filetype v1.1.3 h1:FKkx9QbD7HR/zjK1Ia5XiBsq9zdLi5Kf3zGyFTAFkGg=
+github.com/h2non/filetype v1.1.3/go.mod h1:319b3zT68BvV+WRj7cwy856M2ehB3HqNOt6sy1HndBY=
+github.com/jmespath/go-jmespath v0.4.0 h1:BEgLn5cpjn8UN1mAw4NjwDrS35OdebyEtFe+9YPoQUg=
+github.com/jmespath/go-jmespath v0.4.0/go.mod h1:T8mJZnbsbmF+m6zOOFylbeCJqk5+pHWvzYPziyZiYoo=
+github.com/klauspost/compress v1.18.6 h1:2jupLlAwFm95+YDR+NwD2MEfFO9d4z4Prjl1XXDjuao=
+github.com/klauspost/compress v1.18.6/go.mod h1:cwPg85FWrGar70rWktvGQj8/hthj3wpl0PGDogxkrSQ=
+github.com/klauspost/cpuid/v2 v2.3.0 h1:S4CRMLnYUhGeDFDqkGriYKdfoFlDnMtqTiI/sFzhA9Y=
+github.com/klauspost/cpuid/v2 v2.3.0/go.mod h1:hqwkgyIinND0mEev00jJYCxPNVRVXFQeu1XKlok6oO0=
+github.com/klauspost/reedsolomon v1.14.1 h1:swE9kzyWXD/wVG+l5Pe8bWnQ0giIY7D1GjCBKk3kG2U=
+github.com/klauspost/reedsolomon v1.14.1/go.mod h1:yjqqjgMTQkBUHSG97/rm4zipffCNbCiZcB3kTqr++sQ=
+github.com/ledongthuc/pdf v0.0.0-20220302134840-0c2507a12d80 h1:6Yzfa6GP0rIo/kULo2bwGEkFvCePZ3qHDDTC3/J9Swo=
+github.com/ledongthuc/pdf v0.0.0-20220302134840-0c2507a12d80/go.mod h1:imJHygn/1yfhB7XSJJKlFZKl/J+dCPAknuiaGOshXAs=
+github.com/mitchellh/mapstructure v1.5.0 h1:jeMsZIYE/09sWLaz43PL7Gy6RuMjD2eJVyuac5Z2hdY=
+github.com/mitchellh/mapstructure v1.5.0/go.mod h1:bFUtVrKA4DC2yAKiSyO/QUcy7e+RRV2QTWOzhPopBRo=
+github.com/mr-tron/base58 v1.2.0 h1:T/HDJBh4ZCPbU39/+c3rRvE0uKBQlU27+QI8LJ4t64o=
+github.com/mr-tron/base58 v1.2.0/go.mod h1:BinMc/sQntlIE1frQmRFPUoPA1Zkr8VRgBdjWI2mNwc=
+github.com/odvcencio/gotreesitter v0.16.0 h1:pg29HG6idOpmbh6BkPc6ncFP0C8rH9ISAzFVNdHm2ss=
+github.com/odvcencio/gotreesitter v0.16.0/go.mod h1:ccYZsDUmAJQAtliLsNHT33F3X4AN7f/Z6JGiPNZoEzY=
+github.com/oklog/ulid/v2 v2.1.1 h1:suPZ4ARWLOJLegGFiZZ1dFAkqzhMjL3J1TzI+5wHz8s=
+github.com/oklog/ulid/v2 v2.1.1/go.mod h1:rcEKHmBBKfef9DhnvX7y1HZBYxjXb0cP5ExxNsTT1QQ=
+github.com/orisano/pixelmatch v0.0.0-20220722002657-fb0b55479cde h1:x0TT0RDC7UhAVbbWWBzr41ElhJx5tXPWkIHA2HWPRuw=
+github.com/orisano/pixelmatch v0.0.0-20220722002657-fb0b55479cde/go.mod h1:nZgzbfBr3hhjoZnS66nKrHmduYNpc34ny7RK4z5/HM0=
+github.com/pborman/getopt v0.0.0-20170112200414-7148bc3a4c30/go.mod h1:85jBQOZwpVEaDAr341tbn15RS4fCAsIst0qp7i8ex1o=
+github.com/pkoukk/tiktoken-go v0.1.8 h1:85ENo+3FpWgAACBaEUVp+lctuTcYUO7BtmfhlN/QTRo=
+github.com/pkoukk/tiktoken-go v0.1.8/go.mod h1:9NiV+i9mJKGj1rYOT+njbv+ZwA/zJxYdewGl6qVatpg=
+github.com/planetscale/vtprotobuf v0.6.1-0.20240319094008-0393e58bdf10 h1:GFCKgmp0tecUJ0sJuv4pzYCqS9+RGSn52M3FUwPs+uo=
+github.com/planetscale/vtprotobuf v0.6.1-0.20240319094008-0393e58bdf10/go.mod h1:t/avpk3KcrXxUnYOhZhMXJlSEyie6gQbtLq5NM3loB8=
+github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
+github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
+github.com/sabhiram/go-gitignore v0.0.0-20210923224102-525f6e181f06 h1:OkMGxebDjyw0ULyrTYWeN0UNCCkmCWfjPnIA2W6oviI=
+github.com/sabhiram/go-gitignore v0.0.0-20210923224102-525f6e181f06/go.mod h1:+ePHsJ1keEjQtpvf9HHw0f4ZeJ0TLRsxhunSI2hYJSs=
+github.com/sergi/go-diff v1.4.0 h1:n/SP9D5ad1fORl+llWyN+D6qoUETXNZARKjyY2/KVCw=
+github.com/sergi/go-diff v1.4.0/go.mod h1:A0bzQcvG0E7Rwjx0REVgAGH58e96+X0MeOfepqsbeW4=
+github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e h1:MRM5ITcdelLK2j1vwZ3Je0FKVCfqOLp5zO6trqMLYs0=
+github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e/go.mod h1:XV66xRDqSt+GTGFMVlhk3ULuV0y9ZmzeVGR4mloJI3M=
+github.com/stretchr/testify v1.11.1 h1:7s2iGBzp5EwR7/aIZr8ao5+dra3wiQyKjjFuvgVKu7U=
+github.com/stretchr/testify v1.11.1/go.mod h1:wZwfW3scLgRK+23gO65QZefKpKQRnfz6sD981Nm4B6U=
+github.com/tidwall/gjson v1.14.2/go.mod h1:/wbyibRr2FHMks5tjHJ5F8dMZh3AcwJEMf5vlfC0lxk=
+github.com/tidwall/gjson v1.19.0 h1:xwxm7n691Uf3u5OFjzngavjGTh55KX5q/9w9xHW88JU=
+github.com/tidwall/gjson v1.19.0/go.mod h1:V37/opeE/JbLUOfH0QTXiNez2l0RUjYUhpT4szFQAfc=
+github.com/tidwall/match v1.1.1 h1:+Ho715JplO36QYgwN9PGYNhgZvoUSc9X2c80KVTi+GA=
+github.com/tidwall/match v1.1.1/go.mod h1:eRSPERbgtNPcGhD8UCthc6PmLEQXEWd3PRB5JTxsfmM=
+github.com/tidwall/pretty v1.2.0 h1:RWIZEg2iJ8/g6fDDYzMpobmaoGh5OLl4AXtGUGPcqCs=
+github.com/tidwall/pretty v1.2.0/go.mod h1:ITEVvHYasfjBbM0u2Pg8T2nJnzm8xPwvNhhsoaGGjNU=
+github.com/tidwall/sjson v1.2.5 h1:kLy8mja+1c9jlljvWTlSazM7cKDRfJuR/bOJhcY5NcY=
+github.com/tidwall/sjson v1.2.5/go.mod h1:Fvgq9kS/6ociJEDnK0Fk1cpYF4FIW6ZF7LAe+6jwd28=
+github.com/vmihailenco/msgpack/v5 v5.4.1 h1:cQriyiUvjTwOHg8QZaPihLWeRAAVoCpE00IUPn0Bjt8=
+github.com/vmihailenco/msgpack/v5 v5.4.1/go.mod h1:GaZTsDaehaPpQVyxrf5mtQlH+pc21PIudVV/E3rRQok=
+github.com/vmihailenco/tagparser/v2 v2.0.0 h1:y09buUbR+b5aycVFQs/g70pqKVZNBmxwAhO7/IwNM9g=
+github.com/vmihailenco/tagparser/v2 v2.0.0/go.mod h1:Wri+At7QHww0WTrCBeu4J6bNtoV6mEfg5OIWRZA9qds=
+github.com/yalue/onnxruntime_go v1.22.0 h1:SzqOfFRRrLRRAFR5VoSxABjTiQSAi8Y4ETYKrMFK1jk=
+github.com/yalue/onnxruntime_go v1.22.0/go.mod h1:b4X26A8pekNb1ACJ58wAXgNKeUCGEAQ9dmACut9Sm/4=
+github.com/zeebo/assert v1.1.0 h1:hU1L1vLTHsnO8x8c9KAR5GmM5QscxHg5RNU5z5qbUWY=
+github.com/zeebo/assert v1.1.0/go.mod h1:Pq9JiuJQpG8JLJdtkwrJESF0Foym2/D9XMU5ciN/wJ0=
+github.com/zeebo/blake3 v0.2.4 h1:KYQPkhpRtcqh0ssGYcKLG1JYvddkEA8QwCM/yBqhaZI=
+github.com/zeebo/blake3 v0.2.4/go.mod h1:7eeQ6d2iXWRGF6npfaxl2CU+xy2Fjo2gxeyZGCRUjcE=
+github.com/zeebo/pcg v1.0.1 h1:lyqfGeWiv4ahac6ttHs+I5hwtH/+1mrhlCtVNQM2kHo=
+github.com/zeebo/pcg v1.0.1/go.mod h1:09F0S9iiKrwn9rlI5yjLkmrug154/YRW6KnnXVDM/l4=
+go.opentelemetry.io/auto/sdk v1.2.1 h1:jXsnJ4Lmnqd11kwkBV2LgLoFMZKizbCi5fNZ/ipaZ64=
+go.opentelemetry.io/auto/sdk v1.2.1/go.mod h1:KRTj+aOaElaLi+wW1kO/DZRXwkF4C5xPbEe3ZiIhN7Y=
+go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.61.0 h1:q4XOmH/0opmeuJtPsbFNivyl7bCt7yRBbeEm2sC/XtQ=
+go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.61.0/go.mod h1:snMWehoOh2wsEwnvvwtDyFCxVeDAODenXHtn5vzrKjo=
+go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.61.0 h1:F7Jx+6hwnZ41NSFTO5q4LYDtJRXBf2PD0rNBkeB/lus=
+go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.61.0/go.mod h1:UHB22Z8QsdRDrnAtX4PntOl36ajSxcdUMt1sF7Y6E7Q=
+go.opentelemetry.io/otel v1.42.0 h1:lSQGzTgVR3+sgJDAU/7/ZMjN9Z+vUip7leaqBKy4sho=
+go.opentelemetry.io/otel v1.42.0/go.mod h1:lJNsdRMxCUIWuMlVJWzecSMuNjE7dOYyWlqOXWkdqCc=
+go.opentelemetry.io/otel/metric v1.42.0 h1:2jXG+3oZLNXEPfNmnpxKDeZsFI5o4J+nz6xUlaFdF/4=
+go.opentelemetry.io/otel/metric v1.42.0/go.mod h1:RlUN/7vTU7Ao/diDkEpQpnz3/92J9ko05BIwxYa2SSI=
+go.opentelemetry.io/otel/sdk v1.42.0 h1:LyC8+jqk6UJwdrI/8VydAq/hvkFKNHZVIWuslJXYsDo=
+go.opentelemetry.io/otel/sdk v1.42.0/go.mod h1:rGHCAxd9DAph0joO4W6OPwxjNTYWghRWmkHuGbayMts=
+go.opentelemetry.io/otel/sdk/metric v1.42.0 h1:D/1QR46Clz6ajyZ3G8SgNlTJKBdGp84q9RKCAZ3YGuA=
+go.opentelemetry.io/otel/sdk/metric v1.42.0/go.mod h1:Ua6AAlDKdZ7tdvaQKfSmnFTdHx37+J4ba8MwVCYM5hc=
+go.opentelemetry.io/otel/trace v1.42.0 h1:OUCgIPt+mzOnaUTpOQcBiM/PLQ/Op7oq6g4LenLmOYY=
+go.opentelemetry.io/otel/trace v1.42.0/go.mod h1:f3K9S+IFqnumBkKhRJMeaZeNk9epyhnCmQh/EysQCdc=
+go.uber.org/goleak v1.3.0 h1:2K3zAYmnTNqV73imy9J1T3WC+gmCePx2hEGkimedGto=
+go.uber.org/goleak v1.3.0/go.mod h1:CoHD4mav9JJNrW/WLlf7HGZPjdw8EucARQHekz1X6bE=
+golang.org/x/crypto v0.49.0 h1:+Ng2ULVvLHnJ/ZFEq4KdcDd/cfjrrjjNSXNzxg0Y4U4=
+golang.org/x/crypto v0.49.0/go.mod h1:ErX4dUh2UM+CFYiXZRTcMpEcN8b/1gxEuv3nODoYtCA=
+golang.org/x/exp v0.0.0-20240506185415-9bf2ced13842 h1:vr/HnozRka3pE4EsMEg1lgkXJkTFJCVUX+S/ZT6wYzM=
+golang.org/x/exp v0.0.0-20240506185415-9bf2ced13842/go.mod h1:XtvwrStGgqGPLc4cjQfWqZHG1YFdYs6swckp8vpsjnc=
+golang.org/x/mod v0.33.0 h1:tHFzIWbBifEmbwtGz65eaWyGiGZatSrT9prnU8DbVL8=
+golang.org/x/mod v0.33.0/go.mod h1:swjeQEj+6r7fODbD2cqrnje9PnziFuw4bmLbBZFrQ5w=
+golang.org/x/net v0.52.0 h1:He/TN1l0e4mmR3QqHMT2Xab3Aj3L9qjbhRm78/6jrW0=
+golang.org/x/net v0.52.0/go.mod h1:R1MAz7uMZxVMualyPXb+VaqGSa3LIaUqk0eEt3w36Sw=
+golang.org/x/oauth2 v0.36.0 h1:peZ/1z27fi9hUOFCAZaHyrpWG5lwe0RJEEEeH0ThlIs=
+golang.org/x/oauth2 v0.36.0/go.mod h1:YDBUJMTkDnJS+A4BP4eZBjCqtokkg1hODuPjwiGPO7Q=
+golang.org/x/sync v0.20.0 h1:e0PTpb7pjO8GAtTs2dQ6jYa5BWYlMuX047Dco/pItO4=
+golang.org/x/sync v0.20.0/go.mod h1:9xrNwdLfx4jkKbNva9FpL6vEN7evnE43NNNJQ2LF3+0=
+golang.org/x/sys v0.6.0/go.mod h1:oPkhp1MJrh7nUepCBck5+mAzfO9JrbApNNgaTdGDITg=
+golang.org/x/sys v0.43.0 h1:Rlag2XtaFTxp19wS8MXlJwTvoh8ArU6ezoyFsMyCTNI=
+golang.org/x/sys v0.43.0/go.mod h1:4GL1E5IUh+htKOUEOaiffhrAeqysfVGipDYzABqnCmw=
+golang.org/x/text v0.35.0 h1:JOVx6vVDFokkpaq1AEptVzLTpDe9KGpj5tR4/X+ybL8=
+golang.org/x/text v0.35.0/go.mod h1:khi/HExzZJ2pGnjenulevKNX1W67CUy0AsXcNubPGCA=
+golang.org/x/time v0.15.0 h1:bbrp8t3bGUeFOx08pvsMYRTCVSMk89u4tKbNOZbp88U=
+golang.org/x/time v0.15.0/go.mod h1:Y4YMaQmXwGQZoFaVFk4YpCt4FLQMYKZe9oeV/f4MSno=
+golang.org/x/tools v0.42.0 h1:uNgphsn75Tdz5Ji2q36v/nsFSfR/9BRFvqhGBaJGd5k=
+golang.org/x/tools v0.42.0/go.mod h1:Ma6lCIwGZvHK6XtgbswSoWroEkhugApmsXyrUmBhfr0=
+gonum.org/v1/gonum v0.17.0 h1:VbpOemQlsSMrYmn7T2OUvQ4dqxQXU+ouZFQsZOx50z4=
+gonum.org/v1/gonum v0.17.0/go.mod h1:El3tOrEuMpv2UdMrbNlKEh9vd86bmQ6vqIcDwxEOc1E=
+google.golang.org/api v0.274.0 h1:aYhycS5QQCwxHLwfEHRRLf9yNsfvp1JadKKWBE54RFA=
+google.golang.org/api v0.274.0/go.mod h1:JbAt7mF+XVmWu6xNP8/+CTiGH30ofmCmk9nM8d8fHew=
+google.golang.org/genai v1.53.0 h1:8tR9MuO/TdaXSc8PEFamohQKxRz5M/qctbyzhV2YwMM=
+google.golang.org/genai v1.53.0/go.mod h1:A3kkl0nyBjyFlNjgxIwKq70julKbIxpSxqKO5gw/gmk=
+google.golang.org/genproto v0.0.0-20260319201613-d00831a3d3e7 h1:XzmzkmB14QhVhgnawEVsOn6OFsnpyxNPRY9QV01dNB0=
+google.golang.org/genproto v0.0.0-20260319201613-d00831a3d3e7/go.mod h1:L43LFes82YgSonw6iTXTxXUX1OlULt4AQtkik4ULL/I=
+google.golang.org/genproto/googleapis/api v0.0.0-20260401024825-9d38bb4040a9 h1:VPWxll4HlMw1Vs/qXtN7BvhZqsS9cdAittCNvVENElA=
+google.golang.org/genproto/googleapis/api v0.0.0-20260401024825-9d38bb4040a9/go.mod h1:7QBABkRtR8z+TEnmXTqIqwJLlzrZKVfAUm7tY3yGv0M=
+google.golang.org/genproto/googleapis/rpc v0.0.0-20260401024825-9d38bb4040a9 h1:m8qni9SQFH0tJc1X0vmnpw/0t+AImlSvp30sEupozUg=
+google.golang.org/genproto/googleapis/rpc v0.0.0-20260401024825-9d38bb4040a9/go.mod h1:4Hqkh8ycfw05ld/3BWL7rJOSfebL2Q+DVDeRgYgxUU8=
+google.golang.org/grpc v1.80.0 h1:Xr6m2WmWZLETvUNvIUmeD5OAagMw3FiKmMlTdViWsHM=
+google.golang.org/grpc v1.80.0/go.mod h1:ho/dLnxwi3EDJA4Zghp7k2Ec1+c2jqup0bFkw07bwF4=
+google.golang.org/protobuf v1.36.11 h1:fV6ZwhNocDyBLK0dj+fg8ektcVegBBuEolpbTQyBNVE=
+google.golang.org/protobuf v1.36.11/go.mod h1:HTf+CrKn2C3g5S8VImy6tdcUvCska2kB7j23XfzDpco=
+gopkg.in/yaml.v3 v3.0.1 h1:fxVm/GzAzEWqLHuvctI91KS9hhNmmWOoWu0XTYJS7CA=
+gopkg.in/yaml.v3 v3.0.1/go.mod h1:K4uyk7z7BCEPqu6E+C64Yfv1cQ7kz7rIZviUmN+EgEM=
+rsc.io/pdf v0.1.1 h1:k1MczvYDUvJBe93bYd7wrZLLUEcLZAuF824/I4e5Xr4=
+rsc.io/pdf v0.1.1/go.mod h1:n8OzWcQ6Sp37PL01nO98y4iUCRdTGarVfzxY20ICaU4=
+-- go.mod --
+module github.com/aprice2704/appy
+
+go 1.26.2
+
+replace github.com/aprice2704/fdm => ../fdm
+
+replace github.com/aprice2704/neuroscript => ../neuroscript
+
+require (
+	github.com/aprice2704/fdm v0.0.0-00010101000000-000000000000
+	github.com/chromedp/cdproto v0.0.0-20260321001828-e3e3800016bc
+	github.com/chromedp/chromedp v0.15.1
+)
+
+require (
+	cloud.google.com/go v0.123.0 // indirect
+	cloud.google.com/go/ai v0.8.0 // indirect
+	cloud.google.com/go/auth v0.18.2 // indirect
+	cloud.google.com/go/auth/oauth2adapt v0.2.8 // indirect
+	cloud.google.com/go/compute/metadata v0.9.0 // indirect
+	cloud.google.com/go/longrunning v0.9.0 // indirect
+	github.com/antlr4-go/antlr/v4 v4.13.1 // indirect
+	github.com/aprice2704/neuroscript v0.0.0-00010101000000-000000000000 // indirect
+	github.com/cespare/xxhash/v2 v2.3.0 // indirect
+	github.com/chromedp/sysutil v1.1.0 // indirect
+	github.com/felixge/httpsnoop v1.0.4 // indirect
+	github.com/go-json-experiment/json v0.0.0-20260214004413-d219187c3433 // indirect
+	github.com/go-logr/logr v1.4.3 // indirect
+	github.com/go-logr/stdr v1.2.2 // indirect
+	github.com/gobwas/httphead v0.1.0 // indirect
+	github.com/gobwas/pool v0.2.1 // indirect
+	github.com/gobwas/ws v1.4.0 // indirect
+	github.com/google/generative-ai-go v0.19.0 // indirect
+	github.com/google/s2a-go v0.1.9 // indirect
+	github.com/google/uuid v1.6.0 // indirect
+	github.com/googleapis/enterprise-certificate-proxy v0.3.14 // indirect
+	github.com/googleapis/gax-go/v2 v2.21.0 // indirect
+	github.com/klauspost/compress v1.18.6 // indirect
+	github.com/klauspost/cpuid/v2 v2.3.0 // indirect
+	github.com/klauspost/reedsolomon v1.14.1 // indirect
+	github.com/mitchellh/mapstructure v1.5.0 // indirect
+	github.com/odvcencio/gotreesitter v0.16.0 // indirect
+	github.com/oklog/ulid/v2 v2.1.1 // indirect
+	github.com/tidwall/gjson v1.19.0 // indirect
+	github.com/tidwall/match v1.1.1 // indirect
+	github.com/tidwall/pretty v1.2.0 // indirect
+	github.com/tidwall/sjson v1.2.5 // indirect
+	github.com/vmihailenco/msgpack/v5 v5.4.1 // indirect
+	github.com/vmihailenco/tagparser/v2 v2.0.0 // indirect
+	github.com/zeebo/blake3 v0.2.4 // indirect
+	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
+	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.61.0 // indirect
+	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.61.0 // indirect
+	go.opentelemetry.io/otel v1.42.0 // indirect
+	go.opentelemetry.io/otel/metric v1.42.0 // indirect
+	go.opentelemetry.io/otel/trace v1.42.0 // indirect
+	golang.org/x/crypto v0.49.0 // indirect
+	golang.org/x/exp v0.0.0-20240506185415-9bf2ced13842 // indirect
+	golang.org/x/mod v0.33.0 // indirect
+	golang.org/x/net v0.52.0 // indirect
+	golang.org/x/oauth2 v0.36.0 // indirect
+	golang.org/x/sync v0.20.0 // indirect
+	golang.org/x/sys v0.43.0 // indirect
+	golang.org/x/text v0.35.0 // indirect
+	golang.org/x/time v0.15.0 // indirect
+	golang.org/x/tools v0.42.0 // indirect
+	google.golang.org/api v0.274.0 // indirect
+	google.golang.org/genproto/googleapis/api v0.0.0-20260401024825-9d38bb4040a9 // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20260401024825-9d38bb4040a9 // indirect
+	google.golang.org/grpc v1.80.0 // indirect
+	google.golang.org/protobuf v1.36.11 // indirect
+)
+-- failure_logger.go --
+// :: product: FDM/NS
+// :: majorVersion: 1
+// :: fileVersion: 1
+// :: description: Logs failed patch attempts for analysis and improvement.
+// :: filename: failure_logger.go // ᚛5-34ca᚜
+// :: serialization: go
+
+package main
+
+import ( // ᚛10-b708᚜
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"time" // ᚛15-86b6᚜
+
+	"github.com/aprice2704/fdm/code/patcheng"
+)
+
+type PatchFailureLog struct { // ᚛20-e992᚜
+	Timestamp string                `json:"timestamp"`
+	Phase     string                `json:"phase"` // "preview", "apply", "compiler"
+	File      string                `json:"file"`
+	Error     string                `json:"error"`
+	LineEcho  string                `json:"line_echo,omitempty"` // ᚛25-85e8᚜
+	Patches   []patcheng.FuzzyPatch `json:"patches,omitempty"`
+}
+
+func appendFailureLog(rootDir string, logEntry PatchFailureLog) {
+	logPath := filepath.Join(rootDir, ".appy_failures.jsonl") // ᚛30-25b1᚜
+	logEntry.Timestamp = time.Now().UTC().Format(time.RFC3339)
+
+	// Trim patches to prevent the JSONL file from ballooning to 700k+
+	var trimmed []patcheng.FuzzyPatch
+	for _, p := range logEntry.Patches { // ᚛35-de8a᚜
+		p.Replace = fmt.Sprintf("<elided: %d bytes>", len(p.Replace))
+		if len(p.Search) > 500 {
+			p.Search = p.Search[:500] + "...<truncated>"
+		}
+		trimmed = append(trimmed, p) // ᚛40-8ac6᚜
+	}
+	logEntry.Patches = trimmed
+
+	b, err := json.Marshal(logEntry)
+	if err != nil { // ᚛45-9e1c᚜
+		return
+	}
+	b = append(b, '\n')
+
+	f, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644) // ᚛50-4926᚜
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	f.Write(b) // ᚛55-eb83᚜
+}
+-- coverage_dossier.json --
+{
+  "package": "github.com/aprice2704/appy",
+  "directory": "/home/aprice/dev/appy",
+  "overall_coverage_percent": 61.1,
+  "target_coverage_percent": 72,
+  "instructions": [
+    "This package is not fully healthy (has failures, skips, or coverage below target).",
+    "Write table-driven tests to cover the functions listed below or fix the failing tests.",
+    "Follow project rules from AG.md: DO NOT use testify, use standard library 'testing'.",
+    "Use generated builders from fdm/code/nodes (Canonical Creation Law).",
+    "Use strongly typed constants from fdm/code/interfaces.",
+    "Ensure there are no silent failures. Mock external interfaces where appropriate.",
+    "No test files or coverage data found. Implement a comprehensive test suite from scratch."
+  ],
+  "under_tested_functions": []
+}
+-- compiler.go --
+// :: product: FDM/NS
+// :: majorVersion: 1
+// :: fileVersion: 6
+// :: description: Compiler pre-flight and formatting via patcheng registry.
+// :: filename: /home/aprice/dev/appy/compiler.go // ᚛5-2550᚜
+// :: serialization: go
+
+package main
+
+import ( // ᚛10-15d9᚜
+	"context"
+	"log"
+	"path/filepath"
+	"strings"
+	"time" // ᚛15-034d᚜
+
+	"github.com/aprice2704/fdm/code/patcheng"
+)
+
+func runCompilerPreFlight(registry *patcheng.ProfileRegistry, memoryResults map[string]string, skipSlow bool) map[string]string { // ᚛20-9ce0᚜
+	compilerErrors := make(map[string]string)
+	log.Printf("[DEBUG] runCompilerPreFlight: starting for %d files", len(memoryResults))
+	for path, content := range memoryResults {
+		if strings.TrimSpace(content) == "" {
+			log.Printf("[DEBUG] runCompilerPreFlight: skipping empty file %s", path) // ᚛25-ccaf᚜
+			continue
+		}
+		prof := registry.GetByExtension(filepath.Ext(path))
+		if prof != nil && prof.Validator != nil {
+			if skipSlow && !prof.FastValidator { // ᚛30-9a99᚜
+				log.Printf("[DEBUG] runCompilerPreFlight: skipping slow validator for %s", path)
+				continue
+			}
+			log.Printf("[DEBUG] runCompilerPreFlight: validating %s", path)
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second) // ᚛35-42b1᚜
+			err := prof.Validator(ctx, []byte(content))
+			cancel()
+			if err != nil {
+				log.Printf("[DEBUG] runCompilerPreFlight: validation failed for %s: %v", path, err)
+				compilerErrors[path] = err.Error() // ᚛40-d815᚜
+			} else {
+				log.Printf("[DEBUG] runCompilerPreFlight: validation passed for %s", path)
+			}
+		} else {
+			log.Printf("[DEBUG] runCompilerPreFlight: no validator found for %s", path) // ᚛45-20bc᚜
+		}
+	}
+	log.Printf("[DEBUG] runCompilerPreFlight: finished with %d errors", len(compilerErrors))
+	return compilerErrors
+} // ᚛50-af6b᚜
+-- builder.go --
+package main
+
+import (
+	"bytes"
+	"encoding/json" // ᚛5-ed8b᚜
+	"fmt"
+	"log"
+	"os"
+	"path/filepath"
+	"strings" // ᚛10-4857᚜
+
+	"github.com/aprice2704/fdm/code/patcheng"
+)
+
+func getSets(rootDir string) map[string]TxtarPayload { // ᚛15-f7e2᚜
+	b, err := os.ReadFile(filepath.Join(rootDir, ".appy_sets.json"))
+	var sets map[string]TxtarPayload
+	if err == nil {
+		json.Unmarshal(b, &sets)
+	} // ᚛20-fe69᚜
+	if sets == nil {
+		sets = make(map[string]TxtarPayload)
+	}
+	return sets
+} // ᚛25-57a6᚜
+
+func saveSets(rootDir string, sets map[string]TxtarPayload) error {
+	b, err := json.MarshalIndent(sets, "", "  ")
+	if err != nil {
+		return err // ᚛30-204e᚜
+	}
+	return os.WriteFile(filepath.Join(rootDir, ".appy_sets.json"), b, 0644)
+}
+
+func walkPaths(absRootDir string, paths []string, excludes []string, cb func(absPath string, relName string)) { // ᚛35-a6b7᚜
+	added := make(map[string]bool)
+
+	add := func(path string) {
+		path = filepath.Clean(path)
+		if added[path] { // ᚛40-5cd7᚜
+			return
+		}
+
+		for _, ex := range excludes {
+			if ex == "" { // ᚛45-b49b᚜
+				continue
+			}
+			if matched, _ := filepath.Match(ex, filepath.Base(path)); matched {
+				return
+			} // ᚛50-2ab2᚜
+			rel, err := filepath.Rel(absRootDir, path)
+			if err == nil && !strings.HasPrefix(rel, "..") {
+				if matched, _ := filepath.Match(ex, rel); matched {
+					return
+				} // ᚛55-b40b᚜
+			}
+		}
+		added[path] = true
+
+		rel, err := filepath.Rel(absRootDir, path) // ᚛60-7112᚜
+		var name string
+		if err == nil && !strings.HasPrefix(rel, "..") && rel != ".." {
+			name = rel
+		} else {
+			name = path // ᚛65-9f84᚜
+		}
+		cb(path, name)
+	}
+
+	if len(paths) == 0 { // ᚛70-3129᚜
+		paths = []string{"."}
+	}
+
+	for _, p := range paths {
+		p = strings.TrimSpace(p) // ᚛75-d1e4᚜
+		if p == "" {
+			continue
+		}
+
+		var baseDir string // ᚛80-b781᚜
+		var pattern string
+		if strings.Contains(p, "**") {
+			parts := strings.SplitN(p, "**", 2)
+			baseDir = parts[0]
+			pattern = "**" + parts[1] // ᚛85-2989᚜
+		} else {
+			baseDir = p
+		}
+		if baseDir == "" {
+			baseDir = "." // ᚛90-be40᚜
+		}
+		if !filepath.IsAbs(baseDir) {
+			targetCandidate := filepath.Join(absRootDir, baseDir)
+			if _, err := os.Stat(targetCandidate); err == nil {
+				baseDir = targetCandidate // ᚛95-38fe᚜
+			} else if stat, err := os.Stat(baseDir); err == nil {
+				// Exists at current working directory or relative to appy execution
+				if abs, err := filepath.Abs(baseDir); err == nil {
+					baseDir = abs
+				} // ᚛100-6815᚜
+				_ = stat
+			} else {
+				baseDir = targetCandidate
+			}
+		} // ᚛105-3e7a᚜
+
+		stat, err := os.Stat(baseDir)
+		if err != nil {
+			matches, err := filepath.Glob(baseDir)
+			if err == nil { // ᚛110-75ac᚜
+				for _, m := range matches {
+					if s, err := os.Stat(m); err == nil && !s.IsDir() {
+						add(m)
+					}
+				} // ᚛115-8d75᚜
+			}
+			continue
+		}
+		if !stat.IsDir() {
+			add(baseDir) // ᚛120-6915᚜
+			continue
+		}
+
+		filepath.WalkDir(baseDir, func(path string, d os.DirEntry, err error) error {
+			if err != nil { // ᚛125-b591᚜
+				return nil
+			}
+			if d.IsDir() {
+				if d.Name() == ".git" || d.Name() == "vendor" || d.Name() == "node_modules" || d.Name() == ".appy_history" {
+					return filepath.SkipDir // ᚛130-918c᚜
+				}
+				return nil
+			}
+			if pattern != "" && pattern != "**" {
+				suffix := strings.TrimPrefix(pattern, "**") // ᚛135-1bb7᚜
+				if !strings.HasSuffix(filepath.ToSlash(path), suffix) && !strings.HasSuffix(path, suffix) {
+					return nil
+				}
+			}
+			add(path) // ᚛140-80e1᚜
+			return nil
+		})
+	}
+}
+
+func generateTxtar(absRootDir string, req TxtarPayload, largeFileLines int) ([]byte, int, error) {
+	var buf bytes.Buffer
+	buf.WriteString(req.Preface)
+	if !strings.HasSuffix(req.Preface, "\n") {
+		buf.WriteString("\n") // ᚛150-e514᚜
+	}
+	fileCount := 0
+
+	walkPaths(absRootDir, req.Paths, req.Excludes, func(absPath, relName string) {
+		content, err := os.ReadFile(absPath) // ᚛155-e56c᚜
+		if err != nil {
+			log.Printf("[DEBUG] generateTxtar: Read error %s: %v", absPath, err)
+			return
+		}
+
+		needsAnchor := true
+		for _, ag := range req.Anchors {
+			if ag == "" {
+				continue
+			} // ᚛165-eb48᚜
+			if matched, _ := filepath.Match(ag, filepath.Base(absPath)); matched {
+				needsAnchor = false
+				break
+			}
+			if matched, _ := filepath.Match(ag, relName); matched { // ᚛170-a3c2᚜
+				needsAnchor = false
+				break
+			}
+		}
+
+		if needsAnchor {
+			anchoredContent, err := patcheng.InjectAnchors(relName, content, 5)
+			if err == nil {
+				content = anchoredContent
+			} else { // ᚛180-ef09᚜
+				log.Printf("[DEBUG] generateTxtar: Anchor injection failed for %s: %v", relName, err)
+			}
+		}
+
+		if needsAnchor && countLines(string(content)) > largeFileLines { // ᚛185-aba2᚜
+			warning := []byte("⚠️ APPY NOTE: This file is overly large. If you need to touch it, please split it into sensible pieces if possible.\n\n")
+			content = append(warning, content...)
+		}
+
+		buf.WriteString(fmt.Sprintf("-- %s --\n", filepath.ToSlash(relName))) // ᚛190-1cc4᚜
+		buf.Write(content)
+		if !strings.HasSuffix(string(content), "\n") {
+			buf.WriteString("\n")
+		}
+		fileCount++ // ᚛195-a9c5᚜
+	})
+
+	return buf.Bytes(), fileCount, nil
+}
+-- BUG_REPORT_001.md --
+# Appy Bug Report: AST `replace_symbol` Fails on Go Method Receivers
+
+**Tool:** Appy (v1.8.19)
+**Language Target:** Go
+**Strategy:** `replace_symbol`
+
+## Issue Summary
+When using the `replace_symbol` patching strategy, the Go AST matcher successfully locates standard top-level functions (e.g., `func InitializeBotrTools()`) but **fails to match** methods bound to a struct receiver (e.g., `func (ts *toolset) testProvider(...)`). 
+
+When attempting to target a method receiver, Appy rejects the patch with:
+`Issue: symbol 'testProvider' not found in baseline AST`
+
+## Root Cause Speculation
+The underlying AST parser (likely using `go/ast`) is either filtering out `*ast.FuncDecl` nodes where `Recv != nil`, or the symbol name matching logic is strictly expecting a global namespace match and failing to resolve the `FuncDecl.Name.Name` when a receiver block is present.
+
+## Impact
+This forces the LLM to fall back to `replace_block` (which is brittle for function signatures) or escalate to `strict_full_file` (`%%% overwrite`). Overwriting entire files circumvents Appy's surgical precision, wastes context window, and significantly increases the risk of code drift on larger files.
+
+## Repro Example
+**Baseline Go Code:**
+```go
+func (ts *toolset) testProvider(rt api.Runtime, args []any) (any, error) {
+    // ...
+}
+
+Appy Patch:
+
+Plaintext
+%%% replace_symbol testProvider
+%%% with
+func (ts *toolset) testProvider(rt api.Runtime, args []any) (any, error) {
+    // updated logic
+}
+%%% end
+Expected Result: Successful AST swap of the method body and signature.
+Actual Result: Rejected (symbol not found).
+-- backend_spec.md --
+# Appy Backend / PatchEng Functional Specification
+
+> **Status**: ACTIVE
+> **Applies To**: `patcheng` library and Appy backend routers.
+
+## 1. Core Philosophy: The Patch Airlock
+The patching engine (`patcheng`) enforces a strict airlock between LLM output and the filesystem. It operates on a **File-Atomic** basis: patches are gathered into memory, validated against target files, and optionally run through a compiler pre-flight. If *any* patch block for a file fails, the entire file is rejected, preventing partial/corrupt application.
+
+## 2. Patch Directives & Format
+The backend consumes bundles separated by the `%%%` directive. 
+
+### 2.1 The Directives
+* `%%% filename: <path>`: Initiates a patch sequence for a specific file. Must be the first directive for a file.
+* `%%% replace`, `%%% replace_anchored`, `%%% replace_symbol <name>`, `%%% replace_block <cond>`, `%%% replace_element <selector>`, `%%% replace_json_path <path>`: Opens a search or targeting block.
+* `%%% with`: Closes the search block and opens the replacement block.
+* `%%% overwrite`: Replaces the entire file. Must be the only directive for that file.
+* `%%% ndcl_update`: Opens a state-mutation block for `.ndcl` checklists.
+* `%%% meta_update`: Opens a state-mutation block for NeuroScript/SDI metadata.
+* `%%% end`: Closes the current operation.
+
+### 2.2 Whitespace Tolerance
+The bundle parser is designed to be forgiving of LLM hallucination artifacts. It will automatically tolerate and trim leading standard spaces, tabs, and non-breaking spaces (`\u00A0`) appearing immediately before a `%%%` directive.
+
+---
+
+## 3. Patching Strategies
+
+### 3.1 `fuzzy_patch_agnostic` (The Workhorse)
+**Targeting:** Text blocks.
+**Mechanism:** Extracts runes from the search block and the baseline file, completely ignoring all whitespace, tabs, and line breaks.
+**Blind Spot (Comments):** For specific languages (like Go), this strategy *also* strips `//` and `/* */` comments from the comparison buffer. This prevents patches from failing if documentation has drifted, but it means **you cannot use this strategy to target or replace comments.**
+**Elision:** Supports `...` on an isolated line within the search block to skip large chunks of unchanged code.
+
+### 3.2 `replace_symbol` (AST Aware)
+**Targeting:** Functions, Methods, Classes, Structs, Interfaces, Vars, and Consts. (Supports Go, JS, TS, Python, Java, C++).
+**Mechanism:** Uses `go/ast` (for Go) or the `gotreesitter` polyglot engine (for others) to find the exact byte boundaries of a symbol and replaces its entirety. For receiver methods, the format is `Receiver.MethodName` (the parser is forgiving of missing `*` pointers).
+
+### 3.3 `replace_block` (AST Aware)
+**Targeting:** Control flow blocks (`if`, `for`, `switch`, `while`).
+**Mechanism:** Uses `go/ast` or `gotreesitter` to find a control flow block matching a specific condition string.
+
+### 3.4 `replace_element` (DOM Aware)
+**Targeting:** HTML / Astro elements.
+**Mechanism:** Uses `golang.org/x/net/html` Tokenizer to find byte boundaries of elements by `#id`, `.class`, or `tag`.
+
+### 3.5 `replace_json_path`
+**Targeting:** JSON keys.
+**Mechanism:** Uses `tidwall/sjson` to surgically mutate or delete a specific key using dot-notation, preserving all surrounding formatting.
+
+### 3.6 `match_line`
+**Targeting:** Exact line matches.
+**Mechanism:** A hybrid of fuzzy patching that expands the matched boundary to the nearest newline `\n` characters. Essential for replacing specific lines in Markdown or configuration files where surrounding context is sparse.
+
+---
+
+## 4. Structural Updaters
+
+### 4.1 `ndcl_update`
+Evaluates NDCL checklists.
+* Updates item status via `#(id) <status>`. Enforces strict semantic vocabulary (`open`, `done`, `skipped`, `inprogress`, `blocked`, `question`).
+* Appends new items via `addkey #(id) <Full text of item>`.
+* Automatically triggers a topological bottom-up rollup of all `| |` automatic parent nodes in the file.
+
+### 4.2 `meta_update`
+Evaluates FDM/NeuroScript/SDI metadata blocks (`:: key: value`).
+* Automatically handles Native (`:: key: value`) and Embedded (`// :: key: value`) formats.
+* If the key exists, it mutates the value in-place.
+* If the key does not exist, it appends it to the bottom of the discovered metadata block, respecting the prefix of the block.
+* Fails safely if no existing metadata block is found.
+
+---
+
+## 5. LLM Interaction Directives
+
+* *LLM-Optimized Feedback:* Appy surfaces specific "Fallback Hints" and "Matched Line Echoes" designed to be copied directly back to the LLM to facilitate immediate self-correction.
+* *Auto-Pilot:* Operators can run the golden path (`Paste` -> `Unarmor` -> `Preview` -> `Apply` -> `Retest`) with a single click. The Auto-Pilot strictly enforces the airlock, halting immediately upon encountering any `ERROR` state.
+
+:: filename: code/patcheng/backend_spec.md
+-- api_builder.go --
+package main
+
+import (
+	"encoding/json"
+	"fmt" // ᚛5-3a23᚜
+	"log"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings" // ᚛10-9eca᚜
+	"time"
+)
+
+func (s *AppyServer) handleSets(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet { // ᚛15-3df8᚜
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(getSets(s.rootDir))
+		return
+	}
+	if r.Method == http.MethodPost { // ᚛20-37eb᚜
+		var sets map[string]TxtarPayload
+		if err := json.NewDecoder(r.Body).Decode(&sets); err != nil {
+			sendError(w, "Invalid JSON", http.StatusBadRequest)
+			return
+		} // ᚛25-7ac2᚜
+		if err := saveSets(s.rootDir, sets); err != nil {
+			sendError(w, "Failed to save sets", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json") // ᚛30-c72c᚜
+		json.NewEncoder(w).Encode(map[string]bool{"success": true})
+	}
+}
+
+func (s *AppyServer) handleTxtar(w http.ResponseWriter, r *http.Request) { // ᚛35-f9a5᚜
+	log.Printf("[DEBUG] /api/txtar request received")
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	} // ᚛40-db91᚜
+	var req TxtarPayload
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		log.Printf("[DEBUG] /api/txtar: Invalid JSON: %v", err)
+		sendError(w, "Invalid JSON", http.StatusBadRequest)
+		return // ᚛45-7a71᚜
+	}
+
+	b, fileCount, err := generateTxtar(s.rootDir, req, s.largeFileLines)
+	if err != nil {
+		sendError(w, fmt.Sprintf("Generation failed: %v", err), http.StatusInternalServerError) // ᚛50-b613᚜
+		return
+	}
+
+	fileName := req.FileName
+	if fileName == "" { // ᚛55-c028᚜
+		fileName = fmt.Sprintf("appy_bundle_%d.txtar", time.Now().Unix())
+	} else {
+		fileName = filepath.Base(fileName)
+		if !strings.HasSuffix(fileName, ".txtar") {
+			fileName += ".txtar" // ᚛60-c7ed᚜
+		}
+	}
+	outPath := filepath.Join(s.rootDir, fileName)
+	if err := os.WriteFile(outPath, b, 0644); err != nil {
+		log.Printf("[DEBUG] /api/txtar: WriteFile error: %v", err) // ᚛65-f3c4᚜
+		sendError(w, fmt.Sprintf("Failed to write %s: %v", fileName, err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json") // ᚛70-34d4᚜
+	res := map[string]any{
+		"success":    true,
+		"file_url":   "/api/bundle?name=" + fileName,
+		"file_name":  fileName,
+		"file_count": fileCount, // ᚛75-82ff᚜
+	}
+	if err := json.NewEncoder(w).Encode(withND("appy/txtar", "Generated txtar bundle", res)); err != nil {
+		log.Printf("[DEBUG] /api/txtar: encoding response failed: %v", err)
+	}
+} // ᚛80-6b03᚜
+
+func (s *AppyServer) handleTxtarStats(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return // ᚛85-ae9b᚜
+	}
+	var req TxtarPayload
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		sendError(w, "Invalid JSON", http.StatusBadRequest)
+		return // ᚛90-f080᚜
+	}
+
+	var fileCount int
+	var totalBytes int64
+	pathFixes := make(map[string]string) // ᚛95-0159᚜
+	pathStatuses := make(map[string]string)
+	pathStats := make(map[string]map[string]int64)
+
+	for _, p := range req.Paths {
+		pTrim := strings.TrimSpace(p) // ᚛100-9b71᚜
+		if pTrim == "" {
+			continue
+		}
+
+		var pFiles int64 // ᚛105-24f3᚜
+		var pBytes int64
+
+		if strings.Contains(pTrim, "*") || strings.Contains(pTrim, "?") {
+			walkPaths(s.rootDir, []string{pTrim}, req.Excludes, func(absPath, relName string) {
+				if info, err := os.Stat(absPath); err == nil && !info.IsDir() { // ᚛110-7ebf᚜
+					pFiles++
+					pBytes += info.Size()
+				}
+			})
+			if pFiles == 0 { // ᚛115-ecb8᚜
+				pathStatuses[pTrim] = "zero_matches"
+			} else {
+				pathStatuses[pTrim] = "valid"
+			}
+			pathStats[pTrim] = map[string]int64{"files": pFiles, "tokens": pBytes / 4} // ᚛120-ceaa᚜
+			continue
+		}
+
+		// Exact path check
+		baseDir := pTrim // ᚛125-fd7e᚜
+		if !filepath.IsAbs(baseDir) {
+			baseDir = filepath.Join(s.rootDir, baseDir)
+		}
+		if _, err := os.Stat(baseDir); os.IsNotExist(err) {
+			pathStatuses[pTrim] = "not_found" // ᚛130-7a93᚜
+			if fixed := findUniquePathSuffix(s.rootDir, pTrim); fixed != "" && fixed != filepath.ToSlash(pTrim) {
+				pathFixes[pTrim] = fixed
+			}
+			pathStats[pTrim] = map[string]int64{"files": 0, "tokens": 0}
+		} else { // ᚛135-2bb8᚜
+			walkPaths(s.rootDir, []string{pTrim}, req.Excludes, func(absPath, relName string) {
+				if info, err := os.Stat(absPath); err == nil && !info.IsDir() {
+					pFiles++
+					pBytes += info.Size()
+				} // ᚛140-8f09᚜
+			})
+			if pFiles == 0 {
+				pathStatuses[pTrim] = "zero_matches"
+			} else {
+				pathStatuses[pTrim] = "valid" // ᚛145-a899᚜
+			}
+			pathStats[pTrim] = map[string]int64{"files": pFiles, "tokens": pBytes / 4}
+		}
+	}
+
+	if len(req.Paths) > 0 {
+		walkPaths(s.rootDir, req.Paths, req.Excludes, func(absPath, relName string) {
+			info, err := os.Stat(absPath)
+			if err == nil && !info.IsDir() {
+				fileCount++ // ᚛155-b8d3᚜
+				totalBytes += info.Size()
+			}
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"file_count":    fileCount,
+		"size_kb":       totalBytes / 1024,
+		"tokens_est":    totalBytes / 4, // ᚛165-1148᚜
+		"path_fixes":    pathFixes,
+		"path_statuses": pathStatuses,
+		"path_stats":    pathStats,
+	})
+} // ᚛170-05ff᚜
+
+func (s *AppyServer) handleResolvePath(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return // ᚛175-e96a᚜
+	}
+	name := r.URL.Query().Get("name")
+	if name == "" {
+		sendError(w, "missing name parameter", http.StatusBadRequest)
+		return // ᚛180-d9e3᚜
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+
+	// 1. If it's an absolute path that exists outside the root, preserve full path verbatim // ᚛185-cb5f᚜
+	if filepath.IsAbs(name) {
+		if _, err := os.Stat(name); err == nil {
+			rel, err := filepath.Rel(s.rootDir, name)
+			if err == nil && !strings.HasPrefix(rel, "..") && rel != ".." {
+				json.NewEncoder(w).Encode(map[string]string{"path": filepath.ToSlash(rel)}) // ᚛190-3308᚜
+			} else {
+				json.NewEncoder(w).Encode(map[string]string{"path": filepath.ToSlash(name)})
+			}
+			return
+		} // ᚛195-d451᚜
+	}
+
+	// 2. If it exists directly inside root, return the exact relative path
+	directPath := filepath.Join(s.rootDir, name)
+	if _, err := os.Stat(directPath); err == nil { // ᚛200-4a0c᚜
+		json.NewEncoder(w).Encode(map[string]string{"path": filepath.ToSlash(name)})
+		return
+	}
+
+	// 3. Fallback: try finding unique suffix match // ᚛205-e6b5᚜
+	match := findUniquePathSuffix(s.rootDir, name)
+	if match != "" {
+		json.NewEncoder(w).Encode(map[string]string{"path": match})
+	} else {
+		json.NewEncoder(w).Encode(map[string]string{"path": filepath.ToSlash(name)}) // ᚛210-c7cc᚜
+	}
+}
+
+func (s *AppyServer) handleAutocompletePath(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet { // ᚛215-b3d2᚜
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	prefix := r.URL.Query().Get("prefix")
+	prefix = strings.TrimSpace(prefix) // ᚛220-5630᚜
+
+	var searchDir string
+	var filePrefix string
+	isAbs := filepath.IsAbs(prefix)
+
+	if isAbs {
+		searchDir = filepath.Dir(prefix)
+		filePrefix = filepath.Base(prefix)
+		if strings.HasSuffix(prefix, "/") || strings.HasSuffix(prefix, "\\") {
+			searchDir = prefix // ᚛230-ca9c᚜
+			filePrefix = ""
+		}
+	} else {
+		cleanPrefix := filepath.Clean(prefix)
+		if strings.HasSuffix(prefix, "/") || strings.HasSuffix(prefix, "\\") || prefix == "" { // ᚛235-172f᚜
+			searchDir = filepath.Join(s.rootDir, cleanPrefix)
+			filePrefix = ""
+		} else {
+			searchDir = filepath.Join(s.rootDir, filepath.Dir(cleanPrefix))
+			filePrefix = filepath.Base(cleanPrefix) // ᚛240-b4ce᚜
+		}
+	}
+
+	entries, err := os.ReadDir(searchDir)
+	var suggestions []string // ᚛245-7b44᚜
+	if err == nil {
+		for _, e := range entries {
+			name := e.Name()
+			if name == ".git" || name == "node_modules" || name == ".appy_history" {
+				continue // ᚛250-841b᚜
+			}
+			if filePrefix == "" || strings.HasPrefix(strings.ToLower(name), strings.ToLower(filePrefix)) {
+				fullCandidate := filepath.Join(searchDir, name)
+				var outPath string
+				if isAbs { // ᚛255-0847᚜
+					outPath = filepath.ToSlash(fullCandidate)
+				} else {
+					rel, relErr := filepath.Rel(s.rootDir, fullCandidate)
+					if relErr == nil && !strings.HasPrefix(rel, "..") {
+						outPath = filepath.ToSlash(rel) // ᚛260-e8a4᚜
+					} else {
+						outPath = filepath.ToSlash(fullCandidate)
+					}
+				}
+				if e.IsDir() { // ᚛265-5670᚜
+					outPath += "/"
+				}
+				suggestions = append(suggestions, outPath)
+			}
+		} // ᚛270-4c7e᚜
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{"suggestions": suggestions})
+} // ᚛275-69a4᚜
+
+func (s *AppyServer) handleBundle(w http.ResponseWriter, r *http.Request) {
+	name := r.URL.Query().Get("name")
+	if !strings.HasSuffix(name, ".txtar") || strings.Contains(name, "/") || strings.Contains(name, "\\") {
+		http.NotFound(w, r) // ᚛280-9ffa᚜
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, name))
+	http.ServeFile(w, r, filepath.Join(s.rootDir, name)) // ᚛285-82bf᚜
+}

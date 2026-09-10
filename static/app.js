@@ -132,6 +132,116 @@ function addDecorator(el, emoji) {
 }
 
 function escapeHtml(unsafe) {
-    if (!unsafe) return "";
-    return unsafe.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+   if (!unsafe) return "";
+   return unsafe.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+// Terminal / Clipboard Bash Runner
+let lastBashOutput = "";
+
+async function runBashFromClipboard() {
+    const btn = document.getElementById('runBashClipBtn');
+    let cmd = "";
+    try {
+        if (!navigator.clipboard || !navigator.clipboard.readText) {
+            throw new Error("Clipboard access not available.");
+        }
+        cmd = await navigator.clipboard.readText();
+    } catch (err) {
+        alert("Clipboard read failed: " + err.message);
+        return;
+    }
+
+    cmd = cmd.trim();
+    if (cmd.startsWith('$ ')) {
+        cmd = cmd.substring(2).trim();
+    } else if (cmd.startsWith('% ')) {
+        cmd = cmd.substring(2).trim();
+    }
+
+    if (!cmd) {
+        alert("Clipboard is empty.");
+        return;
+    }
+
+    btn.innerText = "⚡ Running...";
+    btn.disabled = true;
+
+    openBashDrawer();
+    const outEl = document.getElementById('bashConsoleOutput');
+    const statusChip = document.getElementById('bashStatusChip');
+    const durEl = document.getElementById('bashDuration');
+    const noticeEl = document.getElementById('bashClipNotice');
+
+    outEl.innerText = "$ " + cmd + "\n\n⏳ Running command in " + (window.AppyRootDir || 'sandbox') + "...\n";
+    statusChip.innerText = "RUNNING";
+    statusChip.style.background = "rgba(59, 130, 246, 0.2)";
+    statusChip.style.color = "#60a5fa";
+    noticeEl.style.display = "none";
+    durEl.innerText = "";
+
+    try {
+        const res = await fetch('/api/exec_bash', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ command: cmd, timeout: 120 })
+        });
+        const data = await res.json();
+
+        const output = data.output || (data.error ? ("Error: " + data.error) : "No output produced.");
+        lastBashOutput = output;
+        outEl.innerText = "$ " + cmd + "\n\n" + output;
+        durEl.innerText = `(${data.duration || ''})`;
+
+        if (data.exit_code === 0) {
+            statusChip.innerText = "EXIT 0";
+            statusChip.style.background = "rgba(34, 197, 94, 0.2)";
+            statusChip.style.color = "#4ade80";
+        } else {
+            statusChip.innerText = `EXIT ${data.exit_code}`;
+            statusChip.style.background = "rgba(239, 68, 68, 0.2)";
+            statusChip.style.color = "#f87171";
+        }
+
+        // Auto-copy output back into clipboard
+        try {
+            await navigator.clipboard.writeText(output);
+            noticeEl.style.display = "inline";
+        } catch (copyErr) {
+            console.warn("Auto-copy output failed:", copyErr);
+        }
+    } catch (err) {
+        outEl.innerText = "$ " + cmd + "\n\nError executing command: " + err.message;
+        statusChip.innerText = "ERROR";
+        statusChip.style.background = "rgba(239, 68, 68, 0.2)";
+        statusChip.style.color = "#f87171";
+    } finally {
+        btn.innerText = "⚡ Run Clip";
+        btn.disabled = false;
+    }
+}
+
+function openBashDrawer() {
+   const drawer = document.getElementById('bashDrawer');
+   if (drawer) drawer.style.display = 'flex';
+}
+
+function closeBashDrawer() {
+   const drawer = document.getElementById('bashDrawer');
+   if (drawer) drawer.style.display = 'none';
+}
+
+async function copyBashOutput() {
+   if (!lastBashOutput) return;
+   try {
+       await navigator.clipboard.writeText(lastBashOutput);
+       const noticeEl = document.getElementById('bashClipNotice');
+       if (noticeEl) {
+           noticeEl.style.display = "inline";
+           noticeEl.innerText = "✓ Copied!";
+           setTimeout(() => { noticeEl.innerText = "✓ Output copied to clipboard!"; }, 2000);
+       }
+   } catch (e) {
+       alert("Copy failed: " + e.message);
+   }
 }
