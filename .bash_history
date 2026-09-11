@@ -112,3 +112,10 @@ p hello
 cls
 t -quick
 go install .
+./run_appy.sh -port=8089
+tq
+go install .
+tq
+go install .
+tq
+go install .

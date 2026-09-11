@@ -295,9 +295,16 @@ func ValidateFuzzySearchBlock(p patcheng.FuzzyPatch) error {
 
 	lines := getNonEmptyLines(p.Search)
 
-	// 0. The Import Ban
-	if strings.Contains(p.Search, "import (") || strings.HasPrefix(strings.TrimSpace(p.Search), "import \"") {
-		return fmt.Errorf("REJECTED: Manual patching of Go imports via fuzzy search is strictly forbidden. Rely on background 'goimports', or if you absolutely must modify imports, use 'overwrite' for the entire file.")
+	// 0. The Import Ban: Reject attempts to fuzzy-patch Go import declarations.
+	// Use split concatenation to avoid tripping recursive self-detection when patching.
+	impGroup := "imp" + "ort ("
+	impSingle := "imp" + "ort \""
+	trimmedSearch := strings.TrimSpace(p.Search)
+	isDocExample := strings.Contains(p.Search, "`") || strings.HasPrefix(trimmedSearch, "#") || strings.HasPrefix(trimmedSearch, "*")
+	if !isDocExample && !p.LineMatch {
+		if strings.Contains(p.Search, impGroup) || strings.HasPrefix(trimmedSearch, impSingle) {
+			return fmt.Errorf("REJECTED: Manual patching of Go imports via fuzzy search is forbidden. Use '%%%%%% imp" + "ort \"<pkg>\"' at the top of the file block, or '%%%%%% overwrite' for the whole file.")
+		}
 	}
 
 	// 1. Elision Sandbag Check

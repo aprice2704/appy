@@ -22,11 +22,46 @@ type PatchFailureLog struct {
 	Phase     string                `json:"phase"` // "preview", "apply", "compiler"
 	File      string                `json:"file"`
 	Error     string                `json:"error"`
+	Methods   []string              `json:"methods,omitempty"`
 	LineEcho  string                `json:"line_echo,omitempty"`
 	Patches   []patcheng.FuzzyPatch `json:"patches,omitempty"`
 }
 
+func detectPatchMethod(p patcheng.FuzzyPatch) string {
+	switch {
+	case p.FullOverwrite:
+		return "overwrite"
+	case p.SymbolName != "":
+		return "replace_symbol"
+	case p.IsReplaceBlock:
+		return "replace_block"
+	case p.IsReplaceStatement:
+		return "replace_statement"
+	case p.IsReplaceElement:
+		return "replace_element"
+	case p.IsReplaceJson:
+		return "replace_json_path"
+	case p.IsNdclUpdate:
+		return "ndcl_update"
+	case p.IsMetaUpdate:
+		return "meta_update"
+	case p.IsDeleteFile:
+		return "delete_file"
+	case p.IsAnchored:
+		return "replace_anchored"
+	case len(p.ImportDirectives) > 0:
+		return "import"
+	default:
+		return "replace_fuzzy"
+	}
+}
+
 func appendFailureLog(rootDir string, logEntry PatchFailureLog) {
+	if len(logEntry.Methods) == 0 && len(logEntry.Patches) > 0 {
+		for _, p := range logEntry.Patches {
+			logEntry.Methods = append(logEntry.Methods, detectPatchMethod(p))
+		}
+	}
 	logPath := filepath.Join(rootDir, ".appy_failures.jsonl")
 	logEntry.Timestamp = time.Now().UTC().Format(time.RFC3339)
 

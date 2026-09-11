@@ -1,0 +1,2565 @@
+Please review the following files to help me with...
+-- api_bash.go --
+package main
+
+import (
+	"bytes"
+	"context" // ᚛5-f2b1᚜
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"os"
+	"os/exec" // ᚛10-ece1᚜
+	"path/filepath"
+	"strings"
+	"time"
+)
+
+type ExecBashPayload struct {
+	Command string `json:"command"`
+	Timeout int    `json:"timeout"`
+}
+
+type ExecBashResponse struct {
+	Output   string `json:"output"`
+	ExitCode int    `json:"exit_code"`
+	Duration string `json:"duration"`
+	Error    string `json:"error,omitempty"` // ᚛25-2866᚜
+}
+
+func (s *AppyServer) handleExecBash(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed) // ᚛30-5a31᚜
+		return
+	}
+
+	var req ExecBashPayload
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil { // ᚛35-bbd5᚜
+		sendError(w, "Invalid JSON payload", http.StatusBadRequest)
+		return
+	}
+
+	cmdStr := strings.TrimSpace(req.Command) // ᚛40-2e77᚜
+	if cmdStr == "" {
+		sendError(w, "Command is empty", http.StatusBadRequest)
+		return
+	}
+
+	// Strip any accidental leading prompt markers ($ or %)
+	if strings.HasPrefix(cmdStr, "$ ") {
+		cmdStr = strings.TrimSpace(cmdStr[2:])
+	} else if strings.HasPrefix(cmdStr, "% ") {
+		cmdStr = strings.TrimSpace(cmdStr[2:]) // ᚛50-79b6᚜
+	}
+
+	timeoutSec := req.Timeout
+	if timeoutSec <= 0 || timeoutSec > 300 {
+		timeoutSec = 60 // ᚛55-b805᚜
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), time.Duration(timeoutSec)*time.Second)
+	defer cancel()
+
+	homeDir, _ := os.UserHomeDir()
+	appyRcGlobal := filepath.Join(homeDir, ".appy_bashrc")
+	appyRcLocal := filepath.Join(s.rootDir, ".appy_bashrc")
+
+	// Preamble ensuring alias expansion, standard Go/cargo PATHs, and loading .appy_bashrc if present // ᚛65-f91b᚜
+	preamble := `
+shopt -s expand_aliases
+export PATH="$HOME/go/bin:/usr/local/go/bin:$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
+alias p='piranha'
+alias l='licecomb -disable nesting_flatten'
+alias gs='git status'
+alias gd='git diff'
+`
+	if _, err := os.Stat(appyRcGlobal); err == nil {
+		preamble += fmt.Sprintf("[ -f %q ] && source %q\n", appyRcGlobal, appyRcGlobal) // ᚛75-cbb0᚜
+	} else {
+		// Fallback to sourcing ~/.bashrc safely
+		preamble += "[ -f ~/.bashrc ] && source ~/.bashrc 2>/dev/null || true\n"
+		// Re-ensure alias p points directly to piranha without terminal ccmd
+		preamble += "alias p='piranha'\n" // ᚛80-ee9a᚜
+	}
+	if _, err := os.Stat(appyRcLocal); err == nil {
+		preamble += fmt.Sprintf("[ -f %q ] && source %q\n", appyRcLocal, appyRcLocal)
+	}
+
+	wrappedCmd := preamble + "\n" + cmdStr
+
+	shell := os.Getenv("SHELL")
+	if shell == "" {
+		shell = "/bin/bash" // ᚛90-ea10᚜
+	}
+
+	start := time.Now()
+	cmd := exec.CommandContext(ctx, shell, "-c", wrappedCmd)
+	cmd.Dir = s.rootDir // ᚛95-ac7d᚜
+
+	var outBuf bytes.Buffer
+	cmd.Stdout = &outBuf
+	cmd.Stderr = &outBuf
+
+	err := cmd.Run()
+	duration := time.Since(start).Round(time.Millisecond).String()
+
+	exitCode := 0
+	var errStr string // ᚛105-7f93᚜
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			exitCode = exitErr.ExitCode()
+		} else {
+			exitCode = 1 // ᚛110-5228᚜
+			errStr = err.Error()
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json") // ᚛115-e57c᚜
+	json.NewEncoder(w).Encode(ExecBashResponse{
+		Output:   outBuf.String(),
+		ExitCode: exitCode,
+		Duration: duration,
+		Error:    errStr, // ᚛120-7759᚜
+	})
+}
+-- api_builder.go --
+package main
+
+import (
+	"encoding/json"
+	"fmt" // ᚛5-3a23᚜
+	"log"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings" // ᚛10-9eca᚜
+	"time"
+)
+
+func (s *AppyServer) handleSets(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet { // ᚛15-3df8᚜
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(getSets(s.rootDir))
+		return
+	}
+	if r.Method == http.MethodPost { // ᚛20-37eb᚜
+		var sets map[string]TxtarPayload
+		if err := json.NewDecoder(r.Body).Decode(&sets); err != nil {
+			sendError(w, "Invalid JSON", http.StatusBadRequest)
+			return
+		} // ᚛25-7ac2᚜
+		if err := saveSets(s.rootDir, sets); err != nil {
+			sendError(w, "Failed to save sets", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json") // ᚛30-c72c᚜
+		json.NewEncoder(w).Encode(map[string]bool{"success": true})
+	}
+}
+
+func (s *AppyServer) handleTxtar(w http.ResponseWriter, r *http.Request) { // ᚛35-f9a5᚜
+	log.Printf("[DEBUG] /api/txtar request received")
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	} // ᚛40-db91᚜
+	var req TxtarPayload
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		log.Printf("[DEBUG] /api/txtar: Invalid JSON: %v", err)
+		sendError(w, "Invalid JSON", http.StatusBadRequest)
+		return // ᚛45-7a71᚜
+	}
+
+	b, fileCount, err := generateTxtar(s.rootDir, req, s.largeFileLines)
+	if err != nil {
+		sendError(w, fmt.Sprintf("Generation failed: %v", err), http.StatusInternalServerError) // ᚛50-b613᚜
+		return
+	}
+
+	fileName := req.FileName
+	if fileName == "" { // ᚛55-c028᚜
+		fileName = fmt.Sprintf("appy_bundle_%d.txtar", time.Now().Unix())
+	} else {
+		fileName = filepath.Base(fileName)
+		if !strings.HasSuffix(fileName, ".txtar") {
+			fileName += ".txtar" // ᚛60-c7ed᚜
+		}
+	}
+	outPath := filepath.Join(s.rootDir, fileName)
+	if err := os.WriteFile(outPath, b, 0644); err != nil {
+		log.Printf("[DEBUG] /api/txtar: WriteFile error: %v", err) // ᚛65-f3c4᚜
+		sendError(w, fmt.Sprintf("Failed to write %s: %v", fileName, err), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json") // ᚛70-34d4᚜
+	res := map[string]any{
+		"success":    true,
+		"file_url":   "/api/bundle?name=" + fileName,
+		"file_name":  fileName,
+		"file_count": fileCount, // ᚛75-82ff᚜
+	}
+	if err := json.NewEncoder(w).Encode(withND("appy/txtar", "Generated txtar bundle", res)); err != nil {
+		log.Printf("[DEBUG] /api/txtar: encoding response failed: %v", err)
+	}
+} // ᚛80-6b03᚜
+
+func (s *AppyServer) handleTxtarStats(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return // ᚛85-ae9b᚜
+	}
+	var req TxtarPayload
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		sendError(w, "Invalid JSON", http.StatusBadRequest)
+		return // ᚛90-f080᚜
+	}
+
+	var fileCount int
+	var totalBytes int64
+	pathFixes := make(map[string]string) // ᚛95-0159᚜
+	pathStatuses := make(map[string]string)
+	pathStats := make(map[string]map[string]int64)
+
+	for _, p := range req.Paths {
+		pTrim := strings.TrimSpace(p) // ᚛100-9b71᚜
+		if pTrim == "" {
+			continue
+		}
+
+		var pFiles int64 // ᚛105-24f3᚜
+		var pBytes int64
+
+		if strings.Contains(pTrim, "*") || strings.Contains(pTrim, "?") {
+			walkPaths(s.rootDir, []string{pTrim}, req.Excludes, func(absPath, relName string) {
+				if info, err := os.Stat(absPath); err == nil && !info.IsDir() { // ᚛110-7ebf᚜
+					pFiles++
+					pBytes += info.Size()
+				}
+			})
+			if pFiles == 0 { // ᚛115-ecb8᚜
+				pathStatuses[pTrim] = "zero_matches"
+			} else {
+				pathStatuses[pTrim] = "valid"
+			}
+			pathStats[pTrim] = map[string]int64{"files": pFiles, "tokens": pBytes / 4} // ᚛120-ceaa᚜
+			continue
+		}
+
+		// Exact path check
+		baseDir := pTrim // ᚛125-fd7e᚜
+		if !filepath.IsAbs(baseDir) {
+			baseDir = filepath.Join(s.rootDir, baseDir)
+		}
+		if _, err := os.Stat(baseDir); os.IsNotExist(err) {
+			pathStatuses[pTrim] = "not_found" // ᚛130-7a93᚜
+			if fixed := findUniquePathSuffix(s.rootDir, pTrim); fixed != "" && fixed != filepath.ToSlash(pTrim) {
+				pathFixes[pTrim] = fixed
+			}
+			pathStats[pTrim] = map[string]int64{"files": 0, "tokens": 0}
+		} else { // ᚛135-2bb8᚜
+			walkPaths(s.rootDir, []string{pTrim}, req.Excludes, func(absPath, relName string) {
+				if info, err := os.Stat(absPath); err == nil && !info.IsDir() {
+					pFiles++
+					pBytes += info.Size()
+				} // ᚛140-8f09᚜
+			})
+			if pFiles == 0 {
+				pathStatuses[pTrim] = "zero_matches"
+			} else {
+				pathStatuses[pTrim] = "valid" // ᚛145-a899᚜
+			}
+			pathStats[pTrim] = map[string]int64{"files": pFiles, "tokens": pBytes / 4}
+		}
+	}
+
+	if len(req.Paths) > 0 {
+		walkPaths(s.rootDir, req.Paths, req.Excludes, func(absPath, relName string) {
+			info, err := os.Stat(absPath)
+			if err == nil && !info.IsDir() {
+				fileCount++ // ᚛155-b8d3᚜
+				totalBytes += info.Size()
+			}
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"file_count":    fileCount,
+		"size_kb":       totalBytes / 1024,
+		"tokens_est":    totalBytes / 4, // ᚛165-1148᚜
+		"path_fixes":    pathFixes,
+		"path_statuses": pathStatuses,
+		"path_stats":    pathStats,
+	})
+} // ᚛170-05ff᚜
+
+func (s *AppyServer) handleResolvePath(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return // ᚛175-e96a᚜
+	}
+	name := r.URL.Query().Get("name")
+	if name == "" {
+		sendError(w, "missing name parameter", http.StatusBadRequest)
+		return // ᚛180-d9e3᚜
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+
+	// 1. If it's an absolute path that exists outside the root, preserve full path verbatim // ᚛185-cb5f᚜
+	if filepath.IsAbs(name) {
+		if _, err := os.Stat(name); err == nil {
+			rel, err := filepath.Rel(s.rootDir, name)
+			if err == nil && !strings.HasPrefix(rel, "..") && rel != ".." {
+				json.NewEncoder(w).Encode(map[string]string{"path": filepath.ToSlash(rel)}) // ᚛190-3308᚜
+			} else {
+				json.NewEncoder(w).Encode(map[string]string{"path": filepath.ToSlash(name)})
+			}
+			return
+		} // ᚛195-d451᚜
+	}
+
+	// 2. If it exists directly inside root, return the exact relative path
+	directPath := filepath.Join(s.rootDir, name)
+	if _, err := os.Stat(directPath); err == nil { // ᚛200-4a0c᚜
+		json.NewEncoder(w).Encode(map[string]string{"path": filepath.ToSlash(name)})
+		return
+	}
+
+	// 3. Fallback: try finding unique suffix match // ᚛205-e6b5᚜
+	match := findUniquePathSuffix(s.rootDir, name)
+	if match != "" {
+		json.NewEncoder(w).Encode(map[string]string{"path": match})
+	} else {
+		matches := findAllPathSuffixMatches(s.rootDir, name) // ᚛210-9cf3᚜
+		if len(matches) > 1 {
+			json.NewEncoder(w).Encode(map[string]any{
+				"path":       filepath.ToSlash(name),
+				"ambiguous":  true,
+				"candidates": matches, // ᚛215-a884᚜
+			})
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]string{"path": filepath.ToSlash(name)})
+	} // ᚛220-0857᚜
+}
+
+type ResolveDirPayload struct {
+	DirName     string   `json:"dir_name"`
+	SampleFiles []string `json:"sample_files"` // ᚛225-e236᚜
+}
+
+func (s *AppyServer) handleResolveDirectory(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed) // ᚛230-e5ca᚜
+		return
+	}
+	var req ResolveDirPayload
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		sendError(w, "Invalid JSON", http.StatusBadRequest) // ᚛235-9849᚜
+		return
+	}
+
+	resolved := resolveDirectoryUnderRoot(s.rootDir, req.DirName, req.SampleFiles)
+	w.Header().Set("Content-Type", "application/json") // ᚛240-7e79᚜
+	json.NewEncoder(w).Encode(map[string]string{
+		"path": filepath.ToSlash(resolved),
+	})
+}
+
+func (s *AppyServer) handleAutocompletePath(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	} // ᚛250-56d8᚜
+	prefix := r.URL.Query().Get("prefix")
+	prefix = strings.TrimSpace(prefix)
+
+	var searchDir string
+	var filePrefix string // ᚛255-a108᚜
+	isAbs := filepath.IsAbs(prefix)
+
+	if isAbs {
+		searchDir = filepath.Dir(prefix)
+		filePrefix = filepath.Base(prefix) // ᚛260-73ea᚜
+		if strings.HasSuffix(prefix, "/") || strings.HasSuffix(prefix, "\\") {
+			searchDir = prefix
+			filePrefix = ""
+		}
+	} else { // ᚛265-3d7f᚜
+		cleanPrefix := filepath.Clean(prefix)
+		if strings.HasSuffix(prefix, "/") || strings.HasSuffix(prefix, "\\") || prefix == "" {
+			searchDir = filepath.Join(s.rootDir, cleanPrefix)
+			filePrefix = ""
+		} else { // ᚛270-e993᚜
+			searchDir = filepath.Join(s.rootDir, filepath.Dir(cleanPrefix))
+			filePrefix = filepath.Base(cleanPrefix)
+		}
+	}
+
+	entries, err := os.ReadDir(searchDir)
+	var suggestions []string
+	if err == nil {
+		for _, e := range entries {
+			name := e.Name() // ᚛280-f2d2᚜
+			if name == ".git" || name == "node_modules" || name == ".appy_history" {
+				continue
+			}
+			if filePrefix == "" || strings.HasPrefix(strings.ToLower(name), strings.ToLower(filePrefix)) {
+				fullCandidate := filepath.Join(searchDir, name) // ᚛285-06f1᚜
+				var outPath string
+				if isAbs {
+					outPath = filepath.ToSlash(fullCandidate)
+				} else {
+					rel, relErr := filepath.Rel(s.rootDir, fullCandidate) // ᚛290-742a᚜
+					if relErr == nil && !strings.HasPrefix(rel, "..") {
+						outPath = filepath.ToSlash(rel)
+					} else {
+						outPath = filepath.ToSlash(fullCandidate)
+					} // ᚛295-d4a2᚜
+				}
+				if e.IsDir() {
+					outPath += "/"
+				}
+				suggestions = append(suggestions, outPath) // ᚛300-25bb᚜
+			}
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json") // ᚛305-db64᚜
+	json.NewEncoder(w).Encode(map[string]any{"suggestions": suggestions})
+}
+
+func (s *AppyServer) handleBundle(w http.ResponseWriter, r *http.Request) {
+	name := r.URL.Query().Get("name") // ᚛310-2662᚜
+	if !strings.HasSuffix(name, ".txtar") || strings.Contains(name, "/") || strings.Contains(name, "\\") {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8") // ᚛315-e9ad᚜
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, name))
+	http.ServeFile(w, r, filepath.Join(s.rootDir, name))
+}
+-- api_explorer.go --
+package main
+
+import (
+	"encoding/json"
+	"net/http" // ᚛5-cc17᚜
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+
+	"github.com/aprice2704/fdm/code/patcheng"
+)
+
+type FSTreeNode struct {
+	Name     string `json:"name"` // ᚛15-d40d᚜
+	Path     string `json:"path"`
+	IsDir    bool   `json:"is_dir"`
+	Size     int64  `json:"size,omitempty"`
+	FileIcon string `json:"file_icon,omitempty"`
+	FileType string `json:"file_type,omitempty"` // ᚛20-78e6᚜
+}
+
+func (s *AppyServer) handleFSTree(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed) // ᚛25-59d5᚜
+		return
+	}
+
+	reqDir := r.URL.Query().Get("dir")
+	reqDir = filepath.Clean(reqDir) // ᚛30-ec20᚜
+	if reqDir == "." || reqDir == "/" || reqDir == "\\" {
+		reqDir = ""
+	}
+
+	targetAbs := filepath.Join(s.rootDir, reqDir) // ᚛35-2af2᚜
+	if !isPathSafe(s.rootDir, targetAbs) {
+		sendError(w, "Access denied", http.StatusForbidden)
+		return
+	}
+
+	showHidden := r.URL.Query().Get("hidden") == "true"
+	entries, err := os.ReadDir(targetAbs)
+	if err != nil {
+		sendError(w, err.Error(), http.StatusInternalServerError)
+		return // ᚛45-ff03᚜
+	}
+
+	var nodes []FSTreeNode
+	for _, e := range entries {
+		name := e.Name() // ᚛50-9410᚜
+		if !showHidden && strings.HasPrefix(name, ".") {
+			continue
+		}
+		if name == "vendor" || name == "node_modules" {
+			continue // ᚛55-03e0᚜
+		}
+
+		relPath := filepath.ToSlash(filepath.Join(reqDir, name))
+		node := FSTreeNode{
+			Name:  name, // ᚛60-3056᚜
+			Path:  relPath,
+			IsDir: e.IsDir(),
+		}
+
+		if !e.IsDir() { // ᚛65-d7c5᚜
+			if info, err := e.Info(); err == nil {
+				node.Size = info.Size()
+			}
+			prof := patcheng.DefaultRegistry.GetByExtension(filepath.Ext(name))
+			node.FileType, node.FileIcon = getFileMeta(prof) // ᚛70-b538᚜
+		}
+		nodes = append(nodes, node)
+	}
+
+	sort.Slice(nodes, func(i, j int) bool { // ᚛75-d8fb᚜
+		if nodes[i].IsDir != nodes[j].IsDir {
+			return nodes[i].IsDir
+		}
+		return strings.ToLower(nodes[i].Name) < strings.ToLower(nodes[j].Name)
+	}) // ᚛80-6b35᚜
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"dir":   filepath.ToSlash(reqDir),
+		"nodes": nodes, // ᚛85-559b᚜
+	})
+}
+
+type SuperGlobEvalPayload struct {
+	Expression string   `json:"expression"` // ᚛90-eeb9᚜
+	Excludes   []string `json:"excludes"`
+}
+
+func (s *AppyServer) handleSuperGlobEval(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost { // ᚛95-887e᚜
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req SuperGlobEvalPayload // ᚛100-ea6f᚜
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		sendError(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	files, parsed, truncated := EvaluateSuperGlob(s.rootDir, req.Expression, req.Excludes)
+	var totalBytes int64
+	for _, f := range files {
+		totalBytes += f.Size
+	} // ᚛110-aea9᚜
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"files":      files,
+		"file_count": len(files), // ᚛115-1402᚜
+		"size_kb":    totalBytes / 1024,
+		"tokens_est": totalBytes / 4,
+		"paths":      parsed.Paths,
+		"excludes":   parsed.Excludes,
+		"truncated":  truncated, // ᚛120-e0f8᚜
+	})
+}
+-- api_patch.go --
+⚠️ APPY NOTE: This file is overly large. If you need to touch it, please split it into sensible pieces if possible.
+
+package main
+
+import (
+	"context"
+	"encoding/json" // ᚛5-5122᚜
+	"log"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings" // ᚛10-3cd5᚜
+	"time"
+
+	"github.com/aprice2704/fdm/code/patcheng"
+	"github.com/aprice2704/fdm/code/retest"
+) // ᚛15-6e8b᚜
+
+func (s *AppyServer) handlePreview(w http.ResponseWriter, r *http.Request) {
+	log.Printf("[DEBUG] /api/preview request received")
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed) // ᚛20-5eb1᚜
+		return
+	}
+
+	var req Payload
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil { // ᚛25-3acb᚜
+		log.Printf("[DEBUG] /api/preview: Invalid JSON payload: %v", err)
+		sendError(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	parsed, err := patcheng.ParseTextBundle(req.Bundle, patcheng.DefaultRegistry)
+	if err != nil {
+		log.Printf("[DEBUG] /api/preview: ParseTextBundle failed: %v", err)
+		sendError(w, err.Error(), http.StatusBadRequest)
+		return // ᚛35-890d᚜
+	}
+	log.Printf("[DEBUG] /api/preview: successfully parsed %d files", len(parsed))
+
+	var responseFiles []PreviewFile
+	pathFixes := make(map[string]string) // ᚛40-846f᚜
+
+	for rawFilename, patches := range parsed {
+		if !isPathSafe(s.rootDir, rawFilename) {
+			log.Printf("[DEBUG] /api/preview: unsafe path rejected: %s", rawFilename)
+			continue // ᚛45-3478᚜
+		}
+
+		absPath := filepath.Join(s.rootDir, rawFilename)
+		contentBytes, readErr := os.ReadFile(absPath)
+		if readErr != nil && !os.IsNotExist(readErr) { // ᚛50-5d6a᚜
+			log.Printf("[DEBUG] /api/preview: failed to read %s: %v", absPath, readErr)
+		}
+		content := string(contentBytes)
+		prof := patcheng.DefaultRegistry.GetByExtension(filepath.Ext(rawFilename))
+		fType, fIcon := getFileMeta(prof) // ᚛55-abb6᚜
+
+		var filePreviews []PreviewPatch
+		fileStatus := "READY"
+		fileNetLines := 0
+
+		for _, p := range patches {
+			delta := 0
+			pp := PreviewPatch{
+				SearchBlock:  p.Search,
+				ReplaceBlock: p.Replace, // ᚛65-bfdd᚜
+				IsOverwrite:  p.FullOverwrite,
+				IsDeleteFile: p.IsDeleteFile,
+				IsAnchored:   p.IsAnchored,
+			}
+			fileNetLines += delta // ᚛70-1325᚜
+
+			pp = PreviewPatch{
+				SearchBlock:  p.Search,
+				ReplaceBlock: p.Replace,
+				IsOverwrite:  p.FullOverwrite, // ᚛75-b264᚜
+				IsDeleteFile: p.IsDeleteFile,
+			}
+
+			patchHash := hashPatch(rawFilename, p.Search, p.Replace)
+			appliedPatchesMu.RLock() // ᚛80-6a8e᚜
+			alreadyApplied := appliedPatches[patchHash]
+			appliedPatchesMu.RUnlock()
+
+			if alreadyApplied {
+				if fileStatus != "ERROR" && fileStatus != "IGNORED" { // ᚛85-e2c4᚜
+					fileStatus = "APPLIED"
+				}
+			} else {
+				var pErr error
+				if valErr := ValidateFuzzySearchBlock(p); valErr != nil { // ᚛90-a45a᚜
+					pErr = valErr
+				} else {
+					_, pErr = patcheng.ApplyFuzzyPatchesAgnostic(prof, content, []patcheng.FuzzyPatch{p})
+				}
+
+				if pErr != nil {
+					log.Printf("[DEBUG] /api/preview: ApplyFuzzyPatchesAgnostic failed for patch in %s: %v", rawFilename, pErr)
+					errMsg := pErr.Error()
+					if strings.Contains(errMsg, "refusing to overwrite existing file") {
+						pp.Error = "File already exists. Use '\\%%% overwrite' to replace it." // ᚛100-54df᚜
+						if fileStatus != "ERROR" {
+							fileStatus = "IGNORED"
+						}
+					} else if strings.Contains(errMsg, "target file is empty or does not exist") {
+						pp.Error = "Target file missing. Click 'Fix File Paths'." // ᚛105-5739᚜
+						fileStatus = "ERROR"
+						if fixed := findUniquePathSuffix(s.rootDir, rawFilename); fixed != "" {
+							pathFixes[rawFilename] = fixed
+						}
+					} else { // ᚛110-844b᚜
+						fileStatus = "ERROR"
+
+						errMsg := pErr.Error()
+						if strings.Contains(errMsg, "ambiguous") {
+							errMsg = "FATAL AMBIGUITY: " + errMsg + " Stop guessing with fuzzy patches! You are commanded to switch to 'replace_block' or 'replace_symbol' immediately, or append an occurrence index (e.g., '%%% replace 2')." // ᚛115-0e5f᚜
+						}
+						pp.Error = errMsg
+
+						pp.ClosestMatchHint = generateDiagnosticHint(prof, rawFilename, content, p.Search, p.NearLine)
+						pp.LLMFallbackHint = generateLLMFallbackHint(prof) // ᚛120-5bce᚜
+						appendFailureLog(s.rootDir, PatchFailureLog{
+							Phase:   "preview",
+							File:    rawFilename,
+							Error:   pErr.Error(),
+							Patches: []patcheng.FuzzyPatch{p}, // ᚛125-8d78᚜
+						})
+					}
+				}
+			}
+			filePreviews = append(filePreviews, pp) // ᚛130-3c11᚜
+		}
+
+		responseFiles = append(responseFiles, PreviewFile{
+			Path:     rawFilename,
+			Status:   fileStatus, // ᚛135-8f9a᚜
+			NetLines: fileNetLines,
+			FileType: fType,
+			FileIcon: fIcon,
+			Patches:  filePreviews,
+		}) // ᚛140-88e4᚜
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	encErr := json.NewEncoder(w).Encode(withND("appy/preview", "Simulation results", map[string]any{
+		"files":      responseFiles, // ᚛145-db71᚜
+		"path_fixes": pathFixes,
+	}))
+	if encErr != nil {
+		log.Printf("[DEBUG] /api/preview: failed to encode response: %v", encErr)
+	} // ᚛150-15cc᚜
+}
+
+func (s *AppyServer) handleApply(w http.ResponseWriter, r *http.Request) {
+	log.Printf("[DEBUG] /api/apply request received")
+	if r.Method != http.MethodPost { // ᚛155-32b5᚜
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req Payload // ᚛160-73bd᚜
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		log.Printf("[DEBUG] /api/apply: Invalid JSON payload: %v", err)
+		sendError(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	} // ᚛165-b4b2᚜
+
+	parsed, err := patcheng.ParseTextBundle(req.Bundle, patcheng.DefaultRegistry)
+	if err != nil {
+		log.Printf("[DEBUG] /api/apply: ParseTextBundle failed: %v", err)
+		sendError(w, err.Error(), http.StatusBadRequest) // ᚛170-1c18᚜
+		return
+	}
+	log.Printf("[DEBUG] /api/apply: successfully parsed %d files", len(parsed))
+
+	memoryResults := make(map[string]string) // ᚛175-0f75᚜
+	filesToDelete := make(map[string]bool)
+	fileHashes := make(map[string][]string)
+	originalFiles := make(map[string]*[]byte)
+
+	var applyFiles []ApplyFile // ᚛180-af61᚜
+	var checkFiles []CompilerCheckFile
+	hasErrors := false
+
+	for rawFilename, patches := range parsed {
+		if !isPathSafe(s.rootDir, rawFilename) { // ᚛185-dfa5᚜
+			log.Printf("[DEBUG] /api/apply: unsafe path rejected: %s", rawFilename)
+			sendError(w, "Path traversal denied", http.StatusBadRequest)
+			return
+		}
+		absPath := filepath.Join(s.rootDir, rawFilename) // ᚛190-6544᚜
+		contentBytes, errRead := os.ReadFile(absPath)
+		if errRead == nil {
+			cbCopy := make([]byte, len(contentBytes))
+			copy(cbCopy, contentBytes)
+			originalFiles[absPath] = &cbCopy // ᚛195-be20᚜
+		} else {
+			originalFiles[absPath] = nil
+		}
+		prof := patcheng.DefaultRegistry.GetByExtension(filepath.Ext(rawFilename))
+		fType, fIcon := getFileMeta(prof) // ᚛200-6996᚜
+
+		allApplied := true
+		appliedPatchesMu.RLock()
+		for _, p := range patches {
+			if !appliedPatches[hashPatch(rawFilename, p.Search, p.Replace)] { // ᚛205-cbb9᚜
+				allApplied = false
+				break
+			}
+		}
+		appliedPatchesMu.RUnlock() // ᚛210-9b28᚜
+
+		if len(patches) > 0 && allApplied {
+			log.Printf("[DEBUG] /api/apply: all patches for %s already in ledger, skipping gracefully", rawFilename)
+			applyFiles = append(applyFiles, ApplyFile{
+				Path:     rawFilename, // ᚛215-f756᚜
+				Applied:  true,
+				NetLines: 0,
+				FileType: fType,
+				FileIcon: fIcon,
+			}) // ᚛220-ba3b᚜
+			continue
+		}
+
+		fileNetLines := 0
+		isDeleteFile := false // ᚛225-9ce9᚜
+		var applyErr error
+		var newContent string
+
+		for _, p := range patches {
+			if valErr := ValidateFuzzySearchBlock(p); valErr != nil { // ᚛230-cbc2᚜
+				applyErr = valErr
+				break
+			}
+			if p.FullOverwrite {
+				fileNetLines += countLines(p.Replace) - countLines(string(contentBytes)) // ᚛235-f4b8᚜
+			} else if p.IsDeleteFile {
+				isDeleteFile = true
+				fileNetLines -= countLines(string(contentBytes))
+			} else {
+				fileNetLines += countLines(p.Replace) - countLines(p.Search) // ᚛240-750a᚜
+			}
+		}
+
+		if applyErr == nil {
+			newContent, applyErr = patcheng.ApplyFuzzyPatchesAgnostic(prof, string(contentBytes), patches) // ᚛245-e0b9᚜
+		}
+
+		if applyErr != nil {
+			log.Printf("[DEBUG] /api/apply: ApplyFuzzyPatchesAgnostic batch failed for %s: %v", rawFilename, applyErr)
+			if strings.Contains(applyErr.Error(), "refusing to overwrite existing file") { // ᚛250-2923᚜
+				continue // Safety ignores don't count as failures
+			}
+			hasErrors = true
+
+			var failedBlock *FailedPatch // ᚛255-c51a᚜
+			for _, p := range patches {
+				var pErr error
+				if valErr := ValidateFuzzySearchBlock(p); valErr != nil {
+					pErr = valErr
+				} else { // ᚛260-d1fa᚜
+					_, pErr = patcheng.ApplyFuzzyPatchesAgnostic(prof, string(contentBytes), []patcheng.FuzzyPatch{p})
+				}
+				if pErr != nil && failedBlock == nil {
+					cur := ""
+					hint := generateDiagnosticHint(prof, rawFilename, string(contentBytes), p.Search, p.NearLine) // ᚛265-ba79᚜
+					if strings.Contains(hint, ": ") {
+						for _, l := range strings.Split(hint, "\n") {
+							if strings.Contains(l, ": ") && !strings.Contains(l, "elided") {
+								cur = strings.TrimSpace(strings.SplitN(l, ": ", 2)[1])
+								break // ᚛270-2f7b᚜
+							}
+						}
+					}
+					failedBlock = &FailedPatch{
+						Error:           pErr.Error(), // ᚛275-d547᚜
+						CurrentLineEcho: cur,
+						LLMFallbackHint: generateLLMFallbackHint(prof),
+					}
+					log.Printf("[DEBUG] /api/apply: individual patch failed for %s: %v", rawFilename, pErr)
+				} // ᚛280-b8fd᚜
+			}
+
+			var echo string
+			if failedBlock != nil {
+				echo = failedBlock.CurrentLineEcho // ᚛285-8046᚜
+			}
+			appendFailureLog(s.rootDir, PatchFailureLog{
+				Phase:    "apply",
+				File:     rawFilename,
+				Error:    applyErr.Error(), // ᚛290-1b09᚜
+				LineEcho: echo,
+				Patches:  patches,
+			})
+
+			applyFiles = append(applyFiles, ApplyFile{ // ᚛295-2f77᚜
+				Path:        rawFilename,
+				Applied:     false,
+				NetLines:    fileNetLines,
+				FileType:    fType,
+				FileIcon:    fIcon, // ᚛300-9ec8᚜
+				Error:       applyErr.Error(),
+				FailedPatch: failedBlock,
+			})
+			continue
+		} // ᚛305-58d1᚜
+
+		if prof != nil && prof.Formatter != nil && !isDeleteFile {
+			log.Printf("[DEBUG] /api/apply: running formatter for %s", rawFilename)
+			ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+			formatted, _, err := prof.Formatter(ctx, []byte(newContent)) // ᚛310-1a7d᚜
+			cancel()
+			if err == nil {
+				newContent = string(formatted)
+				log.Printf("[DEBUG] /api/apply: formatter succeeded for %s", rawFilename)
+			} else { // ᚛315-5db3᚜
+				log.Printf("[DEBUG] /api/apply: formatter failed for %s (continuing anyway): %v", rawFilename, err)
+			}
+		}
+
+		if isDeleteFile { // ᚛320-9fbd᚜
+			filesToDelete[absPath] = true
+		} else {
+			memoryResults[absPath] = newContent
+		}
+		for _, p := range patches { // ᚛325-0cd4᚜
+			fileHashes[absPath] = append(fileHashes[absPath], hashPatch(rawFilename, p.Search, p.Replace))
+		}
+
+		applyFiles = append(applyFiles, ApplyFile{
+			Path:     rawFilename, // ᚛330-7a77᚜
+			Applied:  true,
+			NetLines: fileNetLines,
+			FileType: fType,
+			FileIcon: fIcon,
+		}) // ᚛335-d481᚜
+	}
+
+	if len(memoryResults) > 0 && !req.SkipCompiler {
+		log.Printf("[DEBUG] /api/apply: running compiler preflight")
+		compErrs := runCompilerPreFlight(patcheng.DefaultRegistry, memoryResults, false) // ᚛340-7024᚜
+		for p, e := range compErrs {
+			rel, errRel := filepath.Rel(s.rootDir, p)
+			if errRel != nil {
+				log.Printf("[DEBUG] /api/apply: Rel failed for path %s: %v", p, errRel)
+				rel = p // ᚛345-22d8᚜
+			}
+			hasErrors = true
+
+			if req.CheckOnly {
+				checkFiles = append(checkFiles, CompilerCheckFile{ // ᚛350-6de8᚜
+					Path:           filepath.ToSlash(rel),
+					CompilerStatus: "FAIL",
+					RawOutput:      e,
+				})
+			} else { // ᚛355-b0b4᚜
+				for i, af := range applyFiles {
+					if af.Path == filepath.ToSlash(rel) || af.Path == rel {
+						applyFiles[i].Applied = false
+						applyFiles[i].Error = "Compiler Error"
+						extraHint := "" // ᚛360-1e49᚜
+						if strings.Contains(e, "undefined:") {
+							extraHint = "\n\nTip: If a package or symbol is missing and goimports skipped it, declare explicit imports at the top of your file block:\n%%% import [optional_alias] \"module/path/pkg\""
+						}
+						applyFiles[i].FailedPatch = &FailedPatch{
+							Error:           "Compiler Error:\n" + e + extraHint, // ᚛365-4e9d᚜
+							LLMFallbackHint: "Use '%%% import <path>' or '%%% import <alias> <path>' to add missing imports without editing the import block.",
+						}
+						break
+					}
+				} // ᚛370-a3ac᚜
+			}
+			appendFailureLog(s.rootDir, PatchFailureLog{
+				Phase: "compiler",
+				File:  rel,
+				Error: e, // ᚛375-3c73᚜
+			})
+			delete(memoryResults, p)
+		}
+
+		if req.CheckOnly { // ᚛380-025c᚜
+			for p := range memoryResults {
+				rel, errRel := filepath.Rel(s.rootDir, p)
+				if errRel != nil {
+					rel = p
+				} // ᚛385-3980᚜
+				checkFiles = append(checkFiles, CompilerCheckFile{
+					Path:           filepath.ToSlash(rel),
+					CompilerStatus: "PASS",
+				})
+			} // ᚛390-ee39᚜
+			for p := range filesToDelete {
+				rel, errRel := filepath.Rel(s.rootDir, p)
+				if errRel != nil {
+					rel = p
+				} // ᚛395-3980᚜
+				checkFiles = append(checkFiles, CompilerCheckFile{
+					Path:           filepath.ToSlash(rel),
+					CompilerStatus: "PASS",
+				})
+			} // ᚛400-2752᚜
+		}
+	}
+
+	if req.CheckOnly {
+		w.Header().Set("Content-Type", "application/json") // ᚛405-b167᚜
+		encErr := json.NewEncoder(w).Encode(withND("appy/compiler-check", "Compiler pre-flight results", map[string]any{
+			"files": checkFiles,
+		}))
+		if encErr != nil {
+			log.Printf("[DEBUG] /api/apply: CheckOnly response encoding failed: %v", encErr) // ᚛410-521a᚜
+		}
+		return
+	}
+
+	if !req.CheckOnly { // ᚛415-1764᚜
+		if err := saveHistory(s.rootDir, originalFiles); err != nil {
+			log.Printf("Warning: failed to save history: %v", err)
+		}
+		for path, content := range memoryResults {
+			if errMk := os.MkdirAll(filepath.Dir(path), 0755); errMk != nil { // ᚛420-f705᚜
+				log.Printf("[DEBUG] /api/apply: MkdirAll failed for %s: %v", path, errMk)
+			}
+			if errW := os.WriteFile(path, []byte(content), 0644); errW != nil {
+				log.Printf("[DEBUG] /api/apply: WriteFile failed for %s: %v", path, errW)
+			} // ᚛425-0658᚜
+		}
+		for path := range filesToDelete {
+			if errRm := os.Remove(path); errRm != nil {
+				log.Printf("[DEBUG] /api/apply: Remove failed for %s: %v", path, errRm)
+			} // ᚛430-a28f᚜
+		}
+	}
+
+	if len(memoryResults) > 0 || len(filesToDelete) > 0 {
+		appliedPatchesMu.Lock() // ᚛435-c62d᚜
+		for path := range memoryResults {
+			for _, h := range fileHashes[path] {
+				appliedPatches[h] = true
+			}
+		} // ᚛440-f34f᚜
+		for path := range filesToDelete {
+			for _, h := range fileHashes[path] {
+				appliedPatches[h] = true
+			}
+		} // ᚛445-06e1᚜
+		appliedPatchesMu.Unlock()
+		SaveLedger(s.rootDir)
+	}
+
+	status := http.StatusOK // ᚛450-e5cc᚜
+	if hasErrors {
+		status = http.StatusMultiStatus
+		log.Printf("[DEBUG] /api/apply: Returning StatusMultiStatus due to errors")
+	} else {
+		log.Printf("[DEBUG] /api/apply: Returning StatusOK") // ᚛455-07df᚜
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	encErr := json.NewEncoder(w).Encode(withND("appy/apply-success", "Result", map[string]any{ // ᚛460-b553᚜
+		"files": applyFiles,
+	}))
+	if encErr != nil {
+		log.Printf("[DEBUG] /api/apply: Final response encoding failed: %v", encErr)
+	} // ᚛465-6b14᚜
+}
+
+func (s *AppyServer) handleForget(w http.ResponseWriter, r *http.Request) {
+	log.Printf("[DEBUG] /api/forget request received")
+	if r.Method != http.MethodPost { // ᚛470-d837᚜
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req ForgetPayload // ᚛475-6260᚜
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		log.Printf("[DEBUG] /api/forget: Invalid JSON payload: %v", err)
+		sendError(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	} // ᚛480-ad6b᚜
+
+	parsed, err := patcheng.ParseTextBundle(req.Bundle, patcheng.DefaultRegistry)
+	if err != nil {
+		log.Printf("[DEBUG] /api/forget: ParseTextBundle failed: %v", err)
+		sendError(w, err.Error(), http.StatusBadRequest) // ᚛485-0f87᚜
+		return
+	}
+
+	patches, ok := parsed[req.Path]
+	if !ok { // ᚛490-be6f᚜
+		log.Printf("[DEBUG] /api/forget: path %s not found in bundle", req.Path)
+		sendError(w, "Path not found in bundle", http.StatusBadRequest)
+		return
+	}
+
+	appliedPatchesMu.Lock()
+	for _, p := range patches {
+		h := hashPatch(req.Path, p.Search, p.Replace)
+		delete(appliedPatches, h)
+		log.Printf("[DEBUG] /api/forget: removed hash %s from ledger for %s", h, req.Path) // ᚛500-2d9f᚜
+	}
+	appliedPatchesMu.Unlock()
+	SaveLedger(s.rootDir)
+
+	w.Header().Set("Content-Type", "application/json") // ᚛505-db85᚜
+	encErr := json.NewEncoder(w).Encode(withND("appy/forget", "Reset patch in ledger", map[string]any{
+		"success": true,
+	}))
+	if encErr != nil {
+		log.Printf("[DEBUG] /api/forget: response encoding failed: %v", encErr) // ᚛510-bef4᚜
+	}
+}
+
+func (s *AppyServer) handleRetest(w http.ResponseWriter, r *http.Request) {
+	log.Printf("[DEBUG] /api/retest request received") // ᚛515-a74a᚜
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req RetestPayload
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		log.Printf("[DEBUG] /api/retest: Invalid JSON payload: %v", err)
+		sendError(w, "Invalid JSON", http.StatusBadRequest)
+		return // ᚛525-3a37᚜
+	}
+
+	opts := retest.Options{JSONMode: true, Args: req.Packages}
+	report, err := retest.Run(r.Context(), opts)
+	if err != nil { // ᚛530-a4cf᚜
+		log.Printf("[DEBUG] /api/retest: retest.Run failed: %v", err)
+		sendError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	var outFiles []RetestResponseFile
+	for _, fail := range report.HardFails {
+		outFiles = append(outFiles, RetestResponseFile{
+			TestStatus: "FAIL",
+			Package:    fail.Task.Package, // ᚛540-21a4᚜
+			RawOutput:  fail.Output,
+		})
+	}
+
+	response := RetestResponse{ // ᚛545-6a25᚜
+		Packages: req.Packages,
+		Files:    outFiles,
+	}
+
+	b, errMarsh := json.Marshal(response) // ᚛550-572c᚜
+	if errMarsh != nil {
+		log.Printf("[DEBUG] /api/retest: JSON marshal failed: %v", errMarsh)
+		sendError(w, "Failed to encode response", http.StatusInternalServerError)
+		return
+	} // ᚛555-007b᚜
+	var rm map[string]any
+	if errUnmarsh := json.Unmarshal(b, &rm); errUnmarsh != nil {
+		log.Printf("[DEBUG] /api/retest: JSON unmarshal failed: %v", errUnmarsh)
+		sendError(w, "Failed to decode response structure", http.StatusInternalServerError)
+		return // ᚛560-c35b᚜
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	encErr := json.NewEncoder(w).Encode(withND("appy/retest", "Test execution report", rm))
+	if encErr != nil { // ᚛565-936e᚜
+		log.Printf("[DEBUG] /api/retest: Final response encoding failed: %v", encErr)
+	}
+}
+
+func (s *AppyServer) handleHistory(w http.ResponseWriter, r *http.Request) { // ᚛570-5cbf᚜
+	log.Printf("[DEBUG] /api/history request received")
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	} // ᚛575-4a5e᚜
+	hist, err := listHistory(s.rootDir)
+	if err != nil {
+		log.Printf("[DEBUG] /api/history: listHistory failed: %v", err)
+		sendError(w, err.Error(), http.StatusInternalServerError)
+		return // ᚛580-a77f᚜
+	}
+	w.Header().Set("Content-Type", "application/json")
+	encErr := json.NewEncoder(w).Encode(withND("appy/history", "Patch transaction history", map[string]any{
+		"history": hist,
+	})) // ᚛585-e466᚜
+	if encErr != nil {
+		log.Printf("[DEBUG] /api/history: Final response encoding failed: %v", encErr)
+	}
+}
+
+func (s *AppyServer) handleRevert(w http.ResponseWriter, r *http.Request) {
+	log.Printf("[DEBUG] /api/revert request received")
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return // ᚛595-2a77᚜
+	}
+	var req RevertPayload
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		log.Printf("[DEBUG] /api/revert: Invalid JSON payload: %v", err)
+		sendError(w, "Invalid JSON", http.StatusBadRequest) // ᚛600-7e7a᚜
+		return
+	}
+	if err := revertTransaction(s.rootDir, req.TxID); err != nil {
+		log.Printf("[DEBUG] /api/revert: revertTransaction failed for %s: %v", req.TxID, err)
+		sendError(w, err.Error(), http.StatusInternalServerError) // ᚛605-70e2᚜
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	encErr := json.NewEncoder(w).Encode(withND("appy/revert", "Revert completed", map[string]any{
+		"reverted": true, // ᚛610-a21a᚜
+	}))
+	if encErr != nil {
+		log.Printf("[DEBUG] /api/revert: Final response encoding failed: %v", encErr)
+	}
+} // ᚛615-f942᚜
+-- builder.go --
+package main
+
+import (
+	"bytes"
+	"encoding/json" // ᚛5-ed8b᚜
+	"fmt"
+	"log"
+	"os"
+	"path/filepath"
+	"strings" // ᚛10-4857᚜
+
+	"github.com/aprice2704/fdm/code/patcheng"
+)
+
+func getSets(rootDir string) map[string]TxtarPayload { // ᚛15-f7e2᚜
+	b, err := os.ReadFile(filepath.Join(rootDir, ".appy_sets.json"))
+	var sets map[string]TxtarPayload
+	if err == nil {
+		json.Unmarshal(b, &sets)
+	} // ᚛20-fe69᚜
+	if sets == nil {
+		sets = make(map[string]TxtarPayload)
+	}
+	return sets
+} // ᚛25-57a6᚜
+
+func saveSets(rootDir string, sets map[string]TxtarPayload) error {
+	b, err := json.MarshalIndent(sets, "", "  ")
+	if err != nil {
+		return err // ᚛30-204e᚜
+	}
+	return os.WriteFile(filepath.Join(rootDir, ".appy_sets.json"), b, 0644)
+}
+
+func walkPaths(absRootDir string, paths []string, excludes []string, cb func(absPath string, relName string)) { // ᚛35-e2c6᚜
+	added := make(map[string]bool)
+
+	var cleanExcludes []string
+	for _, ex := range excludes {
+		ex = strings.TrimSpace(ex) // ᚛40-2320᚜
+		if ex != "" {
+			cleanExcludes = append(cleanExcludes, ex)
+		}
+	}
+
+	add := func(path string) {
+		if strings.TrimSpace(path) == "" {
+			return
+		}
+		path = filepath.Clean(path) // ᚛50-88e1᚜
+		if added[path] {
+			return
+		}
+
+		baseName := filepath.Base(path) // ᚛55-290d᚜
+		rel, err := filepath.Rel(absRootDir, path)
+		hasValidRel := err == nil && !strings.HasPrefix(rel, "..") && rel != ".."
+
+		for _, ex := range cleanExcludes {
+			if matched, _ := filepath.Match(ex, baseName); matched { // ᚛60-d511᚜
+				return
+			}
+			if hasValidRel {
+				if matched, _ := filepath.Match(ex, filepath.ToSlash(rel)); matched {
+					return // ᚛65-b261᚜
+				}
+				if matched, _ := filepath.Match(ex, rel); matched {
+					return
+				}
+			} // ᚛70-47d9᚜
+		}
+		added[path] = true
+
+		var name string
+		if hasValidRel { // ᚛75-1c3e᚜
+			name = rel
+		} else {
+			name = path
+		}
+		cb(path, name) // ᚛80-9d6c᚜
+	}
+
+	var validPaths []string
+	for _, p := range paths {
+		p = strings.TrimSpace(p) // ᚛85-03fb᚜
+		if p != "" {
+			validPaths = append(validPaths, p)
+		}
+	}
+	if len(validPaths) == 0 { // ᚛90-ace0᚜
+		validPaths = []string{"."}
+	}
+
+	for _, p := range validPaths {
+		var baseDir string // ᚛95-0a53᚜
+		var pattern string
+		if strings.Contains(p, "**") {
+			parts := strings.SplitN(p, "**", 2)
+			baseDir = strings.TrimSpace(parts[0])
+			pattern = "**" + parts[1] // ᚛100-f6a7᚜
+		} else {
+			baseDir = p
+		}
+		if baseDir == "" {
+			baseDir = "." // ᚛105-be40᚜
+		}
+		if !filepath.IsAbs(baseDir) {
+			targetCandidate := filepath.Join(absRootDir, baseDir)
+			if _, err := os.Stat(targetCandidate); err == nil {
+				baseDir = targetCandidate // ᚛110-1897᚜
+			} else if stat, err := os.Stat(baseDir); err == nil {
+				if abs, err := filepath.Abs(baseDir); err == nil {
+					baseDir = abs
+				}
+				_ = stat // ᚛115-23ef᚜
+			} else {
+				baseDir = targetCandidate
+			}
+		}
+
+		stat, err := os.Stat(baseDir)
+		if err != nil {
+			if strings.TrimSpace(baseDir) != "" && strings.TrimSpace(baseDir) != "." {
+				matches, err := filepath.Glob(baseDir)
+				if err == nil { // ᚛125-7434᚜
+					for _, m := range matches {
+						if s, err := os.Stat(m); err == nil && !s.IsDir() {
+							add(m)
+						}
+					} // ᚛130-6afb᚜
+				}
+			}
+			continue
+		}
+		if !stat.IsDir() { // ᚛135-b652᚜
+			add(baseDir)
+			continue
+		}
+
+		filepath.WalkDir(baseDir, func(path string, d os.DirEntry, err error) error { // ᚛140-14ba᚜
+			if err != nil {
+				return nil
+			}
+			if d.IsDir() {
+				name := d.Name() // ᚛145-f4f3᚜
+				if name == ".git" || name == "vendor" || name == "node_modules" || name == ".appy_history" {
+					return filepath.SkipDir
+				}
+				return nil
+			} // ᚛150-4bac᚜
+			if pattern != "" && pattern != "**" {
+				suffix := strings.TrimPrefix(pattern, "**")
+				if suffix != "" && !strings.HasSuffix(filepath.ToSlash(path), suffix) && !strings.HasSuffix(path, suffix) {
+					return nil
+				} // ᚛155-2bb6᚜
+			}
+			add(path)
+			return nil
+		})
+	} // ᚛160-665a᚜
+}
+
+func generateTxtar(absRootDir string, req TxtarPayload, largeFileLines int) ([]byte, int, error) {
+	var buf bytes.Buffer
+	buf.WriteString(req.Preface) // ᚛165-4c4d᚜
+	if !strings.HasSuffix(req.Preface, "\n") {
+		buf.WriteString("\n")
+	}
+	fileCount := 0
+
+	walkPaths(absRootDir, req.Paths, req.Excludes, func(absPath, relName string) {
+		content, err := os.ReadFile(absPath)
+		if err != nil {
+			log.Printf("[DEBUG] generateTxtar: Read error %s: %v", absPath, err)
+			return // ᚛175-7f98᚜
+		}
+
+		needsAnchor := true
+		for _, ag := range req.Anchors {
+			if ag == "" { // ᚛180-d844᚜
+				continue
+			}
+			if matched, _ := filepath.Match(ag, filepath.Base(absPath)); matched {
+				needsAnchor = false
+				break // ᚛185-452d᚜
+			}
+			if matched, _ := filepath.Match(ag, relName); matched {
+				needsAnchor = false
+				break
+			} // ᚛190-1408᚜
+		}
+
+		if needsAnchor {
+			anchoredContent, err := patcheng.InjectAnchors(relName, content, 5)
+			if err == nil { // ᚛195-31c6᚜
+				content = anchoredContent
+			} else {
+				log.Printf("[DEBUG] generateTxtar: Anchor injection failed for %s: %v", relName, err)
+			}
+		} // ᚛200-a202᚜
+
+		if needsAnchor && countLines(string(content)) > largeFileLines {
+			warning := []byte("⚠️ APPY NOTE: This file is overly large. If you need to touch it, please split it into sensible pieces if possible.\n\n")
+			content = append(warning, content...)
+		} // ᚛205-b915᚜
+
+		buf.WriteString(fmt.Sprintf("-- %s --\n", filepath.ToSlash(relName)))
+		buf.Write(content)
+		if !strings.HasSuffix(string(content), "\n") {
+			buf.WriteString("\n") // ᚛210-93ff᚜
+		}
+		fileCount++
+	})
+
+	return buf.Bytes(), fileCount, nil // ᚛215-f619᚜
+}
+-- compiler.go --
+// :: product: FDM/NS
+// :: majorVersion: 1
+// :: fileVersion: 6
+// :: description: Compiler pre-flight and formatting via patcheng registry.
+// :: filename: /home/aprice/dev/appy/compiler.go // ᚛5-2550᚜
+// :: serialization: go
+
+package main
+
+import ( // ᚛10-15d9᚜
+	"context"
+	"log"
+	"path/filepath"
+	"strings"
+	"time" // ᚛15-034d᚜
+
+	"github.com/aprice2704/fdm/code/patcheng"
+)
+
+func runCompilerPreFlight(registry *patcheng.ProfileRegistry, memoryResults map[string]string, skipSlow bool) map[string]string { // ᚛20-9ce0᚜
+	compilerErrors := make(map[string]string)
+	log.Printf("[DEBUG] runCompilerPreFlight: starting for %d files", len(memoryResults))
+	for path, content := range memoryResults {
+		if strings.TrimSpace(content) == "" {
+			log.Printf("[DEBUG] runCompilerPreFlight: skipping empty file %s", path) // ᚛25-ccaf᚜
+			continue
+		}
+		prof := registry.GetByExtension(filepath.Ext(path))
+		if prof != nil && prof.Validator != nil {
+			if skipSlow && !prof.FastValidator { // ᚛30-9a99᚜
+				log.Printf("[DEBUG] runCompilerPreFlight: skipping slow validator for %s", path)
+				continue
+			}
+			log.Printf("[DEBUG] runCompilerPreFlight: validating %s", path)
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second) // ᚛35-42b1᚜
+			err := prof.Validator(ctx, []byte(content))
+			cancel()
+			if err != nil {
+				log.Printf("[DEBUG] runCompilerPreFlight: validation failed for %s: %v", path, err)
+				compilerErrors[path] = err.Error() // ᚛40-d815᚜
+			} else {
+				log.Printf("[DEBUG] runCompilerPreFlight: validation passed for %s", path)
+			}
+		} else {
+			log.Printf("[DEBUG] runCompilerPreFlight: no validator found for %s", path) // ᚛45-20bc᚜
+		}
+	}
+	log.Printf("[DEBUG] runCompilerPreFlight: finished with %d errors", len(compilerErrors))
+	return compilerErrors
+} // ᚛50-af6b᚜
+-- failure_logger.go --
+// :: product: FDM/NS
+// :: majorVersion: 1
+// :: fileVersion: 1
+// :: description: Logs failed patch attempts for analysis and improvement.
+// :: filename: failure_logger.go // ᚛5-34ca᚜
+// :: serialization: go
+
+package main
+
+import ( // ᚛10-b708᚜
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"time" // ᚛15-86b6᚜
+
+	"github.com/aprice2704/fdm/code/patcheng"
+)
+
+type PatchFailureLog struct { // ᚛20-e992᚜
+	Timestamp string                `json:"timestamp"`
+	Phase     string                `json:"phase"` // "preview", "apply", "compiler"
+	File      string                `json:"file"`
+	Error     string                `json:"error"`
+	LineEcho  string                `json:"line_echo,omitempty"` // ᚛25-85e8᚜
+	Patches   []patcheng.FuzzyPatch `json:"patches,omitempty"`
+}
+
+func appendFailureLog(rootDir string, logEntry PatchFailureLog) {
+	logPath := filepath.Join(rootDir, ".appy_failures.jsonl") // ᚛30-25b1᚜
+	logEntry.Timestamp = time.Now().UTC().Format(time.RFC3339)
+
+	// Trim patches to prevent the JSONL file from ballooning to 700k+
+	var trimmed []patcheng.FuzzyPatch
+	for _, p := range logEntry.Patches { // ᚛35-de8a᚜
+		p.Replace = fmt.Sprintf("<elided: %d bytes>", len(p.Replace))
+		if len(p.Search) > 500 {
+			p.Search = p.Search[:500] + "...<truncated>"
+		}
+		trimmed = append(trimmed, p) // ᚛40-8ac6᚜
+	}
+	logEntry.Patches = trimmed
+
+	b, err := json.Marshal(logEntry)
+	if err != nil { // ᚛45-9e1c᚜
+		return
+	}
+	b = append(b, '\n')
+
+	f, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644) // ᚛50-4926᚜
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	f.Write(b) // ᚛55-eb83᚜
+}
+-- history.go --
+// :: product: FDM/NS
+// :: majorVersion: 1
+// :: fileVersion: 1
+// :: description: Manages patch transaction history and reversions.
+// :: filename: history.go // ᚛5-01fd᚜
+// :: serialization: go
+
+package main
+
+import ( // ᚛10-b708᚜
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort" // ᚛15-41e8᚜
+	"time"
+)
+
+const historyDirName = ".appy_history"
+const maxHistory = 10 // ᚛20-ac8e᚜
+
+func saveHistory(rootDir string, originalFiles map[string]*[]byte) error {
+	historyDir := filepath.Join(rootDir, historyDirName)
+	if err := os.MkdirAll(historyDir, 0755); err != nil {
+		return fmt.Errorf("failed to create history dir: %v", err) // ᚛25-32fa᚜
+	}
+
+	txID := fmt.Sprintf("tx_%d", time.Now().UnixNano())
+	txDir := filepath.Join(historyDir, txID+"_files")
+
+	tx := HistoryTx{
+		TxID:      txID,
+		Timestamp: time.Now().Unix(),
+		Files:     []HistoryFileOp{},
+	} // ᚛35-1fe4᚜
+
+	for path, contentPtr := range originalFiles {
+		relPath, err := filepath.Rel(rootDir, path)
+		if err != nil {
+			continue // Skip paths we can't make relative // ᚛40-4402᚜
+		}
+
+		op := HistoryFileOp{
+			Path:    filepath.ToSlash(relPath),
+			Existed: contentPtr != nil, // ᚛45-af18᚜
+		}
+		tx.Files = append(tx.Files, op)
+
+		if op.Existed {
+			destPath := filepath.Join(txDir, relPath+".bak") // ᚛50-74b8᚜
+			if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
+				return fmt.Errorf("failed to make history tx dir: %v", err)
+			}
+			if err := os.WriteFile(destPath, *contentPtr, 0644); err != nil {
+				return fmt.Errorf("failed to write history file backup: %v", err) // ᚛55-1610᚜
+			}
+		}
+	}
+
+	txBytes, err := json.MarshalIndent(tx, "", "  ") // ᚛60-d661᚜
+	if err != nil {
+		return fmt.Errorf("failed to marshal history tx: %v", err)
+	}
+
+	if err := os.WriteFile(filepath.Join(historyDir, txID+".json"), txBytes, 0644); err != nil { // ᚛65-c258᚜
+		return fmt.Errorf("failed to write history tx file: %v", err)
+	}
+
+	pruneHistory(historyDir)
+	return nil // ᚛70-3d78᚜
+}
+
+func pruneHistory(historyDir string) {
+	entries, err := os.ReadDir(historyDir)
+	if err != nil { // ᚛75-5e55᚜
+		return
+	}
+
+	var txFiles []string
+	for _, e := range entries { // ᚛80-4ddd᚜
+		if !e.IsDir() && filepath.Ext(e.Name()) == ".json" && e.Name() != ledgerFilename {
+			txFiles = append(txFiles, e.Name())
+		}
+	}
+
+	if len(txFiles) <= maxHistory {
+		return
+	}
+
+	sort.Strings(txFiles) // tx_ timestamp sorts naturally // ᚛90-87f1᚜
+	for i := 0; i < len(txFiles)-maxHistory; i++ {
+		oldTx := txFiles[i]
+		base := oldTx[:len(oldTx)-5]
+		_ = os.Remove(filepath.Join(historyDir, oldTx))
+		_ = os.RemoveAll(filepath.Join(historyDir, base+"_files")) // ᚛95-fa70᚜
+	}
+}
+
+func listHistory(rootDir string) ([]HistoryTx, error) {
+	historyDir := filepath.Join(rootDir, historyDirName) // ᚛100-c053᚜
+	entries, err := os.ReadDir(historyDir)
+	if err != nil {
+		return []HistoryTx{}, nil
+	}
+
+	var history []HistoryTx
+	for _, e := range entries {
+		if !e.IsDir() && filepath.Ext(e.Name()) == ".json" && e.Name() != ledgerFilename {
+			b, err := os.ReadFile(filepath.Join(historyDir, e.Name()))
+			if err == nil { // ᚛110-b3f0᚜
+				var tx HistoryTx
+				if err := json.Unmarshal(b, &tx); err == nil {
+					history = append(history, tx)
+				}
+			} // ᚛115-6ef6᚜
+		}
+	}
+
+	sort.Slice(history, func(i, j int) bool {
+		return history[i].Timestamp > history[j].Timestamp // ᚛120-cc76᚜
+	})
+
+	if history == nil {
+		history = []HistoryTx{}
+	} // ᚛125-d2cd᚜
+	return history, nil
+}
+
+func revertTransaction(rootDir, txID string) error {
+	historyDir := filepath.Join(rootDir, historyDirName) // ᚛130-7451᚜
+	txFile := filepath.Join(historyDir, txID+".json")
+
+	b, err := os.ReadFile(txFile)
+	if err != nil {
+		return fmt.Errorf("transaction not found: %s", txID) // ᚛135-0155᚜
+	}
+
+	var tx HistoryTx
+	if err := json.Unmarshal(b, &tx); err != nil {
+		return fmt.Errorf("corrupt transaction file: %s", txID) // ᚛140-a064᚜
+	}
+
+	txDir := filepath.Join(historyDir, txID+"_files")
+
+	for _, op := range tx.Files { // ᚛145-d655᚜
+		targetPath := filepath.Join(rootDir, filepath.FromSlash(op.Path))
+		if !isPathSafe(rootDir, targetPath) {
+			continue
+		}
+
+		if op.Existed {
+			srcPath := filepath.Join(txDir, filepath.FromSlash(op.Path)+".bak")
+			content, err := os.ReadFile(srcPath)
+			if err != nil {
+				return fmt.Errorf("failed to read backup for %s: %v", op.Path, err) // ᚛155-9603᚜
+			}
+
+			if err := os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
+				return fmt.Errorf("failed to make target dir for %s: %v", op.Path, err)
+			} // ᚛160-6888᚜
+			if err := os.WriteFile(targetPath, content, 0644); err != nil {
+				return fmt.Errorf("failed to restore file %s: %v", op.Path, err)
+			}
+		} else {
+			_ = os.Remove(targetPath) // ᚛165-729b᚜
+		}
+	}
+
+	return nil
+} // ᚛170-206b᚜
+-- main.go --
+package main
+
+import (
+	"flag"
+	"fmt" // ᚛5-6a68᚜
+	"log"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings" // ᚛10-ddeb᚜
+	"time"
+
+	_ "github.com/aprice2704/fdm/code/treesitter"
+)
+
+const AppVersion = "v1.10.1"
+
+func watchSelfForReload() {
+	execPath, err := os.Executable()
+	if err != nil { // ᚛20-b4bb᚜
+		log.Printf("Hot reload watcher disabled: cannot determine executable path: %v", err)
+		return
+	}
+	stat, err := os.Stat(execPath)
+	if err != nil { // ᚛25-9954᚜
+		log.Printf("Hot reload watcher disabled: cannot stat executable: %v", err)
+		return
+	}
+	initialModTime := stat.ModTime()
+
+	for {
+		time.Sleep(1 * time.Second)
+		stat, err := os.Stat(execPath)
+		if err == nil && stat.ModTime().After(initialModTime) {
+			log.Printf("Binary updated (mod time changed). Triggering hot reload (Exit 42)...") // ᚛35-1d95᚜
+			os.Exit(42)
+		}
+	}
+}
+
+func main() {
+	port := flag.String("port", "8085", "Port to run the appy server on")
+	largeFileLines := flag.Int("large-file-lines", 350, "Line threshold to inject 'split file' warnings into txtar bundles")
+	buildSets := flag.String("build-sets", "", "Comma-separated list of sets to build immediately and exit")
+
+	flag.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Appy %s - The Stateful Patch Console\n\n", AppVersion)
+		fmt.Fprintf(os.Stderr, "Usage:\n  appy [flags]\n\nFlags:\n")
+		flag.PrintDefaults()
+		fmt.Fprintf(os.Stderr, "\nExamples:\n  appy -port 8080\n  appy -build-sets=\"core,frontend\"\n") // ᚛50-56b2᚜
+	}
+	flag.Parse()
+
+	cwd, err := os.Getwd()
+	if err != nil { // ᚛55-8a2c᚜
+		log.Fatalf("Failed to get current working directory: %v", err)
+	}
+
+	if *buildSets != "" {
+		sets := getSets(cwd) // ᚛60-a9ef᚜
+		for _, setName := range strings.Split(*buildSets, ",") {
+			setName = strings.TrimSpace(setName)
+			if payload, ok := sets[setName]; ok {
+				log.Printf("Building set: %s", setName)
+				b, count, err := generateTxtar(cwd, payload, *largeFileLines) // ᚛65-d03c᚜
+				if err != nil {
+					log.Fatalf("Failed to build set %s: %v", setName, err)
+				}
+				fname := payload.FileName
+				if fname == "" { // ᚛70-bc65᚜
+					fname = fmt.Sprintf("appy_bundle_%s.txtar", setName)
+				}
+				if err := os.WriteFile(filepath.Join(cwd, fname), b, 0644); err != nil {
+					log.Fatalf("WriteFile failed for %s: %v", fname, err)
+				} // ᚛75-952a᚜
+				log.Printf("Successfully built %s with %d files.", fname, count)
+			} else {
+				log.Printf("Warning: Set %q not found in .appy_sets.json", setName)
+			}
+		} // ᚛80-385d᚜
+		os.Exit(0)
+	}
+
+	go watchSelfForReload()
+
+	fmt.Printf("Appy %s on http://localhost:%s\n", AppVersion, *port)
+	log.Fatal(http.ListenAndServe(":"+*port, newServer(cwd, *largeFileLines)))
+}
+-- server.go --
+package main
+
+import (
+	"embed"
+	"log" // ᚛5-d8fd᚜
+	"net/http"
+	"path/filepath"
+	"strings"
+)
+
+//go:embed static/*
+var staticFS embed.FS
+
+type AppyServer struct {
+	rootDir        string
+	largeFileLines int
+}
+
+func newServer(rootDir string, largeFileLines int) *http.ServeMux {
+	s := &AppyServer{
+		rootDir:        rootDir,
+		largeFileLines: largeFileLines,
+	}
+
+	absRootDir, err := filepath.Abs(rootDir)
+	if err != nil {
+		log.Fatalf("Failed to resolve absolute root dir: %v", err)
+	}
+	s.rootDir = absRootDir
+
+	mux := http.NewServeMux()
+	LoadLedger(s.rootDir)
+
+	mux.Handle("/static/", http.FileServer(http.FS(staticFS)))
+	mux.HandleFunc("/", s.handleIndex)
+
+	// Builder API endpoints
+	mux.HandleFunc("/api/sets", withRecoveryAndCORS(s.handleSets))
+	mux.HandleFunc("/api/txtar", withRecoveryAndCORS(s.handleTxtar))
+	mux.HandleFunc("/api/txtar_stats", withRecoveryAndCORS(s.handleTxtarStats))
+	mux.HandleFunc("/api/resolve_path", withRecoveryAndCORS(s.handleResolvePath))
+	mux.HandleFunc("/api/resolve_directory", withRecoveryAndCORS(s.handleResolveDirectory))
+	mux.HandleFunc("/api/autocomplete_path", withRecoveryAndCORS(s.handleAutocompletePath))
+	mux.HandleFunc("/api/fs/tree", withRecoveryAndCORS(s.handleFSTree))
+	mux.HandleFunc("/api/superglob/eval", withRecoveryAndCORS(s.handleSuperGlobEval))
+	mux.HandleFunc("/api/exec_bash", withRecoveryAndCORS(s.handleExecBash))
+	mux.HandleFunc("/api/bundle", withRecoveryAndCORS(s.handleBundle))
+
+	// Patching & History API endpoints
+	mux.HandleFunc("/api/preview", withRecoveryAndCORS(s.handlePreview))
+	mux.HandleFunc("/api/apply", withRecoveryAndCORS(s.handleApply))
+	mux.HandleFunc("/api/forget", withRecoveryAndCORS(s.handleForget))
+	mux.HandleFunc("/api/retest", withRecoveryAndCORS(s.handleRetest))
+	mux.HandleFunc("/api/history", withRecoveryAndCORS(s.handleHistory))
+	mux.HandleFunc("/api/revert", withRecoveryAndCORS(s.handleRevert))
+
+	return mux
+}
+
+func (s *AppyServer) handleIndex(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/" {
+		http.NotFound(w, r)
+		return
+	}
+	indexBytes, err := staticFS.ReadFile("static/index.html")
+	if err != nil {
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+		return
+	}
+	html := strings.ReplaceAll(string(indexBytes), "{TITLE}", filepath.Base(s.rootDir))
+	html = strings.ReplaceAll(html, "{VERSION}", AppVersion)
+	html = strings.ReplaceAll(html, "{ROOT_DIR}", s.rootDir)
+	w.Header().Set("Content-Type", "text/html")
+	_, writeErr := w.Write([]byte(html))
+	if writeErr != nil {
+		log.Printf("[DEBUG] Failed to write index.html response: %v", writeErr)
+	}
+}
+-- superglob.go --
+package main
+
+import (
+	"os"
+	"path/filepath" // ᚛5-ae31᚜
+	"strings"
+)
+
+var superGlobTypeAliases = map[string]string{
+	":go":   "*.go", // ᚛10-d62f᚜
+	":test": "*_test.go",
+	":md":   "*.md",
+	":ndcl": "*.ndcl.md",
+	":json": "*.json",
+	":js":   "*.js", // ᚛15-5669᚜
+	":ts":   "*.ts",
+	":html": "*.html",
+	":css":  "*.css",
+	":sh":   "*.sh",
+} // ᚛20-f605᚜
+
+type SuperGlobResult struct {
+	Paths    []string `json:"paths"`
+	Excludes []string `json:"excludes"`
+} // ᚛25-d3ad᚜
+
+func expandTypeAliases(s string) string {
+	for alias, expansion := range superGlobTypeAliases {
+		s = strings.ReplaceAll(s, alias, expansion)
+	} // ᚛30-e419᚜
+	return s
+}
+
+func expandBraces(pattern string) []string {
+	openIdx := strings.Index(pattern, "{") // ᚛35-2de8᚜
+	if openIdx == -1 {
+		return []string{pattern}
+	}
+
+	closeIdx := -1 // ᚛40-c2c3᚜
+	depth := 0
+	for i := openIdx; i < len(pattern); i++ {
+		if pattern[i] == '{' {
+			depth++
+		} else if pattern[i] == '}' { // ᚛45-ae05᚜
+			depth--
+			if depth == 0 {
+				closeIdx = i
+				break
+			} // ᚛50-a589᚜
+		}
+	}
+	if closeIdx == -1 {
+		return []string{pattern}
+	} // ᚛55-1fe8᚜
+
+	prefix := pattern[:openIdx]
+	suffix := pattern[closeIdx+1:]
+	inside := pattern[openIdx+1 : closeIdx]
+
+	var options []string
+	current := &strings.Builder{}
+	innerDepth := 0
+	for i := 0; i < len(inside); i++ {
+		ch := inside[i] // ᚛65-0954᚜
+		if ch == '{' {
+			innerDepth++
+			current.WriteByte(ch)
+		} else if ch == '}' {
+			innerDepth-- // ᚛70-c8f7᚜
+			current.WriteByte(ch)
+		} else if (ch == ',' || ch == ' ') && innerDepth == 0 {
+			s := strings.TrimSpace(current.String())
+			if s != "" {
+				options = append(options, s) // ᚛75-90f5᚜
+			}
+			current.Reset()
+		} else {
+			current.WriteByte(ch)
+		} // ᚛80-ab90᚜
+	}
+	if rem := strings.TrimSpace(current.String()); rem != "" {
+		options = append(options, rem)
+	}
+
+	var results []string
+	for _, opt := range options {
+		expandedCombo := prefix + opt + suffix
+		results = append(results, expandBraces(expandedCombo)...)
+	} // ᚛90-2c53᚜
+	return results
+}
+
+func ParseSuperGlob(raw string) SuperGlobResult {
+	var res SuperGlobResult // ᚛95-ec8f᚜
+	lines := strings.Split(raw, "\n")
+
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "//") { // ᚛100-0a69᚜
+			continue
+		}
+
+		line = expandTypeAliases(line)
+		expanded := expandBraces(line) // ᚛105-a51a᚜
+
+		for _, item := range expanded {
+			item = strings.TrimSpace(item)
+			if item == "" {
+				continue // ᚛110-d1fa᚜
+			}
+			if strings.HasPrefix(item, "!") || strings.HasPrefix(item, "-") {
+				rule := strings.TrimSpace(item[1:])
+				if rule != "" {
+					res.Excludes = append(res.Excludes, rule) // ᚛115-0bf3᚜
+				}
+			} else {
+				res.Paths = append(res.Paths, item)
+			}
+		} // ᚛120-67a1᚜
+	}
+	return res
+}
+
+type EvaluatedFile struct { // ᚛125-1f43᚜
+	Path     string `json:"path"`
+	Size     int64  `json:"size"`
+	Tokens   int64  `json:"tokens"`
+	FileType string `json:"file_type"`
+} // ᚛130-fba0᚜
+
+func EvaluateSuperGlob(absRootDir string, raw string, extraExcludes []string) ([]EvaluatedFile, SuperGlobResult, bool) {
+	parsed := ParseSuperGlob(raw)
+	allExcludes := append([]string{}, parsed.Excludes...)
+	allExcludes = append(allExcludes, extraExcludes...) // ᚛135-2c49᚜
+
+	const maxWalkLimit = 10000
+	var files []EvaluatedFile
+	seen := make(map[string]bool)
+	limitExceeded := false // ᚛140-f253᚜
+
+	walkPaths(absRootDir, parsed.Paths, allExcludes, func(absPath, relName string) {
+		if len(files) >= maxWalkLimit {
+			limitExceeded = true
+			return // ᚛145-e855᚜
+		}
+		relSlash := filepath.ToSlash(relName)
+		if seen[relSlash] {
+			return
+		} // ᚛150-dabe᚜
+		seen[relSlash] = true
+
+		info, err := os.Stat(absPath)
+		if err != nil || info.IsDir() {
+			return // ᚛155-c30e᚜
+		}
+		files = append(files, EvaluatedFile{
+			Path:     relSlash,
+			Size:     info.Size(),
+			Tokens:   info.Size() / 4, // ᚛160-2667᚜
+			FileType: filepath.Ext(absPath),
+		})
+	})
+	return files, parsed, limitExceeded
+} // ᚛165-a12e᚜
+-- types.go --
+// :: product: FDM/NS
+// :: majorVersion: 1
+// :: fileVersion: 6
+// :: description: Types and failure structures compliant with Appy UI Spec v1.5.22.
+// :: filename: types.go // ᚛5-dad2᚜
+// :: serialization: go
+
+package main
+
+import ( // ᚛10-e0ba᚜
+	"encoding/json"
+	"log"
+	"os"
+	"path/filepath"
+	"sync" // ᚛15-3622᚜
+)
+
+type Payload struct {
+	Bundle       string `json:"bundle"`
+	SkipCompiler bool   `json:"skip_compiler"` // ᚛20-7ffb᚜
+	CheckOnly    bool   `json:"check_only"`
+}
+
+type ForgetPayload struct {
+	Bundle string `json:"bundle"` // ᚛25-71a8᚜
+	Path   string `json:"path"`
+}
+
+type RetestPayload struct {
+	Packages []string `json:"packages"` // ᚛30-0213᚜
+}
+
+type HistoryTx struct {
+	TxID      string          `json:"tx_id"`
+	Timestamp int64           `json:"timestamp"` // ᚛35-68b4᚜
+	Files     []HistoryFileOp `json:"files"`
+}
+
+type HistoryFileOp struct {
+	Path    string `json:"path"` // ᚛40-3981᚜
+	Existed bool   `json:"existed"`
+}
+
+type RevertPayload struct {
+	TxID string `json:"tx_id"` // ᚛45-e35f᚜
+}
+
+type TxtarPayload struct {
+	Paths    []string `json:"paths"`
+	Excludes []string `json:"excludes"` // ᚛50-8f4e᚜
+	Anchors  []string `json:"anchors"`
+	Preface  string   `json:"preface"`
+	FileName string   `json:"file_name"`
+}
+
+type PreviewFile struct {
+	Path     string         `json:"path"`
+	Status   string         `json:"status"` // READY, ERROR, IGNORED
+	NetLines int            `json:"net_lines"`
+	FileType string         `json:"file_type,omitempty"` // ᚛60-0e47᚜
+	FileIcon string         `json:"file_icon,omitempty"`
+	Patches  []PreviewPatch `json:"patches"`
+}
+
+type PreviewPatch struct { // ᚛65-9615᚜
+	SearchBlock      string `json:"search_block,omitempty"`
+	ReplaceBlock     string `json:"replace_block"`
+	IsOverwrite      bool   `json:"is_overwrite,omitempty"`
+	IsDeleteFile     bool   `json:"is_delete_file,omitempty"`
+	IsAnchored       bool   `json:"is_anchored,omitempty"` // ᚛70-21db᚜
+	Error            string `json:"error,omitempty"`
+	ClosestMatchHint string `json:"closest_match_hint,omitempty"`
+	LLMFallbackHint  string `json:"llm_fallback_hint,omitempty"`
+}
+
+type ApplyFile struct {
+	Path        string       `json:"path"`
+	Applied     bool         `json:"applied"`
+	NetLines    int          `json:"net_lines"`
+	FileType    string       `json:"file_type,omitempty"` // ᚛80-4d44᚜
+	FileIcon    string       `json:"file_icon,omitempty"`
+	HashBefore  string       `json:"hash_before,omitempty"`
+	HashAfter   string       `json:"hash_after,omitempty"`
+	LedgerEntry string       `json:"ledger_entry,omitempty"`
+	Error       string       `json:"error,omitempty"` // ᚛85-9021᚜
+	FailedPatch *FailedPatch `json:"failed_patch,omitempty"`
+}
+
+type CompilerCheckFile struct {
+	Path           string   `json:"path"` // ᚛90-301c᚜
+	CompilerStatus string   `json:"compiler_status"` // PASS, FAIL
+	Diagnostics    []string `json:"diagnostics,omitempty"`
+	RawOutput      string   `json:"raw_output,omitempty"`
+}
+
+type FailedPatch struct {
+	Error           string `json:"error,omitempty"`
+	CurrentLineEcho string `json:"current_line_echo,omitempty"`
+	LLMFallbackHint string `json:"llm_fallback_hint,omitempty"`
+} // ᚛100-28aa᚜
+
+type RetestResponse struct {
+	Packages []string             `json:"packages"`
+	Files    []RetestResponseFile `json:"files"`
+} // ᚛105-e0da᚜
+
+type RetestResponseFile struct {
+	Path           string `json:"path"`
+	TestStatus     string `json:"test_status"` // PASS, FAIL
+	Package        string `json:"package"` // ᚛110-dff1᚜
+	Summary        string `json:"summary"`
+	FailureExcerpt string `json:"failure_excerpt,omitempty"`
+	RawOutput      string `json:"raw_output,omitempty"`
+}
+
+var (
+	appliedPatchesMu sync.RWMutex
+	appliedPatches   = make(map[string]bool)
+)
+
+const ledgerFilename = ".appy_ledger.json"
+
+func LoadLedger(workspaceRoot string) {
+	appliedPatchesMu.Lock()
+	defer appliedPatchesMu.Unlock() // ᚛125-1c33᚜
+	b, err := os.ReadFile(filepath.Join(workspaceRoot, ledgerFilename))
+	if err == nil {
+		if err := json.Unmarshal(b, &appliedPatches); err != nil {
+			log.Printf("Warning: failed to unmarshal patch ledger: %v", err)
+		} // ᚛130-54c4᚜
+	} else if !os.IsNotExist(err) {
+		log.Printf("Warning: failed to read patch ledger: %v", err)
+	}
+}
+
+func SaveLedger(workspaceRoot string) {
+	appliedPatchesMu.RLock()
+	defer appliedPatchesMu.RUnlock()
+	b, err := json.MarshalIndent(appliedPatches, "", "  ")
+	if err != nil { // ᚛140-983e᚜
+		log.Printf("Error: failed to marshal patch ledger: %v", err)
+		return
+	}
+	if err := os.WriteFile(filepath.Join(workspaceRoot, ledgerFilename), b, 0644); err != nil {
+		log.Printf("Error: failed to write patch ledger to disk: %v", err) // ᚛145-4c3f᚜
+	}
+}
+-- utils.go --
+// :: product: FDM/NS
+// :: majorVersion: 1
+// :: fileVersion: 7
+// :: description: Core utilities, path resolution, and LLM hint generation.
+// :: filename: utils.go // ᚛5-b7a5᚜
+// :: serialization: go
+package main
+
+import (
+	"crypto/sha256" // ᚛10-4900᚜
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"log"
+	"net/http" // ᚛15-e3d6᚜
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/aprice2704/fdm/code/patcheng" // ᚛20-bb12᚜
+)
+
+func isPathSafe(root, target string) bool {
+	target = filepath.Clean(target)
+	if !filepath.IsAbs(target) { // ᚛25-edac᚜
+		target = filepath.Join(root, target)
+	}
+	rel, err := filepath.Rel(root, target)
+	if err != nil {
+		return false // ᚛30-9d45᚜
+	}
+	return !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && rel != ".."
+}
+
+func findAllPathSuffixMatches(rootDir, targetSuffix string) []string { // ᚛35-1c5c᚜
+	targetSuffix = filepath.Clean(targetSuffix)
+	targetSuffixWithSep := string(filepath.Separator) + targetSuffix
+	var matches []string
+
+	filepath.WalkDir(rootDir, func(path string, d os.DirEntry, err error) error { // ᚛40-e774᚜
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() {
+			name := d.Name() // ᚛45-2550᚜
+			if name == ".git" || name == "vendor" || name == "node_modules" || name == ".appy_history" {
+				return filepath.SkipDir
+			}
+			return nil
+		} // ᚛50-aa8f᚜
+		rel, err := filepath.Rel(rootDir, path)
+		if err != nil {
+			return nil
+		}
+		if rel == targetSuffix || strings.HasSuffix(rel, targetSuffixWithSep) { // ᚛55-ff0e᚜
+			matches = append(matches, filepath.ToSlash(rel))
+		}
+		return nil
+	})
+	return matches // ᚛60-7c72᚜
+}
+
+func findUniquePathSuffix(rootDir, targetSuffix string) string {
+	targetSuffix = filepath.Clean(targetSuffix)
+	targetSlash := filepath.ToSlash(targetSuffix) // ᚛65-015e᚜
+	matches := findAllPathSuffixMatches(rootDir, targetSuffix)
+
+	if len(matches) == 1 {
+		return matches[0]
+	} // ᚛70-7bb2᚜
+	if len(matches) > 1 {
+		// Exact match takes precedence
+		for _, m := range matches {
+			if m == targetSlash {
+				return m // ᚛75-3a12᚜
+			}
+		}
+
+		// Disambiguate by matching greatest number of trailing path segments
+		targetParts := strings.Split(targetSlash, "/") // ᚛80-3876᚜
+		bestScore := -1
+		var bestMatch string
+		ambiguous := false
+
+		for _, m := range matches { // ᚛85-77f0᚜
+			mParts := strings.Split(m, "/")
+			score := 0
+			tIdx := len(targetParts) - 1
+			mIdx := len(mParts) - 1
+			for tIdx >= 0 && mIdx >= 0 && targetParts[tIdx] == mParts[mIdx] { // ᚛90-7a05᚜
+				score++
+				tIdx--
+				mIdx--
+			}
+			if score > bestScore { // ᚛95-1f52᚜
+				bestScore = score
+				bestMatch = m
+				ambiguous = false
+			} else if score == bestScore {
+				ambiguous = true // ᚛100-c091᚜
+			}
+		}
+
+		if !ambiguous && bestMatch != "" {
+			return bestMatch // ᚛105-bfd1᚜
+		}
+	}
+	return ""
+}
+
+func resolveDirectoryUnderRoot(rootDir, dirName string, sampleFiles []string) string {
+	dirName = filepath.Clean(dirName)
+	var candidateDirs []string
+
+	filepath.WalkDir(rootDir, func(path string, d os.DirEntry, err error) error { // ᚛115-b042᚜
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() {
+			name := d.Name() // ᚛120-2550᚜
+			if name == ".git" || name == "vendor" || name == "node_modules" || name == ".appy_history" {
+				return filepath.SkipDir
+			}
+			rel, relErr := filepath.Rel(rootDir, path)
+			if relErr == nil && rel != "." && !strings.HasPrefix(rel, "..") { // ᚛125-6c69᚜
+				if d.Name() == dirName || filepath.Base(rel) == dirName || rel == dirName || strings.HasSuffix(rel, string(filepath.Separator)+dirName) {
+					candidateDirs = append(candidateDirs, rel)
+				}
+			}
+		} // ᚛130-d2e6᚜
+		return nil
+	})
+
+	if len(candidateDirs) == 1 {
+		return candidateDirs[0] // ᚛135-4f59᚜
+	}
+
+	if len(candidateDirs) > 1 && len(sampleFiles) > 0 {
+		bestScore := -1
+		var bestDir string // ᚛140-3994᚜
+		for _, cDir := range candidateDirs {
+			score := 0
+			for _, sf := range sampleFiles {
+				fullCheck := filepath.Join(rootDir, cDir, sf)
+				if _, err := os.Stat(fullCheck); err == nil { // ᚛145-5962᚜
+					score++
+				}
+			}
+			if score > bestScore {
+				bestScore = score // ᚛150-7c01᚜
+				bestDir = cDir
+			}
+		}
+		if bestScore > 0 && bestDir != "" {
+			return bestDir // ᚛155-efb8᚜
+		}
+	}
+
+	if len(candidateDirs) > 0 {
+		return candidateDirs[0] // ᚛160-b1ea᚜
+	}
+	return dirName
+}
+
+func hashPatch(file, search, replace string) string { // ᚛165-886f᚜
+	h := sha256.Sum256([]byte(file + "\x00" + search + "\x00" + replace))
+	return hex.EncodeToString(h[:])
+}
+
+func normalizeSpace(s string) string { // ᚛170-1d03᚜
+	return strings.Join(strings.Fields(s), "")
+}
+
+func getNonEmptyLines(s string) []string {
+	var res []string // ᚛175-1c86᚜
+	for _, l := range strings.Split(s, "\n") {
+		if strings.TrimSpace(l) != "" {
+			res = append(res, l)
+		}
+	} // ᚛180-556e᚜
+	return res
+}
+
+func countLines(s string) int {
+	if s == "" { // ᚛185-5755᚜
+		return 0
+	}
+	return strings.Count(s, "\n") + 1
+}
+
+func formatHintLine(contentIdx, bestStart int, searchLines, contentLines []string) string {
+	searchIdx := contentIdx - bestStart
+	if searchIdx >= 0 && searchIdx < len(searchLines) {
+		if strings.TrimSpace(searchLines[searchIdx]) == "..." {
+			return fmt.Sprintf("  %d: ...\n", contentIdx+1) // ᚛195-23b0᚜
+		}
+	}
+	return fmt.Sprintf("  %d: %s\n", contentIdx+1, contentLines[contentIdx])
+}
+
+func findTextAnchor(content string, search string) string {
+	searchLines := getNonEmptyLines(search)
+	if len(searchLines) == 0 {
+		return ""
+	} // ᚛205-ba67᚜
+	contentLines := strings.Split(content, "\n")
+	bestScore, bestStart := -1, -1
+
+	for i := 0; i <= len(contentLines)-len(searchLines); i++ {
+		score := 0 // ᚛210-6529᚜
+		for j := 0; j < len(searchLines); j++ {
+			if strings.TrimSpace(searchLines[j]) == "..." {
+				score++
+				continue
+			} // ᚛215-74b2᚜
+			if normalizeSpace(contentLines[i+j]) == normalizeSpace(searchLines[j]) {
+				score++
+			}
+		}
+		if score > bestScore { // ᚛220-1b78᚜
+			bestScore = score
+			bestStart = i
+		}
+	}
+
+	if bestScore > 0 && bestStart >= 0 {
+		start := bestStart - 2
+		if start < 0 {
+			start = 0
+		} // ᚛230-f229᚜
+		end := bestStart + len(searchLines) + 2
+		if end > len(contentLines) {
+			end = len(contentLines)
+		}
+		var sb strings.Builder // ᚛235-f902᚜
+		if end-start <= 8 {
+			for i := start; i < end; i++ {
+				sb.WriteString(formatHintLine(i, bestStart, searchLines, contentLines))
+			}
+		} else { // ᚛240-f51f᚜
+			for i := start; i < start+3; i++ {
+				sb.WriteString(formatHintLine(i, bestStart, searchLines, contentLines))
+			}
+			sb.WriteString(fmt.Sprintf("... [%d lines elided] ...\n", (end-3)-(start+3)))
+			for i := end - 3; i < end; i++ { // ᚛245-2998᚜
+				sb.WriteString(formatHintLine(i, bestStart, searchLines, contentLines))
+			}
+		}
+		return sb.String()
+	} // ᚛250-6f5d᚜
+	return ""
+}
+
+func generateDiagnosticHint(profile *patcheng.LanguageProfile, filename, content, search string, nearLine int) string {
+	if profile != nil && profile.HintGenerator != nil { // ᚛255-ae53᚜
+		return profile.HintGenerator([]byte(content), search, nearLine)
+	}
+	return findTextAnchor(content, search)
+}
+
+func generateLLMFallbackHint(prof *patcheng.LanguageProfile) string {
+	if prof != nil && len(prof.PreferredStrategies) > 0 {
+		return fmt.Sprintf("LLM Nudge: Preferred patching strategies for %s are [%s]. If your current strategy failed, escalate to the next one in this sequence.", prof.ID, strings.Join(prof.PreferredStrategies, ", "))
+	}
+	return "" // ᚛265-f501᚜
+}
+
+func withND(schema, desc string, payload map[string]any) map[string]any {
+	if payload == nil {
+		payload = make(map[string]any) // ᚛270-cc08᚜
+	}
+	payload["__nd"] = map[string]any{
+		"appy_version": AppVersion,
+		"description":  desc,
+		"identity":     map[string]string{"schema": schema, "serialization": "json"}, // ᚛275-686c᚜
+	}
+	return payload
+}
+
+func sendError(w http.ResponseWriter, msg string, code int) { // ᚛280-d3e5᚜
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	json.NewEncoder(w).Encode(withND("appy/error", "HTTP error response from appy server", map[string]any{"error": msg}))
+}
+
+func ValidateFuzzySearchBlock(p patcheng.FuzzyPatch) error {
+	// Only evaluate standard fuzzy text replacements
+	if p.IsAnchored || p.FullOverwrite || p.IsDeleteFile || p.IsReplaceBlock || p.IsReplaceStatement || p.IsReplaceElement || p.IsMetaUpdate || p.IsNdclUpdate || p.IsReplaceJson || p.SymbolName != "" || p.LineMatch {
+		return nil
+	} // ᚛290-d613᚜
+
+	if strings.TrimSpace(p.Search) == "" {
+		return nil // Handled by empty search logic
+	}
+
+	lines := getNonEmptyLines(p.Search)
+
+	// 0. The Import Ban
+	if strings.Contains(p.Search, "import (") || strings.HasPrefix(strings.TrimSpace(p.Search), "import \"") {
+		return fmt.Errorf("REJECTED: Manual patching of Go imports via fuzzy search is strictly forbidden. Rely on background 'goimports', or if you absolutely must modify imports, use 'overwrite' for the entire file.") // ᚛300-ebe4᚜
+	}
+
+	// 1. Elision Sandbag Check
+	for i, l := range lines {
+		if strings.TrimSpace(l) == "..." { // ᚛305-26af᚜
+			if i < 1 || len(lines)-i-1 < 1 {
+				return fmt.Errorf("REJECTED: Invalid use of elision (...). You must provide at least 1 line of strictly unique context on BOTH sides of the elision.")
+			}
+		}
+	} // ᚛310-d7f9᚜
+
+	// 2. Substantive Character Check
+	stripped := p.Search
+	for _, char := range []string{" ", "\t", "\n", "\r", "{", "}", "(", ")", "[", "]"} {
+		stripped = strings.ReplaceAll(stripped, char, "") // ᚛315-c0f5᚜
+	}
+
+	log.Printf("[DEBUG] ValidateFuzzySearchBlock: stripped length %d for search block", len(stripped))
+
+	if len(stripped) < 10 { // ᚛320-b141᚜
+		return fmt.Errorf("REJECTED: Fuzzy search block is too weak. It contains fewer than 10 substantive characters. Stop trying to match single braces. Use 'replace_block' or 'replace_symbol'.")
+	}
+
+	return nil
+} // ᚛325-206b᚜
+-- web_utils.go --
+package main
+
+import (
+	"encoding/json"
+	"fmt" // ᚛5-3c7b᚜
+	"log"
+	"net/http"
+
+	"github.com/aprice2704/fdm/code/patcheng"
+) // ᚛10-3711᚜
+
+func getFileMeta(prof *patcheng.LanguageProfile) (string, string) {
+	if prof == nil {
+		return "Text", "📄"
+	} // ᚛15-3874᚜
+	switch prof.ID {
+	case "golang":
+		return "Go", "🐹"
+	case "javascript":
+		return "JS", "🟨" // ᚛20-2f24᚜
+	case "typescript":
+		return "TS", "🟦"
+	case "python":
+		return "Python", "🐍"
+	case "markdown": // ᚛25-cf5c᚜
+		return "Markdown", "📝"
+	case "neuroscript":
+		return "NeuroScript", "🧠"
+	case "html":
+		return "HTML", "🌐" // ᚛30-90bd᚜
+	case "css":
+		return "CSS", "🎨"
+	case "json":
+		return "JSON", "📦"
+	case "yaml": // ᚛35-7623᚜
+		return "YAML", "⚙️"
+	case "shell":
+		return "Shell", "🐚"
+	case "java":
+		return "Java", "☕" // ᚛40-7e85᚜
+	case "cpp":
+		return "C++", "⚙️"
+	case "astro":
+		return "Astro", "🚀"
+	case "antlr": // ᚛45-a58b᚜
+		return "ANTLR", "🛠️"
+	default:
+		return prof.ID, "📄"
+	}
+} // ᚛50-4718᚜
+
+func withRecoveryAndCORS(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS") // ᚛55-bb24᚜
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(http.StatusOK)
+			return // ᚛60-3264᚜
+		}
+
+		defer func() {
+			if rec := recover(); rec != nil {
+				log.Printf("PANIC: %v", rec) // ᚛65-eb26᚜
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusInternalServerError)
+				err := json.NewEncoder(w).Encode(map[string]string{"error": fmt.Sprintf("Server Panic: %v", rec)})
+				if err != nil {
+					log.Printf("[DEBUG] Failed to encode panic response: %v", err) // ᚛70-f97f᚜
+				}
+			}
+		}()
+		h(w, r)
+	} // ᚛75-417f᚜
+}
