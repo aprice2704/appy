@@ -39,7 +39,7 @@ require (
 	github.com/klauspost/cpuid/v2 v2.3.0 // indirect
 	github.com/klauspost/reedsolomon v1.14.1 // indirect
 	github.com/mitchellh/mapstructure v1.5.0 // indirect
-	github.com/odvcencio/gotreesitter v0.16.0 // indirect
+	github.com/odvcencio/gotreesitter v0.52.0 // indirect
 	github.com/oklog/ulid/v2 v2.1.1 // indirect
 	github.com/tidwall/gjson v1.19.0 // indirect
 	github.com/tidwall/match v1.1.1 // indirect

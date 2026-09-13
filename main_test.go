@@ -193,8 +193,8 @@ func TestValidateFuzzySearchBlock(t *testing.T) {
 
 	t.Run("Import Ban", func(t *testing.T) {
 		p := patcheng.FuzzyPatch{Search: "import (\n\t\"fmt\"\n\t\"os\"\n)"}
-		if err := ValidateFuzzySearchBlock(p); err == nil || !strings.Contains(err.Error(), "import") {
-			t.Errorf("Expected import ban error, got %v", err)
+		if err := ValidateFuzzySearchBlock(p); err != nil {
+			t.Errorf("Expected nil error for import block in V2, got %v", err)
 		}
 	})
 }

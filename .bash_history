@@ -119,3 +119,29 @@ tq
 go install .
 tq
 go install .
+tq
+t
+tq
+rg appy_fail
+rg ValidateFuzzySearchBlock
+cls
+rm *.txtar
+rg ValidateFuzzySearchBlock
+tq
+cls
+tq
+go install .
+rm .appy_failures.jsonl 
+v
+cls
+tq
+go install .
+rm .appy_failures.jsonl 
+tq
+go install .
+tq
+go mod tidy
+tq
+go install .
+rm *.txtar
+rm .appy_failures.jsonl 

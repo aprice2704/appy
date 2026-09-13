@@ -1,7 +1,7 @@
 // :: product: FDM/NS
-// :: majorVersion: 1
-// :: fileVersion: 1
-// :: description: Logs failed patch attempts for analysis and improvement.
+// :: majorVersion: 2
+// :: fileVersion: 2
+// :: description: Telemetry logger for patch activity and failures in current working dir.
 // :: filename: failure_logger.go
 // :: serialization: go
 
@@ -11,7 +11,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/aprice2704/fdm/code/patcheng"
@@ -27,16 +26,23 @@ type PatchFailureLog struct {
 	Patches   []patcheng.FuzzyPatch `json:"patches,omitempty"`
 }
 
+type PatchActivityLog struct {
+	Timestamp string   `json:"timestamp"`
+	Action    string   `json:"action"` // "apply", "preview"
+	File      string   `json:"file"`
+	Status    string   `json:"status"` // "SUCCESS", "FAIL"
+	Methods   []string `json:"methods,omitempty"`
+	NetLines  int      `json:"net_lines"`
+}
+
 func detectPatchMethod(p patcheng.FuzzyPatch) string {
 	switch {
 	case p.FullOverwrite:
 		return "overwrite"
 	case p.SymbolName != "":
 		return "replace_symbol"
-	case p.IsReplaceBlock:
-		return "replace_block"
-	case p.IsReplaceStatement:
-		return "replace_statement"
+	case p.IsReplaceAst:
+		return "replace_ast"
 	case p.IsReplaceElement:
 		return "replace_element"
 	case p.IsReplaceJson:
@@ -56,16 +62,15 @@ func detectPatchMethod(p patcheng.FuzzyPatch) string {
 	}
 }
 
-func appendFailureLog(rootDir string, logEntry PatchFailureLog) {
+// appendFailureLog always writes to ./.appy_failures.jsonl relative to the appy executable
+func appendFailureLog(_ string, logEntry PatchFailureLog) {
 	if len(logEntry.Methods) == 0 && len(logEntry.Patches) > 0 {
 		for _, p := range logEntry.Patches {
 			logEntry.Methods = append(logEntry.Methods, detectPatchMethod(p))
 		}
 	}
-	logPath := filepath.Join(rootDir, ".appy_failures.jsonl")
 	logEntry.Timestamp = time.Now().UTC().Format(time.RFC3339)
 
-	// Trim patches to prevent the JSONL file from ballooning to 700k+
 	var trimmed []patcheng.FuzzyPatch
 	for _, p := range logEntry.Patches {
 		p.Replace = fmt.Sprintf("<elided: %d bytes>", len(p.Replace))
@@ -82,7 +87,24 @@ func appendFailureLog(rootDir string, logEntry PatchFailureLog) {
 	}
 	b = append(b, '\n')
 
-	f, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	f, err := os.OpenFile(".appy_failures.jsonl", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	f.Write(b)
+}
+
+// appendActivityLog writes to ./.appy_activity.jsonl relative to the appy executable
+func appendActivityLog(entry PatchActivityLog) {
+	entry.Timestamp = time.Now().UTC().Format(time.RFC3339)
+	b, err := json.Marshal(entry)
+	if err != nil {
+		return
+	}
+	b = append(b, '\n')
+
+	f, err := os.OpenFile(".appy_activity.jsonl", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		return
 	}

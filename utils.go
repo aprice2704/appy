@@ -277,6 +277,29 @@ func withND(schema, desc string, payload map[string]any) map[string]any {
 	return payload
 }
 
+func extractImportDirectivesFromText(text string) []patcheng.ImportDirective {
+	var dirs []patcheng.ImportDirective
+	for _, line := range strings.Split(text, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "//") || trimmed == "import (" || trimmed == ")" {
+			continue
+		}
+		trimmed = strings.TrimPrefix(trimmed, "import ")
+		parts := strings.Fields(trimmed)
+		if len(parts) == 1 && strings.HasPrefix(parts[0], "\"") {
+			dirs = append(dirs, patcheng.ImportDirective{
+				Path: strings.Trim(parts[0], `"`),
+			})
+		} else if len(parts) >= 2 && strings.HasPrefix(parts[1], "\"") {
+			dirs = append(dirs, patcheng.ImportDirective{
+				Alias: parts[0],
+				Path:  strings.Trim(parts[1], `"`),
+			})
+		}
+	}
+	return dirs
+}
+
 func sendError(w http.ResponseWriter, msg string, code int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
@@ -285,7 +308,7 @@ func sendError(w http.ResponseWriter, msg string, code int) {
 
 func ValidateFuzzySearchBlock(p patcheng.FuzzyPatch) error {
 	// Only evaluate standard fuzzy text replacements
-	if p.IsAnchored || p.FullOverwrite || p.IsDeleteFile || p.IsReplaceBlock || p.IsReplaceStatement || p.IsReplaceElement || p.IsMetaUpdate || p.IsNdclUpdate || p.IsReplaceJson || p.SymbolName != "" || p.LineMatch {
+	if p.IsAnchored || p.FullOverwrite || p.IsDeleteFile || p.IsReplaceAst || p.IsReplaceElement || p.IsMetaUpdate || p.IsNdclUpdate || p.IsReplaceJson || p.SymbolName != "" || p.LineMatch {
 		return nil
 	}
 
@@ -294,18 +317,6 @@ func ValidateFuzzySearchBlock(p patcheng.FuzzyPatch) error {
 	}
 
 	lines := getNonEmptyLines(p.Search)
-
-	// 0. The Import Ban: Reject attempts to fuzzy-patch Go import declarations.
-	// Use split concatenation to avoid tripping recursive self-detection when patching.
-	impGroup := "imp" + "ort ("
-	impSingle := "imp" + "ort \""
-	trimmedSearch := strings.TrimSpace(p.Search)
-	isDocExample := strings.Contains(p.Search, "`") || strings.HasPrefix(trimmedSearch, "#") || strings.HasPrefix(trimmedSearch, "*")
-	if !isDocExample && !p.LineMatch {
-		if strings.Contains(p.Search, impGroup) || strings.HasPrefix(trimmedSearch, impSingle) {
-			return fmt.Errorf("REJECTED: Manual patching of Go imports via fuzzy search is forbidden. Use '%%%%%% imp" + "ort \"<pkg>\"' at the top of the file block, or '%%%%%% overwrite' for the whole file.")
-		}
-	}
 
 	// 1. Elision Sandbag Check
 	for i, l := range lines {
@@ -325,7 +336,7 @@ func ValidateFuzzySearchBlock(p patcheng.FuzzyPatch) error {
 	log.Printf("[DEBUG] ValidateFuzzySearchBlock: stripped length %d for search block", len(stripped))
 
 	if len(stripped) < 10 {
-		return fmt.Errorf("REJECTED: Fuzzy search block is too weak. It contains fewer than 10 substantive characters. Stop trying to match single braces. Use 'replace_block' or 'replace_symbol'.")
+		return fmt.Errorf("REJECTED: Fuzzy search block is too weak. It contains fewer than 10 substantive characters. Stop trying to match single braces. Use 'replace_ast' or 'replace_symbol'.")
 	}
 
 	return nil
