@@ -145,3 +145,12 @@ tq
 go install .
 rm *.txtar
 rm .appy_failures.jsonl 
+go install .
+cls
+tre
+rm -rf code/
+tre
+tq
+go install .
+tq
+go install .
