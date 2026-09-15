@@ -154,3 +154,15 @@ tq
 go install .
 tq
 go install .
+./run_appy.sh -port=8089
+rg handleTxtar
+go install .
+v
+wl-copy -t text/uri-list "file:///utils.go\r\n"
+wl-copy -t text/uri-list "file:///utils.go"
+wl-copy -t text/uri-list "file://utils\.go"
+wl-copy -t text/uri-list "file:///home/aprice/dev/appy/utils.go"
+go install .
+tq
+go install .
+rm *.txtar

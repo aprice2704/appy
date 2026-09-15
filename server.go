@@ -2,6 +2,7 @@ package main
 
 import (
 	"embed"
+	"encoding/json"
 	"log"
 	"net/http"
 	"path/filepath"
@@ -35,8 +36,11 @@ func newServer(rootDir string, largeFileLines int) *http.ServeMux {
 	mux.HandleFunc("/", s.handleIndex)
 
 	// Builder API endpoints
+	// Builder API endpoints
+	mux.HandleFunc("/api/info", withRecoveryAndCORS(s.handleInfo))
 	mux.HandleFunc("/api/sets", withRecoveryAndCORS(s.handleSets))
 	mux.HandleFunc("/api/txtar", withRecoveryAndCORS(s.handleTxtar))
+	mux.HandleFunc("/api/txtar_copy", withRecoveryAndCORS(s.handleTxtarCopy))
 	mux.HandleFunc("/api/txtar_stats", withRecoveryAndCORS(s.handleTxtarStats))
 	mux.HandleFunc("/api/resolve_path", withRecoveryAndCORS(s.handleResolvePath))
 	mux.HandleFunc("/api/resolve_directory", withRecoveryAndCORS(s.handleResolveDirectory))
@@ -57,6 +61,25 @@ func newServer(rootDir string, largeFileLines int) *http.ServeMux {
 	return mux
 }
 
+func (s *AppyServer) handleInfo(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	repoName := filepath.Base(s.rootDir)
+	json.NewEncoder(w).Encode(map[string]any{
+		"repo_name": repoName,
+		"root_dir":  s.rootDir,
+		"version":   AppVersion,
+	})
+}
+
+func (s *AppyServer) readPartial(name string) string {
+	b, err := staticFS.ReadFile("static/" + name)
+	if err != nil {
+		log.Printf("[WARN] Failed to read static template partial %s: %v", name, err)
+		return ""
+	}
+	return string(b)
+}
+
 func (s *AppyServer) handleIndex(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/" {
 		http.NotFound(w, r)
@@ -67,12 +90,19 @@ func (s *AppyServer) handleIndex(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
-	html := strings.ReplaceAll(string(indexBytes), "{TITLE}", filepath.Base(s.rootDir))
+	html := string(indexBytes)
+	html = strings.ReplaceAll(html, "<!-- INCLUDE:tab_patch -->", s.readPartial("tab_patch.html"))
+	html = strings.ReplaceAll(html, "<!-- INCLUDE:tab_builder -->", s.readPartial("tab_builder.html"))
+	html = strings.ReplaceAll(html, "<!-- INCLUDE:tab_explorer -->", s.readPartial("tab_explorer.html"))
+	html = strings.ReplaceAll(html, "<!-- INCLUDE:tab_history -->", s.readPartial("tab_history.html"))
+	html = strings.ReplaceAll(html, "<!-- INCLUDE:modal_scoped -->", s.readPartial("modal_scoped.html"))
+	html = strings.ReplaceAll(html, "<!-- INCLUDE:drawer_bash -->", s.readPartial("drawer_bash.html"))
+
+	html = strings.ReplaceAll(html, "{TITLE}", filepath.Base(s.rootDir))
 	html = strings.ReplaceAll(html, "{VERSION}", AppVersion)
 	html = strings.ReplaceAll(html, "{ROOT_DIR}", s.rootDir)
 	w.Header().Set("Content-Type", "text/html")
-	_, writeErr := w.Write([]byte(html))
-	if writeErr != nil {
+	if _, writeErr := w.Write([]byte(html)); writeErr != nil {
 		log.Printf("[DEBUG] Failed to write index.html response: %v", writeErr)
 	}
 }

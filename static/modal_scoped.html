@@ -1,0 +1,24 @@
+   <div id="scopedFileModal" class="appy-modal-backdrop" style="display: none;">
+       <div class="appy-modal">
+           <div class="appy-modal-header">
+               <div>
+                   <h3 id="scopedModalTitle" style="margin: 0; font-size: 16px; color: #f8fafc;">Select Files in Directory</h3>
+                   <div id="scopedModalSubtitle" style="font-size: 12px; color: #94a3b8; font-family: monospace; margin-top: 4px;"></div>
+               </div>
+               <button onclick="closeScopedModal()" class="appy-modal-close">✕</button>
+           </div>
+           <div class="appy-modal-filter-bar">
+               <input type="text" id="scopedModalFilter" placeholder="Filter files (e.g. types, .go)..." oninput="filterScopedModalList()">
+               <button onclick="toggleSelectAllScoped(true)" class="appy-modal-btn">Select All</button>
+               <button onclick="toggleSelectAllScoped(false)" class="appy-modal-btn">Clear</button>
+           </div>
+           <div id="scopedModalList" class="appy-modal-list"></div>
+           <div class="appy-modal-footer">
+               <span id="scopedModalCount" style="font-size: 12px; color: #94a3b8;">0 selected</span>
+               <div style="display: flex; gap: 8px;">
+                   <button onclick="closeScopedModal()" class="appy-modal-btn">Cancel</button>
+                   <button onclick="confirmScopedModal()" class="appy-modal-btn primary">Add Selected</button>
+               </div>
+           </div>
+       </div>
+   </div>

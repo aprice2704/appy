@@ -167,11 +167,17 @@ func generateTxtar(absRootDir string, req TxtarPayload, largeFileLines int) ([]b
 		buf.WriteString("\n")
 	}
 	fileCount := 0
+	seenPaths := make(map[string]bool)
 
 	walkPaths(absRootDir, req.Paths, req.Excludes, func(absPath, relName string) {
+		seenPaths[relName] = true
+		seenPaths[absPath] = true
 		content, err := os.ReadFile(absPath)
 		if err != nil {
 			log.Printf("[DEBUG] generateTxtar: Read error %s: %v", absPath, err)
+			buf.WriteString(fmt.Sprintf("-- %s --\n", filepath.ToSlash(relName)))
+			buf.WriteString(fmt.Sprintf("[ERROR: File could not be read: %v]\n", err))
+			fileCount++
 			return
 		}
 
@@ -211,6 +217,20 @@ func generateTxtar(absRootDir string, req TxtarPayload, largeFileLines int) ([]b
 		}
 		fileCount++
 	})
+
+	// Add clear error placeholders for explicitly requested paths that did not exist or match any files
+	for _, p := range req.Paths {
+		pTrim := strings.TrimSpace(p)
+		if pTrim == "" || strings.Contains(pTrim, "*") || strings.Contains(pTrim, "?") {
+			continue
+		}
+		cleanP := filepath.Clean(pTrim)
+		if !seenPaths[cleanP] && !seenPaths[filepath.ToSlash(cleanP)] {
+			buf.WriteString(fmt.Sprintf("-- %s --\n", filepath.ToSlash(pTrim)))
+			buf.WriteString(fmt.Sprintf("[ERROR: File %q does not exist or could not be found under %s]\n", pTrim, absRootDir))
+			fileCount++
+		}
+	}
 
 	return buf.Bytes(), fileCount, nil
 }

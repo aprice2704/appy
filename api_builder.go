@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -72,11 +73,69 @@ func (s *AppyServer) handleTxtar(w http.ResponseWriter, r *http.Request) {
 		"success":    true,
 		"file_url":   "/api/bundle?name=" + fileName,
 		"file_name":  fileName,
+		"file_path":  outPath,
 		"file_count": fileCount,
 	}
 	if err := json.NewEncoder(w).Encode(withND("appy/txtar", "Generated txtar bundle", res)); err != nil {
 		log.Printf("[DEBUG] /api/txtar: encoding response failed: %v", err)
 	}
+}
+
+func (s *AppyServer) handleTxtarCopy(w http.ResponseWriter, r *http.Request) {
+	log.Printf("[DEBUG] /api/txtar_copy request received")
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		FileName string `json:"file_name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		sendError(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+	fileName := filepath.Base(req.FileName)
+	if fileName == "" || !strings.HasSuffix(fileName, ".txtar") {
+		sendError(w, "Invalid or missing file_name", http.StatusBadRequest)
+		return
+	}
+	absPath, err := filepath.Abs(filepath.Join(s.rootDir, fileName))
+	if err != nil {
+		sendError(w, fmt.Sprintf("Failed to resolve path: %v", err), http.StatusInternalServerError)
+		return
+	}
+	if _, err := os.Stat(absPath); os.IsNotExist(err) {
+		sendError(w, fmt.Sprintf("File %s does not exist", fileName), http.StatusNotFound)
+		return
+	}
+
+	fileURI := "file://" + filepath.ToSlash(absPath)
+
+	var copyErr error
+	if _, err := exec.LookPath("wl-copy"); err == nil {
+		cmd := exec.Command("wl-copy", "-t", "text/uri-list", fileURI)
+		copyErr = cmd.Run()
+	} else if _, err := exec.LookPath("xclip"); err == nil {
+		cmd := exec.Command("xclip", "-selection", "clipboard", "-t", "text/uri-list")
+		cmd.Stdin = strings.NewReader(fileURI)
+		copyErr = cmd.Run()
+	} else {
+		copyErr = fmt.Errorf("neither wl-copy nor xclip found on system")
+	}
+
+	if copyErr != nil {
+		log.Printf("[DEBUG] /api/txtar_copy: clipboard tool error: %v", copyErr)
+		sendError(w, fmt.Sprintf("Clipboard tool error: %v", copyErr), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"success":   true,
+		"file_name": fileName,
+		"file_path": absPath,
+		"uri":       fileURI,
+	})
 }
 
 func (s *AppyServer) handleTxtarStats(w http.ResponseWriter, r *http.Request) {
