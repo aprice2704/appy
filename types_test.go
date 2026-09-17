@@ -2,7 +2,7 @@
 // :: majorVersion: 1
 // :: fileVersion: 1
 // :: description: Unit tests for types and ledger state.
-// :: filename: /home/aprice/dev/appy/types_test.go
+// :: filename: types_test.go
 // :: serialization: go
 
 package main
@@ -57,8 +57,10 @@ func TestLoadLedger_InvalidJSON(t *testing.T) {
 }
 
 func TestSaveLedger_WriteError(t *testing.T) {
-	// Write to a path that isn't a directory to force an error
-	file, _ := os.CreateTemp("", "bad_dir")
+	file, err := os.CreateTemp("", "bad_dir")
+	if err != nil {
+		t.Fatalf("failed creating temp file: %v", err)
+	}
 	defer os.Remove(file.Name())
-	SaveLedger(file.Name()) // Should log warning but not crash
+	SaveLedger(file.Name())
 }

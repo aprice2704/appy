@@ -14,9 +14,16 @@ import (
 
 func getSets(rootDir string) map[string]TxtarPayload {
 	b, err := os.ReadFile(filepath.Join(rootDir, ".appy_sets.json"))
+	if err != nil {
+		if !os.IsNotExist(err) {
+			log.Printf("[DEBUG] getSets: failed to read .appy_sets.json: %v", err)
+		}
+		return make(map[string]TxtarPayload)
+	}
 	var sets map[string]TxtarPayload
-	if err == nil {
-		json.Unmarshal(b, &sets)
+	if err := json.Unmarshal(b, &sets); err != nil {
+		log.Printf("[WARN] getSets: corrupt .appy_sets.json: %v", err)
+		return make(map[string]TxtarPayload)
 	}
 	if sets == nil {
 		sets = make(map[string]TxtarPayload)
@@ -57,14 +64,17 @@ func walkPaths(absRootDir string, paths []string, excludes []string, cb func(abs
 		hasValidRel := err == nil && !strings.HasPrefix(rel, "..") && rel != ".."
 
 		for _, ex := range cleanExcludes {
-			if matched, _ := filepath.Match(ex, baseName); matched {
+			matchedBase, errBase := filepath.Match(ex, baseName)
+			if errBase == nil && matchedBase {
 				return
 			}
 			if hasValidRel {
-				if matched, _ := filepath.Match(ex, filepath.ToSlash(rel)); matched {
+				matchedSlash, errSlash := filepath.Match(ex, filepath.ToSlash(rel))
+				if errSlash == nil && matchedSlash {
 					return
 				}
-				if matched, _ := filepath.Match(ex, rel); matched {
+				matchedRel, errRelMatch := filepath.Match(ex, rel)
+				if errRelMatch == nil && matchedRel {
 					return
 				}
 			}
@@ -88,10 +98,28 @@ func walkPaths(absRootDir string, paths []string, excludes []string, cb func(abs
 		}
 	}
 	if len(validPaths) == 0 {
-		validPaths = []string{"."}
+		return
 	}
 
 	for _, p := range validPaths {
+		// Degenerate path guard: bare "." or paths ending in "/" match no files unless followed by * or **
+		if p == "." || p == "./" {
+			continue
+		}
+		if (strings.HasSuffix(p, "/") || strings.HasSuffix(p, "\\")) && !strings.Contains(p, "*") {
+			continue
+		}
+
+		// Superglob support: if the pattern contains brace expansions, language tokens, or wildcards
+		if strings.Contains(p, "{") || strings.Contains(p, "}") || strings.Contains(p, ":") {
+			sgFiles, _, _ := EvaluateSuperGlob(absRootDir, p, cleanExcludes)
+			for _, f := range sgFiles {
+				abs := filepath.Join(absRootDir, filepath.FromSlash(f.Path))
+				add(abs)
+			}
+			continue
+		}
+
 		var baseDir string
 		var pattern string
 		if strings.Contains(p, "**") {
@@ -106,13 +134,17 @@ func walkPaths(absRootDir string, paths []string, excludes []string, cb func(abs
 		}
 		if !filepath.IsAbs(baseDir) {
 			targetCandidate := filepath.Join(absRootDir, baseDir)
-			if _, err := os.Stat(targetCandidate); err == nil {
-				baseDir = targetCandidate
-			} else if stat, err := os.Stat(baseDir); err == nil {
-				if abs, err := filepath.Abs(baseDir); err == nil {
-					baseDir = abs
+			if _, err := os.Stat(targetCandidate); err != nil {
+				if _, errAbsStat := os.Stat(baseDir); errAbsStat != nil {
+					baseDir = targetCandidate
+				} else {
+					abs, errAbs := filepath.Abs(baseDir)
+					if errAbs != nil {
+						baseDir = targetCandidate
+					} else {
+						baseDir = abs
+					}
 				}
-				_ = stat
 			} else {
 				baseDir = targetCandidate
 			}
@@ -121,12 +153,16 @@ func walkPaths(absRootDir string, paths []string, excludes []string, cb func(abs
 		stat, err := os.Stat(baseDir)
 		if err != nil {
 			if strings.TrimSpace(baseDir) != "" && strings.TrimSpace(baseDir) != "." {
-				matches, err := filepath.Glob(baseDir)
-				if err == nil {
+				matches, errGlob := filepath.Glob(baseDir)
+				if errGlob != nil {
+					log.Printf("[DEBUG] walkPaths: glob failed for %s: %v", baseDir, errGlob)
+				} else {
 					for _, m := range matches {
-						if s, err := os.Stat(m); err == nil && !s.IsDir() {
-							add(m)
+						s, errStat := os.Stat(m)
+						if errStat != nil || s.IsDir() {
+							continue
 						}
+						add(m)
 					}
 				}
 			}
@@ -160,6 +196,8 @@ func walkPaths(absRootDir string, paths []string, excludes []string, cb func(abs
 	}
 }
 
+const MaxTxtarFileCount = 500
+
 func generateTxtar(absRootDir string, req TxtarPayload, largeFileLines int) ([]byte, int, error) {
 	var buf bytes.Buffer
 	buf.WriteString(req.Preface)
@@ -168,8 +206,16 @@ func generateTxtar(absRootDir string, req TxtarPayload, largeFileLines int) ([]b
 	}
 	fileCount := 0
 	seenPaths := make(map[string]bool)
+	var limitErr error
 
 	walkPaths(absRootDir, req.Paths, req.Excludes, func(absPath, relName string) {
+		if limitErr != nil {
+			return
+		}
+		if fileCount >= MaxTxtarFileCount {
+			limitErr = fmt.Errorf("file limit exceeded: txtar bundle exceeded safety limit of %d files; refine include patterns or add excludes", MaxTxtarFileCount)
+			return
+		}
 		seenPaths[relName] = true
 		seenPaths[absPath] = true
 		content, err := os.ReadFile(absPath)
@@ -186,22 +232,24 @@ func generateTxtar(absRootDir string, req TxtarPayload, largeFileLines int) ([]b
 			if ag == "" {
 				continue
 			}
-			if matched, _ := filepath.Match(ag, filepath.Base(absPath)); matched {
+			matchedBase, errBase := filepath.Match(ag, filepath.Base(absPath))
+			if errBase == nil && matchedBase {
 				needsAnchor = false
 				break
 			}
-			if matched, _ := filepath.Match(ag, relName); matched {
+			matchedRel, errRel := filepath.Match(ag, relName)
+			if errRel == nil && matchedRel {
 				needsAnchor = false
 				break
 			}
 		}
 
 		if needsAnchor {
-			anchoredContent, err := patcheng.InjectAnchors(relName, content, 5)
-			if err == nil {
-				content = anchoredContent
+			anchoredContent, errInject := patcheng.InjectAnchors(relName, content, 5)
+			if errInject != nil {
+				log.Printf("[DEBUG] generateTxtar: Anchor injection failed for %s: %v", relName, errInject)
 			} else {
-				log.Printf("[DEBUG] generateTxtar: Anchor injection failed for %s: %v", relName, err)
+				content = anchoredContent
 			}
 		}
 
@@ -218,17 +266,32 @@ func generateTxtar(absRootDir string, req TxtarPayload, largeFileLines int) ([]b
 		fileCount++
 	})
 
-	// Add clear error placeholders for explicitly requested paths that did not exist or match any files
+	if limitErr != nil {
+		return nil, 0, limitErr
+	}
+
 	for _, p := range req.Paths {
 		pTrim := strings.TrimSpace(p)
-		if pTrim == "" || strings.Contains(pTrim, "*") || strings.Contains(pTrim, "?") {
+		if pTrim == "" || strings.Contains(pTrim, "*") || strings.Contains(pTrim, "?") ||
+			strings.Contains(pTrim, "{") || strings.Contains(pTrim, "}") || strings.Contains(pTrim, ":") {
 			continue
 		}
 		cleanP := filepath.Clean(pTrim)
 		if !seenPaths[cleanP] && !seenPaths[filepath.ToSlash(cleanP)] {
-			buf.WriteString(fmt.Sprintf("-- %s --\n", filepath.ToSlash(pTrim)))
-			buf.WriteString(fmt.Sprintf("[ERROR: File %q does not exist or could not be found under %s]\n", pTrim, absRootDir))
-			fileCount++
+			targetCandidate := pTrim
+			if !filepath.IsAbs(targetCandidate) {
+				targetCandidate = filepath.Join(absRootDir, targetCandidate)
+			}
+			if _, err := os.Stat(targetCandidate); err != nil {
+				buf.WriteString(fmt.Sprintf("-- %s --\n", filepath.ToSlash(pTrim)))
+				buf.WriteString(fmt.Sprintf("[ERROR: File %q does not exist or could not be found under %s]\n", pTrim, absRootDir))
+				fileCount++
+			} else {
+				buf.WriteString(fmt.Sprintf("-- %s --\n", filepath.ToSlash(pTrim)))
+				buf.WriteString(fmt.Sprintf("[NOTE: File %q exists on disk but was excluded by bundle excludes]\n", pTrim))
+				fileCount++
+				continue
+			}
 		}
 	}
 

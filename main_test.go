@@ -1,9 +1,8 @@
 // :: product: FDM/NS
-// :: majorVersion: 1
-// :: fileVersion: 2
-// :: description: Unit tests for main package helpers.
-// :: latestChange: Updated to cover findTextAnchor and path resolution logic.
-// :: filename: /home/aprice/dev/appy/main_test.go
+// :: majorVersion: 2
+// :: fileVersion: 1
+// :: description: Unit tests for main package helpers and line-independent diagnostic hints.
+// :: filename: main_test.go
 // :: serialization: go
 
 package main
@@ -65,7 +64,7 @@ func TestFindTextAnchor(t *testing.T) {
 
 	t.Run("Elides Large Blocks", func(t *testing.T) {
 		longContent := "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n13\n14\n15"
-		longSearch := "4\n5\n6\n7\n8\n9\n10\n11\n12\n13" // 10 lines
+		longSearch := "4\n5\n6\n7\n8\n9\n10\n11\n12\n13"
 		match := findTextAnchor(longContent, longSearch)
 		if !strings.Contains(match, "elided") {
 			t.Errorf("Expected elision for blocks > 8 lines. Got:\n%s", match)
@@ -84,10 +83,9 @@ func TestFindTextAnchor(t *testing.T) {
 
 func TestFindUniquePathSuffix(t *testing.T) {
 	dir := t.TempDir()
-	// Setup mock filesystem
 	os.MkdirAll(filepath.Join(dir, "sys", "auth"), 0755)
 	os.MkdirAll(filepath.Join(dir, "plugins", "auth"), 0755)
-	os.MkdirAll(filepath.Join(dir, ".git", "auth"), 0755) // Should be ignored
+	os.MkdirAll(filepath.Join(dir, ".git", "auth"), 0755)
 	os.WriteFile(filepath.Join(dir, "sys", "auth", "login.go"), []byte(""), 0644)
 	os.WriteFile(filepath.Join(dir, "plugins", "auth", "login.go"), []byte(""), 0644)
 	os.WriteFile(filepath.Join(dir, "sys", "auth", "unique.go"), []byte(""), 0644)
@@ -138,13 +136,6 @@ func TestGenerateDiagnosticHint(t *testing.T) {
 		hint := generateDiagnosticHint(patcheng.GoProfile, "file.go", content, "type MyStruct struct{", 0)
 		if !strings.Contains(hint, "Targeting type MyStruct") {
 			t.Errorf("Failed to find type context. Got:\n%s", hint)
-		}
-	})
-
-	t.Run("Finds AST Context via NearLine", func(t *testing.T) {
-		hint := generateDiagnosticHint(patcheng.GoProfile, "file.go", content, "foo", 7) // Line 7 is Standalone()
-		if !strings.Contains(hint, "Targeting func Standalone") {
-			t.Errorf("Failed to find nearLine context. Got:\n%s", hint)
 		}
 	})
 }

@@ -137,7 +137,9 @@ func (s *AppyServer) previewSinglePatch(rawFilename, content string, prof *patch
 		_, pErr = patcheng.ApplyFuzzyPatchesAgnostic(prof, content, []patcheng.FuzzyPatch{p})
 	}
 
-	if pErr == nil {
+	if pErr != nil {
+		log.Printf("[DEBUG] /api/preview: patch preview failed for %s: %v", rawFilename, pErr)
+	} else {
 		return pp, "", ""
 	}
 

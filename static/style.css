@@ -676,7 +676,69 @@ button:disabled {
   user-select: none;
 }
 .tree-row:hover {
-  background: #1e293b;
+ background: #1e293b;
+}
+.tree-row.tree-highlight {
+ background: rgba(56, 189, 248, 0.25) !important;
+ outline: 1px solid #38bdf8;
+}
+
+/* Left Navigation Panel Items (Bookmarks & Recent) */
+.nav-panel-item {
+ display: flex;
+ align-items: center;
+ justify-content: space-between;
+ padding: 3px 6px;
+ border-radius: 3px;
+ cursor: pointer;
+ user-select: none;
+ color: #cbd5e1;
+ gap: 6px;
+}
+.nav-panel-item:hover {
+ background: #1e293b;
+ color: #f8fafc;
+}
+.nav-panel-label {
+ overflow: hidden;
+ text-overflow: ellipsis;
+ white-space: nowrap;
+ flex: 1;
+}
+.nav-panel-del {
+ display: none;
+ color: #64748b;
+ font-size: 11px;
+ padding: 0 2px;
+}
+.nav-panel-item:hover .nav-panel-del {
+ display: inline-block;
+}
+.nav-panel-del:hover {
+ color: #ef4444;
+}
+
+/* Floating Tree Context Menu */
+.tree-context-menu {
+ position: fixed;
+ background: #1e293b;
+ border: 1px solid #475569;
+ border-radius: 4px;
+ padding: 4px 0;
+ z-index: 2000;
+ box-shadow: 0 6px 16px rgba(0, 0, 0, 0.5);
+ font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+ font-size: 12px;
+}
+.tree-context-menu .ctx-item {
+ padding: 6px 14px;
+ cursor: pointer;
+ color: #e2e8f0;
+ white-space: nowrap;
+}
+.tree-context-menu .ctx-item:hover {
+ background: #2563eb;
+ color: #f8fafc;
 }
 .tree-toggle {
   width: 14px;

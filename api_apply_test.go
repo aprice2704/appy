@@ -18,7 +18,9 @@ func TestAPI_Apply_RejectsWeakFuzzyPatches(t *testing.T) {
 	mux := newTestServer(tempDir)
 
 	targetFile := filepath.Join(tempDir, "short.go")
-	os.WriteFile(targetFile, []byte("package mypkg\n\nfunc Weak() {}\n"), 0644)
+	if err := os.WriteFile(targetFile, []byte("package mypkg\n\nfunc Weak() {}\n"), 0644); err != nil {
+		t.Fatalf("failed writing target file: %v", err)
+	}
 
 	payload := Payload{
 		Bundle: strings.ReplaceAll(`
@@ -30,7 +32,10 @@ func Strong() {}
 ### end
 `, "###", patcheng.BundleDelim),
 	}
-	body, _ := json.Marshal(payload)
+	body, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("failed marshaling payload: %v", err)
+	}
 
 	req := httptest.NewRequest(http.MethodPost, "/api/apply", bytes.NewReader(body))
 	w := httptest.NewRecorder()
@@ -42,7 +47,9 @@ func Strong() {}
 	}
 
 	var response map[string]any
-	json.NewDecoder(res.Body).Decode(&response)
+	if err := json.NewDecoder(res.Body).Decode(&response); err != nil {
+		t.Fatalf("failed decoding response: %v", err)
+	}
 
 	files, ok := response["files"].([]any)
 	if !ok || len(files) == 0 {

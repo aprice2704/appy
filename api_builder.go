@@ -164,13 +164,15 @@ func (s *AppyServer) handleTxtarStats(w http.ResponseWriter, r *http.Request) {
 		var pFiles int64
 		var pBytes int64
 
-		if strings.Contains(pTrim, "*") || strings.Contains(pTrim, "?") {
-			walkPaths(s.rootDir, []string{pTrim}, req.Excludes, func(absPath, relName string) {
-				if info, err := os.Stat(absPath); err == nil && !info.IsDir() {
-					pFiles++
-					pBytes += info.Size()
-				}
-			})
+		isSuperGlob := strings.Contains(pTrim, "{") || strings.Contains(pTrim, "}") ||
+			strings.Contains(pTrim, ":") || strings.Contains(pTrim, "*") || strings.Contains(pTrim, "?")
+
+		if isSuperGlob {
+			sgFiles, _, _ := EvaluateSuperGlob(s.rootDir, pTrim, req.Excludes)
+			pFiles = int64(len(sgFiles))
+			for _, f := range sgFiles {
+				pBytes += f.Size
+			}
 			if pFiles == 0 {
 				pathStatuses[pTrim] = "zero_matches"
 			} else {
@@ -180,7 +182,6 @@ func (s *AppyServer) handleTxtarStats(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		// Exact path check
 		baseDir := pTrim
 		if !filepath.IsAbs(baseDir) {
 			baseDir = filepath.Join(s.rootDir, baseDir)
@@ -207,8 +208,13 @@ func (s *AppyServer) handleTxtarStats(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	limitExceeded := false
 	if len(req.Paths) > 0 {
 		walkPaths(s.rootDir, req.Paths, req.Excludes, func(absPath, relName string) {
+			if fileCount >= MaxTxtarFileCount {
+				limitExceeded = true
+				return
+			}
 			info, err := os.Stat(absPath)
 			if err == nil && !info.IsDir() {
 				fileCount++
@@ -219,150 +225,14 @@ func (s *AppyServer) handleTxtarStats(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]any{
-		"file_count":    fileCount,
-		"size_kb":       totalBytes / 1024,
-		"tokens_est":    totalBytes / 4,
-		"path_fixes":    pathFixes,
-		"path_statuses": pathStatuses,
-		"path_stats":    pathStats,
+		"file_count":     fileCount,
+		"limit_exceeded": limitExceeded,
+		"size_kb":        totalBytes / 1024,
+		"tokens_est":     totalBytes / 4,
+		"path_fixes":     pathFixes,
+		"path_statuses":  pathStatuses,
+		"path_stats":     pathStats,
 	})
-}
-
-func (s *AppyServer) handleResolvePath(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		return
-	}
-	name := r.URL.Query().Get("name")
-	if name == "" {
-		sendError(w, "missing name parameter", http.StatusBadRequest)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-
-	// 1. If it's an absolute path that exists outside the root, preserve full path verbatim
-	if filepath.IsAbs(name) {
-		if _, err := os.Stat(name); err == nil {
-			rel, err := filepath.Rel(s.rootDir, name)
-			if err == nil && !strings.HasPrefix(rel, "..") && rel != ".." {
-				json.NewEncoder(w).Encode(map[string]string{"path": filepath.ToSlash(rel)})
-			} else {
-				json.NewEncoder(w).Encode(map[string]string{"path": filepath.ToSlash(name)})
-			}
-			return
-		}
-	}
-
-	// 2. If it exists directly inside root, return the exact relative path
-	directPath := filepath.Join(s.rootDir, name)
-	if _, err := os.Stat(directPath); err == nil {
-		json.NewEncoder(w).Encode(map[string]string{"path": filepath.ToSlash(name)})
-		return
-	}
-
-	// 3. Fallback: try finding unique suffix match
-	match := findUniquePathSuffix(s.rootDir, name)
-	if match != "" {
-		json.NewEncoder(w).Encode(map[string]string{"path": match})
-	} else {
-		matches := findAllPathSuffixMatches(s.rootDir, name)
-		if len(matches) > 1 {
-			json.NewEncoder(w).Encode(map[string]any{
-				"path":       filepath.ToSlash(name),
-				"ambiguous":  true,
-				"candidates": matches,
-			})
-			return
-		}
-		json.NewEncoder(w).Encode(map[string]string{"path": filepath.ToSlash(name)})
-	}
-}
-
-type ResolveDirPayload struct {
-	DirName     string   `json:"dir_name"`
-	SampleFiles []string `json:"sample_files"`
-}
-
-func (s *AppyServer) handleResolveDirectory(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		return
-	}
-	var req ResolveDirPayload
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		sendError(w, "Invalid JSON", http.StatusBadRequest)
-		return
-	}
-
-	resolved := resolveDirectoryUnderRoot(s.rootDir, req.DirName, req.SampleFiles)
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{
-		"path": filepath.ToSlash(resolved),
-	})
-}
-
-func (s *AppyServer) handleAutocompletePath(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		return
-	}
-	prefix := r.URL.Query().Get("prefix")
-	prefix = strings.TrimSpace(prefix)
-
-	var searchDir string
-	var filePrefix string
-	isAbs := filepath.IsAbs(prefix)
-
-	if isAbs {
-		searchDir = filepath.Dir(prefix)
-		filePrefix = filepath.Base(prefix)
-		if strings.HasSuffix(prefix, "/") || strings.HasSuffix(prefix, "\\") {
-			searchDir = prefix
-			filePrefix = ""
-		}
-	} else {
-		cleanPrefix := filepath.Clean(prefix)
-		if strings.HasSuffix(prefix, "/") || strings.HasSuffix(prefix, "\\") || prefix == "" {
-			searchDir = filepath.Join(s.rootDir, cleanPrefix)
-			filePrefix = ""
-		} else {
-			searchDir = filepath.Join(s.rootDir, filepath.Dir(cleanPrefix))
-			filePrefix = filepath.Base(cleanPrefix)
-		}
-	}
-
-	entries, err := os.ReadDir(searchDir)
-	var suggestions []string
-	if err == nil {
-		for _, e := range entries {
-			name := e.Name()
-			if name == ".git" || name == "node_modules" || name == ".appy_history" {
-				continue
-			}
-			if filePrefix == "" || strings.HasPrefix(strings.ToLower(name), strings.ToLower(filePrefix)) {
-				fullCandidate := filepath.Join(searchDir, name)
-				var outPath string
-				if isAbs {
-					outPath = filepath.ToSlash(fullCandidate)
-				} else {
-					rel, relErr := filepath.Rel(s.rootDir, fullCandidate)
-					if relErr == nil && !strings.HasPrefix(rel, "..") {
-						outPath = filepath.ToSlash(rel)
-					} else {
-						outPath = filepath.ToSlash(fullCandidate)
-					}
-				}
-				if e.IsDir() {
-					outPath += "/"
-				}
-				suggestions = append(suggestions, outPath)
-			}
-		}
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{"suggestions": suggestions})
 }
 
 func (s *AppyServer) handleBundle(w http.ResponseWriter, r *http.Request) {

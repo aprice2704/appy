@@ -166,3 +166,65 @@ go install .
 tq
 go install .
 rm *.txtar
+go install .
+rg find_file_commit_logic
+rg commit_logic
+rg commit
+rg -l commit
+tq
+go install .
+tq
+ll -s size
+rm -r *.txtar
+ll -s size
+ll -s size *.go
+tq
+l
+tq
+l
+tq
+ls -s time
+v
+ll te*
+cat test_sandbox.txt 
+cls
+go install .
+l
+tq
+go install .
+grep -rn "runCompilerChecks" .
+rm *.txtar
+v ; grep -rn "runCompilerChecks" .
+v ; grep -rn "go build" .
+tq
+go install .
+tq
+go install .
+tq
+go install .
+tq
+go install .
+rg generateTxtar
+rm *.txtar
+rg generateTxtar
+rg -l generateTxtar
+tq
+go install .
+tq
+go install .
+v
+tre
+go install .
+tq
+ll .appy_
+ll .appy_*
+rm .appy_activity.jsonl 
+rm .appy_failures.jsonl 
+rm .appy_ledger.json 
+rm -rf .appy_history/
+go install .
+tq
+go install .
+tq
+go install .
+rm *.txtar

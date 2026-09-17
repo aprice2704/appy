@@ -2,7 +2,7 @@
 // :: majorVersion: 1
 // :: fileVersion: 6
 // :: description: Compiler pre-flight and formatting via patcheng registry.
-// :: filename: /home/aprice/dev/appy/compiler.go
+// :: filename: compiler.go
 // :: serialization: go
 
 package main

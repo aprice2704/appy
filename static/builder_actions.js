@@ -17,13 +17,13 @@ function saveTxtarState() {
 }
 
 function loadTxtarState() {
-   const root = window.AppyRootDir || 'default';
-   const pathsStr = localStorage.getItem('txtarPaths_' + root);
-   if (pathsStr !== null && typeof setTxtarPaths === 'function') {
-       setTxtarPaths(pathsStr.split('\n'));
-   } else if (typeof setTxtarPaths === 'function') {
-       setTxtarPaths(['.']);
-   }
+  const root = window.AppyRootDir || 'default';
+  const pathsStr = localStorage.getItem('txtarPaths_' + root);
+  if (pathsStr !== null && typeof setTxtarPaths === 'function') {
+      setTxtarPaths(pathsStr.split('\n'));
+  } else if (typeof setTxtarPaths === 'function') {
+      setTxtarPaths(['']);
+  }
 
    const exStr = localStorage.getItem('txtarExcludes_' + root);
    const exEl = document.getElementById('txtarExcludes');

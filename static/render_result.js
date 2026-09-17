@@ -61,11 +61,15 @@ function renderResult(data, isCheck) {
     }
     if (rejectedFiles.length > 0) {
         ledger += "Rejected files:\n";
-        rejectedFiles.forEach(f => {
+                rejectedFiles.forEach(f => {
             ledger += "- " + bt + f.path + bt + " (file_commit_status: rejected)\n";
             ledger += "  Issue: " + (f.error || "Unknown error") + "\n";
             if (f.failed_patch && f.failed_patch.current_line_echo) {
-                ledger += "  Current line echo: " + bt + f.failed_patch.current_line_echo + bt + "\n";
+                if (f.error && f.error.startsWith("Compiler Error")) {
+                    ledger += "  Compiler Output:\n  " + tbt + "\n  " + f.failed_patch.current_line_echo.replace(/\n/g, "\n  ") + "\n  " + tbt + "\n";
+                } else {
+                    ledger += "  Current line echo: " + bt + f.failed_patch.current_line_echo + bt + "\n";
+                }
             }
             if (f.failed_patch && f.failed_patch.llm_fallback_hint) {
                 ledger += "  Fallback Strategy: " + f.failed_patch.llm_fallback_hint + "\n";
@@ -105,12 +109,13 @@ function renderResult(data, isCheck) {
                         badge.className = 'status-badge status-error';
                         badge.innerText = 'ERROR';
                     }
-                    const content = el.querySelector('.file-content');
+                                        const content = el.querySelector('.file-content');
                     if (content) {
                         let errHtml = '<div class="patch-block" style="border-top: 2px solid #f44336; padding-top: 10px;">';
                         errHtml += '<div class="error-msg"><strong>Rejected:</strong> ' + escapeHtml(f.error) + '</div>';
                         if (f.failed_patch && f.failed_patch.current_line_echo) {
-                            errHtml += '<div class="hint-block"><strong>Matched Line Echo:</strong><pre>' + escapeHtml(f.failed_patch.current_line_echo) + '</pre></div>';
+                            const label = (f.error && f.error.startsWith("Compiler Error")) ? "Compiler Output:" : "Matched Line Echo:";
+                            errHtml += '<div class="hint-block"><strong>' + label + '</strong><pre style="white-space: pre-wrap; font-size: 11px; background: rgba(0,0,0,0.3); padding: 6px; border-radius: 4px;">' + escapeHtml(f.failed_patch.current_line_echo) + '</pre></div>';
                         }
                         if (f.failed_patch && f.failed_patch.llm_fallback_hint) {
                             errHtml += '<div class="hint-block" style="color:#2196f3; border-left: 3px solid #2196f3;"><strong>Advisory:</strong><br>' + escapeHtml(f.failed_patch.llm_fallback_hint) + '</div>';

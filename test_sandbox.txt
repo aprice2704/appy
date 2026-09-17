@@ -1,0 +1,5 @@
+Harmless Appy UI test fixture
+Line 1: baseline content
+Line 2: stable anchor point
+Line 3: ready for intentional mismatch tests
+Line 4: end of fixture

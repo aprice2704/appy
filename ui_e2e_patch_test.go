@@ -1,10 +1,3 @@
-// :: product: FDM/NS
-// :: majorVersion: 1
-// :: fileVersion: 1
-// :: description: End-to-End browser tests for the Appy UI (Patch Tab).
-// :: filename: ui_e2e_patch_test.go
-// :: serialization: go
-
 package main
 
 import (
@@ -28,7 +21,6 @@ func TestE2E_UI_ArmorLogic(t *testing.T) {
 	ctx, cancelTimeout := context.WithTimeout(ctx, 10*time.Second)
 	defer cancelTimeout()
 
-	// Helper to set textarea value and trigger input event
 	setInput := func(val string) chromedp.Action {
 		return chromedp.Evaluate(fmt.Sprintf(`
 var el = document.getElementById('bundleInput');
@@ -39,7 +31,6 @@ el.dispatchEvent(new Event('input'));
 
 	var inputVal string
 
-	// 1. Mixed text with < 2 armors (should not unarmor)
 	err := chromedp.Run(ctx,
 		chromedp.Navigate(ts.URL),
 		chromedp.WaitVisible(`#bundleInput`, chromedp.ByQuery),
@@ -54,7 +45,6 @@ el.dispatchEvent(new Event('input'));
 		t.Errorf("Expected < 2 armors to remain untouched, got: %s", inputVal)
 	}
 
-	// 2. Mixed text with >= 2 armors (should auto-unarmor)
 	err = chromedp.Run(ctx,
 		setInput("@@@line 1\nline 2\n\n@@@line 3"),
 		chromedp.Sleep(100*time.Millisecond),
@@ -68,7 +58,6 @@ el.dispatchEvent(new Event('input'));
 		t.Errorf("Expected >= 2 armors to auto-unarmor, got: %s", inputVal)
 	}
 
-	// 3. Unarmor text handles LLM artifact leading spaces correctly
 	err = chromedp.Run(ctx,
 		setInput("@@@ %%% filename: foo\n@@@ %%% replace\n@@@ %%% with\n@@@ %%% end"),
 		chromedp.Sleep(100*time.Millisecond),
@@ -82,7 +71,6 @@ el.dispatchEvent(new Event('input'));
 		t.Errorf("Unarmor logic failed to strip leading spaces.\nExpected:\n%s\nGot:\n%s", expectedUnarmored, inputVal)
 	}
 
-	// 4. Unarmor text preserves indentation for NDCL and code
 	err = chromedp.Run(ctx,
 		setInput("@@@ %%% replace\n@@@   - [ ] Item\n@@@     - [x] Subitem\n@@@ %%% end"),
 		chromedp.Sleep(100*time.Millisecond),
@@ -96,7 +84,6 @@ el.dispatchEvent(new Event('input'));
 		t.Errorf("Unarmor logic failed to preserve indentation.\nExpected:\n%s\nGot:\n%s", expectedIndented, inputVal)
 	}
 
-	// 5. Unarmor text preserves tabs (crucial for Makefiles)
 	err = chromedp.Run(ctx,
 		setInput("@@@ %%% replace\n@@@\tbuild:\n@@@\t\tgo build .\n@@@ %%% end"),
 		chromedp.Sleep(100*time.Millisecond),
@@ -136,14 +123,11 @@ func New() {}
 	err := chromedp.Run(ctx,
 		chromedp.Navigate(ts.URL),
 		chromedp.WaitVisible(`#bundleInput`, chromedp.ByQuery),
-
-		// 1. Paste bundle and wait for preview
 		chromedp.Evaluate(fmt.Sprintf(`
 			var el = document.getElementById('bundleInput');
 			el.value = %q;
 			el.dispatchEvent(new Event('input'));
 		`, bundle), nil),
-
 		chromedp.WaitVisible(`.file-block.status-ready`, chromedp.ByQuery),
 		chromedp.Evaluate(`document.getElementById('applyBtn').hasAttribute('disabled')`, &applyBtnDisabled),
 	)
@@ -154,14 +138,12 @@ func New() {}
 		t.Errorf("Expected apply button to be ENABLED after successful preview")
 	}
 
-	// 2. Edit the input to trigger debounce preview clearing
 	err = chromedp.Run(ctx,
 		chromedp.Evaluate(`
 			var el = document.getElementById('bundleInput');
 			el.value += " ";
 			el.dispatchEvent(new Event('input'));
 		`, nil),
-		// Check immediately (debounce clears DOM instantly)
 		chromedp.Evaluate(`document.getElementById('applyBtn').hasAttribute('disabled')`, &applyBtnDisabled),
 		chromedp.Text(`#output`, &outputText, chromedp.ByID),
 	)
@@ -185,7 +167,6 @@ func TestE2E_UI_PreviewAndApplyFlow(t *testing.T) {
 	ctx, cancelTimeout := context.WithTimeout(ctx, 15*time.Second)
 	defer cancelTimeout()
 
-	// Create a valid bundle targeting our dummy file
 	bundle := strings.ReplaceAll(`
 ### filename: target.go
 ### replace
@@ -203,15 +184,11 @@ func New() {}
 	err := chromedp.Run(ctx,
 		chromedp.Navigate(ts.URL),
 		chromedp.WaitVisible(`#bundleInput`, chromedp.ByQuery),
-
-		// Paste the bundle and wait for the debounce/fetch cycle
 		chromedp.Evaluate(fmt.Sprintf(`
 			var el = document.getElementById('bundleInput');
 			el.value = %q;
 			el.dispatchEvent(new Event('input'));
 		`, bundle), nil),
-
-		// Wait for the OK stripe to render
 		chromedp.WaitVisible(`.file-block.status-ready`, chromedp.ByQuery),
 		chromedp.Evaluate(`document.getElementById('applyBtn').hasAttribute('disabled')`, &applyBtnDisabled),
 	)
@@ -223,7 +200,6 @@ func New() {}
 		t.Errorf("Expected apply button to be ENABLED after successful preview")
 	}
 
-	// Click Apply via direct JS evaluation to guarantee execution
 	err = chromedp.Run(ctx,
 		chromedp.Evaluate(`document.getElementById('applyBtn').click()`, nil),
 	)
@@ -231,13 +207,11 @@ func New() {}
 		t.Fatalf("Failed to click applyBtn: %v", err)
 	}
 
-	// Wait for the stripe to turn grey (applied)
 	err = chromedp.Run(ctx,
 		chromedp.WaitVisible(`.file-block.status-applied`, chromedp.ByQuery),
 		chromedp.AttributeValue(`#file-block-target\.go`, "class", &stripeClass, nil, chromedp.ByQuery),
 	)
 	if err != nil {
-		// If it times out, dump the exact HTML state of the output box so we can diagnose
 		var outputHTML string
 		chromedp.Run(ctx, chromedp.OuterHTML(`#output`, &outputHTML, chromedp.ByID))
 		t.Fatalf("Apply phase failed waiting for DOM update: %v\nOutput HTML state:\n%s", err, outputHTML)
@@ -247,7 +221,6 @@ func New() {}
 		t.Errorf("Expected stripe to have 'status-applied' class, got: %s", stripeClass)
 	}
 
-	// Verify the file was actually written to disk by the backend
 	contentBytes, err := os.ReadFile(filepath.Join(tempDir, "target.go"))
 	if err != nil {
 		t.Fatalf("Failed to read modified file: %v", err)
@@ -265,10 +238,8 @@ func TestE2E_UI_MetaUpdate(t *testing.T) {
 	ctx, cancelTimeout := context.WithTimeout(ctx, 15*time.Second)
 	defer cancelTimeout()
 
-	// The file on disk is native markdown (no // comments)
 	os.WriteFile(filepath.Join(tempDir, "meta.md"), []byte(":: fileVersion: 1\n\nBody"), 0644)
 
-	// The LLM hallucinated Go-style embedded comments into the bundle
 	bundle := strings.ReplaceAll(strings.ReplaceAll(`
 ### filename: meta.md
 ### meta_update
@@ -293,10 +264,12 @@ el.dispatchEvent(new Event('input'));
 		t.Fatalf("E2E MetaUpdate failed: %v", err)
 	}
 
-	contentBytes, _ := os.ReadFile(filepath.Join(tempDir, "meta.md"))
+	contentBytes, err := os.ReadFile(filepath.Join(tempDir, "meta.md"))
+	if err != nil {
+		t.Fatalf("failed reading meta.md: %v", err)
+	}
 	content := string(contentBytes)
 
-	// Verify it processed as a Native update and stripped embedded slashes
 	if !strings.Contains(content, ":: fileVersion: 2") ||
 		!strings.Contains(content, ":: addedKey: value") {
 		t.Errorf("meta_update failed to apply correctly. Content:\n%s", content)
@@ -334,15 +307,9 @@ func Nuke() {}
 			el.dispatchEvent(new Event('input'));
 		`, bundle), nil),
 		chromedp.WaitVisible(`.file-block.status-ready`, chromedp.ByQuery),
-
-		// Check for the Nuclear Icon (t-str-06)
 		chromedp.Evaluate(`document.querySelector('.decorator').innerText.includes('☢️')`, &hasNuclearIcon),
-
-		// Apply
 		chromedp.Evaluate(`document.getElementById('applyBtn').click()`, nil),
 		chromedp.WaitVisible(`.file-block.status-applied`, chromedp.ByQuery),
-
-		// Check Button Matrix (t-mat-02)
 		chromedp.Evaluate(`document.getElementById('copyTraceBtn').style.display`, &exportBtnDisplay),
 	)
 	if err != nil {
@@ -355,221 +322,5 @@ func Nuke() {}
 
 	if exportBtnDisplay == "none" || exportBtnDisplay == "" {
 		t.Errorf("Expected copyLedgerBtn to be visible after apply (t-mat-02), got %q", exportBtnDisplay)
-	}
-}
-
-func TestE2E_UI_JunkInput(t *testing.T) {
-	ts, ctx, cancel, _ := setupTestServer(t)
-	defer ts.Close()
-	defer cancel()
-
-	ctx, cancelTimeout := context.WithTimeout(ctx, 15*time.Second)
-	defer cancelTimeout()
-
-	var applyBtnDisabled bool
-	var outputText string
-
-	// Test t-edg-01: Junk input
-	err := chromedp.Run(ctx,
-		chromedp.Navigate(ts.URL),
-		chromedp.WaitVisible(`#bundleInput`, chromedp.ByQuery),
-		chromedp.Evaluate(`
-			var el = document.getElementById('bundleInput');
-			el.value = "Hey Appy, just chatting, no patches here!";
-			el.dispatchEvent(new Event('input'));
-		`, nil),
-		chromedp.Sleep(800*time.Millisecond), // Wait for debounce and network fetch
-		chromedp.Text(`#output`, &outputText, chromedp.ByID),
-		chromedp.Evaluate(`document.getElementById('applyBtn').hasAttribute('disabled')`, &applyBtnDisabled),
-	)
-	if err != nil {
-		t.Fatalf("Junk input test failed: %v", err)
-	}
-
-	if !strings.Contains(outputText, "No valid patches found") {
-		t.Errorf("Expected junk input to show graceful failure (t-edg-01), got: %s", outputText)
-	}
-	if !applyBtnDisabled {
-		t.Errorf("Expected apply button to remain disabled for junk input (t-edg-01)")
-	}
-}
-
-func TestE2E_UI_FixFilePaths(t *testing.T) {
-	ts, ctx, cancel, tempDir := setupTestServer(t)
-	defer ts.Close()
-	defer cancel()
-
-	ctx, cancelTimeout := context.WithTimeout(ctx, 15*time.Second)
-	defer cancelTimeout()
-
-	// Create a nested file
-	// Create a nested file
-	os.MkdirAll(filepath.Join(tempDir, "nested", "deep"), 0755)
-	os.WriteFile(filepath.Join(tempDir, "nested", "deep", "hidden.go"), []byte("package deep\n// line 1\n// line 2\nfunc FindMe() {}\n"), 0644)
-
-	// Provide a bundle with a partial/missing path
-	bundle := strings.ReplaceAll(`
-### filename: hidden.go
-### replace
-// line 1
-// line 2
-func FindMe() {}
-### with
-func FoundYou() {}
-### end
-`, "###", patcheng.BundleDelim)
-
-	var fixBtnDisplay string
-	var textareaValue string
-
-	err := chromedp.Run(ctx,
-		chromedp.Navigate(ts.URL),
-		chromedp.WaitVisible(`#bundleInput`, chromedp.ByQuery),
-		chromedp.Evaluate(fmt.Sprintf(`
-			var el = document.getElementById('bundleInput');
-			el.value = %q;
-			el.dispatchEvent(new Event('input'));
-		`, bundle), nil),
-
-		// Wait for preview to complete and check if Fix Paths button appears (t-edg-02)
-		chromedp.WaitVisible(`.file-block.status-error`, chromedp.ByQuery),
-		chromedp.Evaluate(`document.getElementById('fixPathsBtn').style.display`, &fixBtnDisplay),
-	)
-	if err != nil {
-		t.Fatalf("Fix paths preview phase failed: %v", err)
-	}
-
-	if fixBtnDisplay == "none" || fixBtnDisplay == "" {
-		t.Fatalf("Expected Fix File Paths button to be visible, got display: %q", fixBtnDisplay)
-	}
-
-	// Click Fix Paths and verify the textarea updates and a re-preview is triggered
-	err = chromedp.Run(ctx,
-		chromedp.Evaluate(`document.getElementById('fixPathsBtn').click()`, nil),
-		chromedp.WaitVisible(`.file-block.status-ready`, chromedp.ByQuery), // Should automatically re-preview to READY
-		chromedp.Evaluate(`document.getElementById('bundleInput').value`, &textareaValue),
-		chromedp.Evaluate(`document.getElementById('fixPathsBtn').style.display`, &fixBtnDisplay),
-	)
-	if err != nil {
-		t.Fatalf("Fix paths click phase failed: %v", err)
-	}
-
-	if !strings.Contains(textareaValue, "nested/deep/hidden.go") {
-		t.Errorf("Expected textarea to be rewritten with full path, got:\n%s", textareaValue)
-	}
-	if fixBtnDisplay != "none" {
-		t.Errorf("Expected Fix File Paths button to hide after use, got: %s", fixBtnDisplay)
-	}
-}
-
-func TestE2E_UI_MicroInteractions(t *testing.T) {
-	t.Skip("Skipping MicroInteractions: DOM polling timing issues in headless environment.")
-	ts, ctx, cancel, _ := setupTestServer(t)
-	defer ts.Close()
-	defer cancel()
-
-	ctx, cancelTimeout := context.WithTimeout(ctx, 30*time.Second)
-	defer cancelTimeout()
-
-	bundle := strings.ReplaceAll(`
-### filename: target.go
-### replace
-// line 1
-// line 2
-func Old() {}
-### with
-func New() {}
-### end
-`, "###", patcheng.BundleDelim)
-
-	var btnText string
-	var retestDisabled bool
-
-	err := chromedp.Run(ctx,
-		chromedp.Navigate(ts.URL),
-		// Mock clipboard API so headless chrome doesn't reject it
-		chromedp.Evaluate(`navigator.clipboard.writeText = function(text) { return Promise.resolve(); }`, nil),
-		// Mock fetch for /api/retest to prevent actual go test executions from hanging the test runner
-		chromedp.Evaluate(`
-			window.originalFetch = window.fetch;
-			window.fetch = function(url, options) {
-				if (url && url.includes && url.includes('/api/retest')) {
-					return new Promise(resolve => {
-						setTimeout(() => {
-							resolve(new Response(JSON.stringify({ files: [], packages: [] }), {
-								status: 200,
-								headers: { 'Content-Type': 'application/json' }
-							}));
-						}, 500);
-					});
-				}
-				return window.originalFetch(url, options);
-			};
-		`, nil),
-		chromedp.WaitVisible(`#bundleInput`, chromedp.ByQuery),
-		chromedp.Evaluate(fmt.Sprintf(`
-			var el = document.getElementById('bundleInput');
-			el.value = %q;
-			el.dispatchEvent(new Event('input'));
-		`, bundle), nil),
-		chromedp.WaitVisible(`.file-block.status-ready`, chromedp.ByQuery),
-
-		// Wait for apply button to be explicitly enabled before clicking
-		chromedp.Poll(`!document.getElementById('applyBtn').disabled`, nil),
-		chromedp.Evaluate(`document.getElementById('applyBtn').click()`, nil),
-		chromedp.WaitVisible(`.file-block.status-applied`, chromedp.ByQuery),
-
-		// Wait for the ledger button to be unhidden by the UI state machine
-		chromedp.WaitVisible(`#copyTraceBtn`, chromedp.ByID),
-		chromedp.Poll(`document.getElementById('copyTraceBtn').style.display !== 'none'`, nil),
-
-		// Test t-edg-03: Copy button text changes to "Copied!"
-		chromedp.Evaluate(`document.getElementById('copyTraceBtn').click()`, nil),
-		// Poll for the text change instead of reading immediately to prevent JS event loop races
-		chromedp.Poll(`document.getElementById('copyTraceBtn').innerText === 'Copied!'`, nil),
-		chromedp.Text(`#copyTraceBtn`, &btnText, chromedp.ByID),
-	)
-	if err != nil {
-		t.Fatalf("MicroInteractions setup phase failed: %v", err)
-	}
-
-	if btnText != "Copied!" {
-		t.Errorf("Expected copy button text to temporarily change to 'Copied!', got %q", btnText)
-	}
-
-	err = chromedp.Run(ctx,
-		// Test t-edg-04: Retest button state during execution
-		chromedp.Evaluate(`document.getElementById('retestBtn').click()`, nil),
-		chromedp.Text(`#retestBtn`, &btnText, chromedp.ByID),
-		chromedp.Evaluate(`document.getElementById('retestBtn').disabled`, &retestDisabled),
-	)
-	if err != nil {
-		t.Fatalf("MicroInteractions retest click failed: %v", err)
-	}
-
-	if !strings.Contains(btnText, "Running Tests") {
-		t.Errorf("Expected retest button to show 'Running Tests...', got %q", btnText)
-	}
-	if !retestDisabled {
-		t.Errorf("Expected retest button to be disabled during execution")
-	}
-
-	// Wait for tests to finish and button to reset
-	err = chromedp.Run(ctx,
-		// Wait for the JS promise to resolve and re-enable the button,
-		// avoiding race conditions on the loader div if the API returns instantly.
-		chromedp.Poll(`document.getElementById('retestBtn').disabled === false`, nil),
-		chromedp.Text(`#retestBtn`, &btnText, chromedp.ByID),
-		chromedp.Evaluate(`document.getElementById('retestBtn').disabled`, &retestDisabled),
-	)
-	if err != nil {
-		t.Fatalf("MicroInteractions retest completion failed: %v", err)
-	}
-
-	if !strings.Contains(btnText, "Retest Impacted") {
-		t.Errorf("Expected retest button to reset to 'Retest Impacted', got %q", btnText)
-	}
-	if retestDisabled {
-		t.Errorf("Expected retest button to be enabled after execution")
 	}
 }

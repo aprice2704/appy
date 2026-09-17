@@ -2,7 +2,7 @@
 // :: majorVersion: 1
 // :: fileVersion: 1
 // :: description: Appy feature requests and backlog.
-// :: filename: /home/aprice/dev/appy/TODO.md
+// :: filename: TODO.md
 // :: serialization: md
 
 # Appy TODO & Backlog

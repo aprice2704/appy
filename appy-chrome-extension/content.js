@@ -42,6 +42,8 @@ function isPatchPayload(text) {
 
 async function executeAppyAction(inst, btn) {
   const origText = btn.innerText;
+  const origBg = btn.style.background;
+  const origBorder = btn.style.borderColor;
   btn.disabled = true;
 
   try {
@@ -65,10 +67,36 @@ async function executeAppyAction(inst, btn) {
         body: JSON.stringify({ bundle: cleaned })
       });
       const data = await res.json();
-      
+
+      let hasErrors = !res.ok;
+      let files = data.files || [];
+      const failedFiles = files.filter(f => !f.applied);
+      if (failedFiles.length > 0) {
+        hasErrors = true;
+      }
+
       let ledgerText = "";
       if (data.error) {
         ledgerText = `❌ Appy Patch Error [${inst.name}]:\n${data.error}`;
+      } else if (failedFiles.length > 0) {
+        ledgerText = `**Appy Result Ledger** [${inst.name}]\n\n`;
+        const successFiles = files.filter(f => f.applied);
+        if (successFiles.length > 0) {
+          ledgerText += `Committed files:\n` + successFiles.map(f => `- \`${f.path}\``).join('\n') + `\n\n`;
+        }
+        ledgerText += `Rejected files:\n`;
+        for (const f of failedFiles) {
+          ledgerText += `- \`${f.path}\` (status: rejected)\n`;
+          if (f.error) ledgerText += `  Issue: ${f.error}\n`;
+          if (f.failed_patch) {
+            if (f.failed_patch.current_line_echo) {
+              ledgerText += `  Current line echo: \`${f.failed_patch.current_line_echo}\`\n`;
+            }
+            if (f.failed_patch.llm_fallback_hint) {
+              ledgerText += `  Fallback Strategy: ${f.failed_patch.llm_fallback_hint}\n`;
+            }
+          }
+        }
       } else if (data.ledger) {
         ledgerText = typeof data.ledger === "string" ? data.ledger : JSON.stringify(data.ledger, null, 2);
       } else if (data.output) {
@@ -78,11 +106,26 @@ async function executeAppyAction(inst, btn) {
       }
 
       await navigator.clipboard.writeText(ledgerText);
-      btn.innerText = "✓ Log Copied!";
+
+      if (hasErrors) {
+        btn.innerText = "🚨 Error Copied!";
+        btn.style.background = "#dc2626";
+        btn.style.borderColor = "#f87171";
+        btn.style.boxShadow = "0 0 12px rgba(220, 38, 38, 0.8)";
+      } else {
+        btn.innerText = "✓ Applied!";
+        btn.style.background = "#16a34a";
+        btn.style.borderColor = "#4ade80";
+        btn.style.boxShadow = "0 0 10px rgba(22, 163, 74, 0.7)";
+      }
+
       setTimeout(() => {
         btn.innerText = origText;
+        btn.style.background = origBg;
+        btn.style.borderColor = origBorder;
+        btn.style.boxShadow = "0 2px 8px rgba(0, 0, 0, 0.3)";
         btn.disabled = false;
-      }, 2000);
+      }, 3000);
 
     } else {
       btn.innerText = "⏳ Bundling...";
@@ -101,7 +144,7 @@ async function executeAppyAction(inst, btn) {
       const buildRes = await fetch(`${base}/api/txtar`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ paths, excludes: ["*_test.go", ".git", "vendor"] })
+        body: JSON.stringify({ paths, excludes: [".git", "vendor", "node_modules"] })
       });
       const buildData = await buildRes.json();
       if (buildData.error) throw new Error(buildData.error);
@@ -115,14 +158,24 @@ async function executeAppyAction(inst, btn) {
       if (copyData.error) throw new Error(copyData.error);
 
       btn.innerText = "✓ Primed!";
+      btn.style.background = "#059669";
+      btn.style.borderColor = "#34d399";
+      btn.style.boxShadow = "0 0 10px rgba(5, 150, 105, 0.7)";
+
       setTimeout(() => {
         btn.innerText = origText;
+        btn.style.background = origBg;
+        btn.style.borderColor = origBorder;
+        btn.style.boxShadow = "0 2px 8px rgba(0, 0, 0, 0.3)";
         btn.disabled = false;
       }, 2000);
     }
   } catch (err) {
     alert(`Appy [${inst.name}] failed: ` + err.message);
     btn.innerText = origText;
+    btn.style.background = origBg;
+    btn.style.borderColor = origBorder;
+    btn.style.boxShadow = "0 2px 8px rgba(0, 0, 0, 0.3)";
     btn.disabled = false;
   }
 }
@@ -176,31 +229,39 @@ function renderButtons() {
 }
 
 function injectControls() {
-  if (document.getElementById("appy-smart-container")) return;
+  const existing = document.getElementById("appy-smart-container");
+  if (existing && existing.isConnected) {
+    return;
+  }
+  if (existing && !existing.isConnected) {
+    existing.remove();
+  }
 
-  const anchor = document.querySelector("chat-window, [role='region'], main, form") || document.body;
-  const inputRow = anchor.querySelector(".input-area, [contenteditable='true'], textarea");
+  const inputRow = document.querySelector(".input-area, [contenteditable='true'], textarea, rich-textarea");
   if (!inputRow) return;
 
-  const targetBox = inputRow.closest("form") || inputRow.parentElement;
+  const targetBox = inputRow.closest("form") || inputRow.closest(".input-area") || inputRow.parentElement;
   if (!targetBox) return;
 
-  targetBox.style.position = "relative";
+  if (window.getComputedStyle(targetBox).position === "static") {
+    targetBox.style.position = "relative";
+  }
 
   const container = document.createElement("div");
   container.id = "appy-smart-container";
   container.style.cssText = `
     position: absolute;
-    left: -130px;
-    bottom: 8px;
+    left: -135px;
+    bottom: 48px;
     display: flex;
     flex-direction: column;
     align-items: stretch;
     gap: 6px;
-    z-index: 1000;
+    z-index: 9999;
   `;
 
   targetBox.appendChild(container);
+  renderButtons();
   probeInstances();
 }
 

@@ -1,11 +1,37 @@
        <div id="tab-explorer" class="tab-pane" style="display: none; height: calc(100% - 60px);">
-          <div style="display: flex; gap: 15px; height: 100%;">
-              <!-- Left: Tree View & Filters (55%) -->
-              <div style="flex: 1.2; display: flex; flex-direction: column; gap: 8px; background: #121826; border: 1px solid #2d3748; border-radius: 6px; padding: 12px; min-width: 0;">
+          <div style="display: flex; gap: 12px; height: 100%;">
+              <!-- Column 1: Bookmarks & Recent Dirs (Far Left) -->
+              <div style="width: 240px; min-width: 210px; max-width: 280px; display: flex; flex-direction: column; gap: 10px; height: 100%;">
+                  <!-- Top Half: Bookmarks -->
+                  <div style="flex: 1; display: flex; flex-direction: column; gap: 6px; background: #121826; border: 1px solid #2d3748; border-radius: 6px; padding: 10px; min-height: 0;">
+                      <div style="display: flex; justify-content: space-between; align-items: center;">
+                          <span style="font-size: 12px; font-weight: bold; color: #fbbf24; display: flex; align-items: center; gap: 4px;">⭐ Bookmarks</span>
+                          <button onclick="clearBookmarks()" style="background: transparent; border: none; color: #64748b; font-size: 11px; cursor: pointer; padding: 0;" title="Clear all bookmarks" onmouseover="this.style.color='#f87171'" onmouseout="this.style.color='#64748b'">Clear</button>
+                      </div>
+                      <div id="explorerBookmarksList" style="flex: 1; overflow-y: auto; background: #0b0f19; border: 1px solid #1e293b; border-radius: 4px; padding: 6px; font-family: monospace; font-size: 12px;">
+                          <em style="color: #64748b; font-size: 11px;">Right-click any file/dir to bookmark.</em>
+                      </div>
+                  </div>
+
+                  <!-- Bottom Half: Recent Dirs -->
+                  <div style="flex: 1; display: flex; flex-direction: column; gap: 6px; background: #121826; border: 1px solid #2d3748; border-radius: 6px; padding: 10px; min-height: 0;">
+                      <div style="display: flex; justify-content: space-between; align-items: center;">
+                          <span style="font-size: 12px; font-weight: bold; color: #38bdf8; display: flex; align-items: center; gap: 4px;">🕒 Recent Dirs</span>
+                          <button onclick="clearRecentDirs()" style="background: transparent; border: none; color: #64748b; font-size: 11px; cursor: pointer; padding: 0;" title="Clear recent dirs" onmouseover="this.style.color='#f87171'" onmouseout="this.style.color='#64748b'">Clear</button>
+                      </div>
+                      <div id="explorerRecentDirsList" style="flex: 1; overflow-y: auto; background: #0b0f19; border: 1px solid #1e293b; border-radius: 4px; padding: 6px; font-family: monospace; font-size: 12px;">
+                          <em style="color: #64748b; font-size: 11px;">Check items in tree to record recent dirs.</em>
+                      </div>
+                  </div>
+              </div>
+
+              <!-- Column 2: Tree View & Filters (Center) -->
+              <div style="flex: 1.1; display: flex; flex-direction: column; gap: 8px; background: #121826; border: 1px solid #2d3748; border-radius: 6px; padding: 12px; min-width: 0;">
                   <div style="display: flex; gap: 8px; align-items: center;">
                       <input type="text" id="explorerSearch" placeholder="Filter tree or glob (e.g. passes, *.go)..." oninput="debounceFilterTree()"
                           style="flex: 1; padding: 6px 10px; background: #0b0f19; border: 1px solid #334155; border-radius: 4px; color: #f8fafc; font-family: monospace; font-size: 13px;">
-                      <button onclick="reloadExplorerRoot()" style="height: 30px; min-width: 0; padding: 0 10px; font-size: 12px; background: #334155; border: 1px solid #475569; color: #cbd5e1;">🔄</button>
+                      <button id="btnTreeSortMode" onclick="cycleTreeSortMode()" class="pill-btn" style="height: 30px; padding: 0 10px; border-radius: 4px; border-color: #334155; color: #38bdf8;" title="Cycle file sort mode">Sort: Alpha</button>
+                      <button onclick="reloadExplorerRoot()" style="height: 30px; min-width: 0; padding: 0 10px; font-size: 12px; background: #334155; border: 1px solid #475569; color: #cbd5e1;" title="Reload tree">🔄</button>
                   </div>
                   <div style="display: flex; gap: 6px; flex-wrap: wrap; align-items: center; font-size: 11px;">
                       <span style="color: #64748b;">Quick:</span>
@@ -14,6 +40,7 @@
                       <button class="pill-btn" onclick="appendSuperGlobToken(':md')">:md</button>
                       <button class="pill-btn" onclick="appendSuperGlobToken(':ndcl')">:ndcl</button>
                       <button class="pill-btn" onclick="appendSuperGlobToken(':json')">:json</button>
+                      <button onclick="clearSuperGlob()" style="background: transparent; border: 1px solid #7f1d1d; color: #f87171; border-radius: 12px; padding: 1px 8px; font-size: 11px; cursor: pointer; height: 22px;" title="Clear super-glob spec and selections">Clear</button>
                       <label style="margin-left: auto; display: flex; align-items: center; gap: 4px; color: #94a3b8; cursor: pointer;">
                           <input type="checkbox" id="chkShowHidden" onchange="reloadExplorerRoot()"> Hidden
                       </label>
@@ -23,22 +50,36 @@
                   </div>
               </div>
 
-              <!-- Right: Super-Glob Spec & Evaluated Files (45%) -->
+              <!-- Column 3: Super-Glob Spec & Evaluated Files (Right) -->
               <div style="flex: 1; display: flex; flex-direction: column; gap: 8px; background: #121826; border: 1px solid #2d3748; border-radius: 6px; padding: 12px; min-width: 0;">
                   <div style="display: flex; justify-content: space-between; align-items: center;">
                       <label style="font-size: 13px; font-weight: bold; color: #38bdf8;">Super-Glob Spec:</label>
-                      <button onclick="sendExplorerToBuilder()" style="background: #2563eb; color: #f8fafc; border: 1px solid #3b82f6; height: 28px; font-size: 12px; padding: 0 12px;">🚀 Send to Builder</button>
                   </div>
                   <textarea id="superGlobInput" placeholder="code/{passes,cmd}/{:go !:test}" oninput="debounceSuperGlobEval()"
                       style="height: 110px; min-height: 110px; max-height: 150px; padding: 8px; background: #0b0f19; color: #a5f3fc; border: 1px solid #334155; border-radius: 4px; font-family: monospace; font-size: 13px; resize: vertical;"></textarea>
 
-                  <div style="display: flex; justify-content: space-between; align-items: center; padding: 4px 0;">
+                  <!-- Centered Transfer Strip -->
+                  <div style="display: flex; justify-content: space-between; align-items: center; padding: 6px 0; border-top: 1px solid #1e293b; border-bottom: 1px solid #1e293b; margin: 2px 0;">
+                      <div style="display: flex; gap: 8px; align-items: center;">
+                          <button id="sendExplorerAddBtn" onclick="sendExplorerToBuilder(false)"
+                              style="background: #2563eb; color: #f8fafc; border: 1px solid #3b82f6; height: 28px; font-size: 12px; padding: 0 10px;"
+                              title="Append matching paths to the Builder table">➕ Add to Builder</button>
+                          <button id="sendExplorerReplaceBtn" onclick="sendExplorerToBuilder(true)"
+                              style="background: #0284c7; color: #f8fafc; border: 1px solid #0369a1; height: 28px; font-size: 12px; padding: 0 10px;"
+                              title="Replace all Builder paths with matching paths">🔄 Replace Builder</button>
+                      </div>
                       <span style="font-size: 12px; color: #94a3b8;">Evaluated Manifest (<span id="sgFileCount">0</span> files, ~<span id="sgTokens">0</span>k tok):</span>
-                      <button onclick="clearSuperGlob()" style="background: transparent; border: none; color: #f87171; font-size: 11px; cursor: pointer; padding: 0;">Clear</button>
                   </div>
                   <div id="superGlobManifest" style="flex: 1; overflow-y: auto; background: #0b0f19; border: 1px solid #1e293b; border-radius: 4px; padding: 8px; font-family: monospace; font-size: 12px; color: #cbd5e1;">
                       <em style="color: #64748b;">No files matched.</em>
                   </div>
               </div>
+          </div>
+
+          <!-- Custom Context Menu for Tree Items -->
+          <div id="treeContextMenu" class="tree-context-menu" style="display: none;">
+              <div id="ctxMenuBookmarkAction" class="ctx-item" onclick="onContextBookmarkClick()">⭐ Bookmark</div>
+              <div id="ctxMenuSelectTypeAction" class="ctx-item" onclick="onContextSelectTypeClick(true)">☑️ Select all of this filetype</div>
+              <div id="ctxMenuDeselectTypeAction" class="ctx-item" onclick="onContextSelectTypeClick(false)">☐ Deselect all of this filetype</div>
           </div>
        </div>

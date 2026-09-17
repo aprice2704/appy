@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -16,6 +17,7 @@ type FSTreeNode struct {
 	Path     string `json:"path"`
 	IsDir    bool   `json:"is_dir"`
 	Size     int64  `json:"size,omitempty"`
+	ModTime  int64  `json:"mod_time,omitempty"`
 	FileIcon string `json:"file_icon,omitempty"`
 	FileType string `json:"file_type,omitempty"`
 }
@@ -63,8 +65,12 @@ func (s *AppyServer) handleFSTree(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if !e.IsDir() {
-			if info, err := e.Info(); err == nil {
+			info, err := e.Info()
+			if err != nil {
+				log.Printf("[DEBUG] handleFSTree: info failed for %s: %v", name, err)
+			} else {
 				node.Size = info.Size()
+				node.ModTime = info.ModTime().Unix()
 			}
 			prof := patcheng.DefaultRegistry.GetByExtension(filepath.Ext(name))
 			node.FileType, node.FileIcon = getFileMeta(prof)
@@ -80,10 +86,12 @@ func (s *AppyServer) handleFSTree(w http.ResponseWriter, r *http.Request) {
 	})
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
+	if err := json.NewEncoder(w).Encode(map[string]any{
 		"dir":   filepath.ToSlash(reqDir),
 		"nodes": nodes,
-	})
+	}); err != nil {
+		log.Printf("[ERROR] handleFSTree: failed encoding response: %v", err)
+	}
 }
 
 type SuperGlobEvalPayload struct {

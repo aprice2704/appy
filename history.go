@@ -10,6 +10,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -87,12 +88,16 @@ func pruneHistory(historyDir string) {
 		return
 	}
 
-	sort.Strings(txFiles) // tx_ timestamp sorts naturally
+	sort.Strings(txFiles)
 	for i := 0; i < len(txFiles)-maxHistory; i++ {
 		oldTx := txFiles[i]
 		base := oldTx[:len(oldTx)-5]
-		_ = os.Remove(filepath.Join(historyDir, oldTx))
-		_ = os.RemoveAll(filepath.Join(historyDir, base+"_files"))
+		if err := os.Remove(filepath.Join(historyDir, oldTx)); err != nil {
+			log.Printf("[DEBUG] pruneHistory: remove failed for %s: %v", oldTx, err)
+		}
+		if err := os.RemoveAll(filepath.Join(historyDir, base+"_files")); err != nil {
+			log.Printf("[DEBUG] pruneHistory: removeAll failed for %s_files: %v", base, err)
+		}
 	}
 }
 
@@ -107,12 +112,16 @@ func listHistory(rootDir string) ([]HistoryTx, error) {
 	for _, e := range entries {
 		if !e.IsDir() && filepath.Ext(e.Name()) == ".json" && e.Name() != ledgerFilename {
 			b, err := os.ReadFile(filepath.Join(historyDir, e.Name()))
-			if err == nil {
-				var tx HistoryTx
-				if err := json.Unmarshal(b, &tx); err == nil {
-					history = append(history, tx)
-				}
+			if err != nil {
+				log.Printf("[DEBUG] listHistory: read file failed for %s: %v", e.Name(), err)
+				continue
 			}
+			var tx HistoryTx
+			if err := json.Unmarshal(b, &tx); err != nil {
+				log.Printf("[DEBUG] listHistory: unmarshal failed for %s: %v", e.Name(), err)
+				continue
+			}
+			history = append(history, tx)
 		}
 	}
 
@@ -162,7 +171,9 @@ func revertTransaction(rootDir, txID string) error {
 				return fmt.Errorf("failed to restore file %s: %v", op.Path, err)
 			}
 		} else {
-			_ = os.Remove(targetPath)
+			if err := os.Remove(targetPath); err != nil && !os.IsNotExist(err) {
+				log.Printf("[DEBUG] revertTransaction: remove failed for %s: %v", targetPath, err)
+			}
 		}
 	}
 

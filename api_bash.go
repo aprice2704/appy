@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -58,7 +60,10 @@ func (s *AppyServer) handleExecBash(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), time.Duration(timeoutSec)*time.Second)
 	defer cancel()
 
-	homeDir, _ := os.UserHomeDir()
+	homeDir, errHome := os.UserHomeDir()
+	if errHome != nil {
+		log.Printf("[DEBUG] handleExecBash: failed to determine user home directory: %v", errHome)
+	}
 	appyRcGlobal := filepath.Join(homeDir, ".appy_bashrc")
 	appyRcLocal := filepath.Join(s.rootDir, ".appy_bashrc")
 
@@ -71,15 +76,20 @@ alias l='licecomb -disable nesting_flatten'
 alias gs='git status'
 alias gd='git diff'
 `
-	if _, err := os.Stat(appyRcGlobal); err == nil {
-		preamble += fmt.Sprintf("[ -f %q ] && source %q\n", appyRcGlobal, appyRcGlobal)
-	} else {
-		// Fallback to sourcing ~/.bashrc safely
+	if _, err := os.Stat(appyRcGlobal); err != nil {
+		if !os.IsNotExist(err) {
+			log.Printf("[DEBUG] handleExecBash: stat global rc failed: %v", err)
+		}
 		preamble += "[ -f ~/.bashrc ] && source ~/.bashrc 2>/dev/null || true\n"
-		// Re-ensure alias p points directly to piranha without terminal ccmd
 		preamble += "alias p='piranha'\n"
+	} else {
+		preamble += fmt.Sprintf("[ -f %q ] && source %q\n", appyRcGlobal, appyRcGlobal)
 	}
-	if _, err := os.Stat(appyRcLocal); err == nil {
+	if _, err := os.Stat(appyRcLocal); err != nil {
+		if !os.IsNotExist(err) {
+			log.Printf("[DEBUG] handleExecBash: stat local rc failed: %v", err)
+		}
+	} else {
 		preamble += fmt.Sprintf("[ -f %q ] && source %q\n", appyRcLocal, appyRcLocal)
 	}
 
@@ -104,7 +114,8 @@ alias gd='git diff'
 	exitCode := 0
 	var errStr string
 	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
 			exitCode = exitErr.ExitCode()
 		} else {
 			exitCode = 1

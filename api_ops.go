@@ -43,9 +43,11 @@ func (s *AppyServer) handleForget(w http.ResponseWriter, r *http.Request) {
 	SaveLedger(s.rootDir)
 
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(withND("appy/forget", "Reset patch in ledger", map[string]any{
+	if err := json.NewEncoder(w).Encode(withND("appy/forget", "Reset patch in ledger", map[string]any{
 		"success": true,
-	}))
+	})); err != nil {
+		log.Printf("[ERROR] handleForget: response encode failed: %v", err)
+	}
 }
 
 func (s *AppyServer) handleRetest(w http.ResponseWriter, r *http.Request) {
@@ -78,12 +80,13 @@ func (s *AppyServer) handleRetest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	var rm map[string]any
-	if b, err := json.Marshal(RetestResponse{Packages: req.Packages, Files: outFiles}); err == nil {
-		_ = json.Unmarshal(b, &rm)
+	respObj := RetestResponse{Packages: req.Packages, Files: outFiles}
+	if err := json.NewEncoder(w).Encode(withND("appy/retest", "Test execution report", map[string]any{
+		"packages": respObj.Packages,
+		"files":    respObj.Files,
+	})); err != nil {
+		log.Printf("[ERROR] handleRetest: response encode failed: %v", err)
 	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(withND("appy/retest", "Test execution report", rm))
 }
 
 func (s *AppyServer) handleHistory(w http.ResponseWriter, r *http.Request) {
@@ -97,9 +100,11 @@ func (s *AppyServer) handleHistory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(withND("appy/history", "Patch transaction history", map[string]any{
+	if err := json.NewEncoder(w).Encode(withND("appy/history", "Patch transaction history", map[string]any{
 		"history": hist,
-	}))
+	})); err != nil {
+		log.Printf("[ERROR] handleHistory: response encode failed: %v", err)
+	}
 }
 
 func (s *AppyServer) handleRevert(w http.ResponseWriter, r *http.Request) {
@@ -117,7 +122,9 @@ func (s *AppyServer) handleRevert(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(withND("appy/revert", "Revert completed", map[string]any{
+	if err := json.NewEncoder(w).Encode(withND("appy/revert", "Revert completed", map[string]any{
 		"reverted": true,
-	}))
+	})); err != nil {
+		log.Printf("[ERROR] handleRevert: response encode failed: %v", err)
+	}
 }

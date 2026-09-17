@@ -12,18 +12,18 @@ function getTxtarPaths() {
 }
 
 function setTxtarPaths(paths) {
-   const tbody = document.getElementById('txtarPathsBody');
-   if (!tbody) return;
-   tbody.innerHTML = '';
-   const cleanPaths = (paths || []).map(p => (p || '').trim()).filter(p => p !== '');
-   if (cleanPaths.length === 0) {
-       addPathRow('.');
-       return;
-   }
-   cleanPaths.forEach(p => addPathRow(p));
-   if (typeof scheduleTxtarStatsUpdate === 'function') {
-       scheduleTxtarStatsUpdate();
-   }
+  const tbody = document.getElementById('txtarPathsBody');
+  if (!tbody) return;
+  tbody.innerHTML = '';
+  const cleanPaths = (paths || []).map(p => (p || '').trim()).filter(p => p !== '' && p !== '.');
+  if (cleanPaths.length === 0) {
+      addPathRow('');
+      return;
+  }
+  cleanPaths.forEach(p => addPathRow(p));
+  if (typeof scheduleTxtarStatsUpdate === 'function') {
+      scheduleTxtarStatsUpdate();
+  }
 }
 
 function addPathRow(val) {
