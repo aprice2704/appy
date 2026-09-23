@@ -1,10 +1,10 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -96,8 +96,7 @@ func TestGenerateTxtar_ExceedsMaxFileCountLimit(t *testing.T) {
 	if err == nil {
 		t.Fatalf("Expected error when exceeding MaxTxtarFileCount (%d), but generation succeeded with %d files", MaxTxtarFileCount, count)
 	}
-
-	if !strings.Contains(err.Error(), "safety limit of 500 files") {
-		t.Errorf("Expected error to mention 500 files limit, got: %v", err)
+	if !errors.Is(err, ErrTxtarFileLimitExceeded) {
+		t.Errorf("Expected error to wrap ErrTxtarFileLimitExceeded, got: %v", err)
 	}
 }

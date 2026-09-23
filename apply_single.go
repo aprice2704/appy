@@ -45,7 +45,7 @@ func (s *AppyServer) applySingleFile(rawFilename string, patches []patcheng.Fuzz
 			Path:     rawFilename,
 			Applied:  true,
 			NetLines: 0,
-			FileType: fType,
+			FileType: FileType(fType),
 			FileIcon: fIcon,
 		}, "", false, true, nil, nil
 	}
@@ -92,15 +92,9 @@ func (s *AppyServer) applySingleFile(rawFilename string, patches []patcheng.Fuzz
 				return s.buildApplyFailure(rawFilename, fType, fIcon, contentBytes, patches, errExist), "", false, false, nil, errExist
 			}
 			if p.Search == "REPLACE_ASSERT" && len(contentBytes) == 0 {
-				errMissing := fmt.Errorf("refusing to complete_replace file: %s does not exist or is empty. Use 'create' or 'overwrite'", rawFilename)
-				appendActivityLog(PatchActivityLog{
-					Action:   "apply",
-					File:     rawFilename,
-					Status:   "FAIL",
-					Methods:  methods,
-					NetLines: 0,
-				})
-				return s.buildApplyFailure(rawFilename, fType, fIcon, contentBytes, patches, errMissing), "", false, false, nil, errMissing
+				// Safe auto-promotion: promote complete_replace to CREATE_ASSERT on new/empty file
+				p.Search = "CREATE_ASSERT"
+				patches[i].Search = "CREATE_ASSERT"
 			}
 			linesBefore := countLines(contentStr)
 			fileNetLines += countLines(p.Replace) - linesBefore
@@ -148,7 +142,7 @@ func (s *AppyServer) applySingleFile(rawFilename string, patches []patcheng.Fuzz
 		Path:     rawFilename,
 		Applied:  true,
 		NetLines: fileNetLines,
-		FileType: fType,
+		FileType: FileType(fType),
 		FileIcon: fIcon,
 	}, newContent, isDelete, false, hashes, nil
 }
@@ -197,7 +191,7 @@ func (s *AppyServer) buildApplyFailure(rawFilename, fType, fIcon string, content
 	return ApplyFile{
 		Path:        rawFilename,
 		Applied:     false,
-		FileType:    fType,
+		FileType:    FileType(fType),
 		FileIcon:    fIcon,
 		Error:       err.Error(),
 		FailedPatch: failedBlock,

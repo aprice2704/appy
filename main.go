@@ -13,7 +13,7 @@ import (
 	_ "github.com/aprice2704/fdm/code/treesitter"
 )
 
-const AppVersion = "v2.4.0"
+const AppVersion = "v2.4.1"
 
 func watchSelfForReload() {
 	execPath, err := os.Executable()
@@ -31,10 +31,11 @@ func watchSelfForReload() {
 	for {
 		time.Sleep(1 * time.Second)
 		stat, err := os.Stat(execPath)
-		if err == nil && stat.ModTime().After(initialModTime) {
-			log.Printf("Binary updated (mod time changed). Triggering hot reload (Exit 42)...")
-			os.Exit(42)
+		if err != nil || !stat.ModTime().After(initialModTime) {
+			continue
 		}
+		log.Printf("Binary updated (mod time changed). Triggering hot reload (Exit 42)...")
+		os.Exit(42)
 	}
 }
 

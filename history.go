@@ -1,6 +1,6 @@
 // :: product: FDM/NS
 // :: majorVersion: 1
-// :: fileVersion: 1
+// :: fileVersion: 2
 // :: description: Manages patch transaction history and reversions.
 // :: filename: history.go
 // :: serialization: go
@@ -26,11 +26,11 @@ func saveHistory(rootDir string, originalFiles map[string]*[]byte) error {
 		return fmt.Errorf("failed to create history dir: %v", err)
 	}
 
-	txID := fmt.Sprintf("tx_%d", time.Now().UnixNano())
-	txDir := filepath.Join(historyDir, txID+"_files")
+	rawTxID := fmt.Sprintf("tx_%d", time.Now().UnixNano())
+	txDir := filepath.Join(historyDir, rawTxID+"_files")
 
 	tx := HistoryTx{
-		TxID:      txID,
+		TxID:      TxID(rawTxID),
 		Timestamp: time.Now().Unix(),
 		Files:     []HistoryFileOp{},
 	}
@@ -47,14 +47,16 @@ func saveHistory(rootDir string, originalFiles map[string]*[]byte) error {
 		}
 		tx.Files = append(tx.Files, op)
 
-		if op.Existed {
-			destPath := filepath.Join(txDir, relPath+".bak")
-			if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
-				return fmt.Errorf("failed to make history tx dir: %v", err)
-			}
-			if err := os.WriteFile(destPath, *contentPtr, 0644); err != nil {
-				return fmt.Errorf("failed to write history file backup: %v", err)
-			}
+		if !op.Existed {
+			continue
+		}
+
+		destPath := filepath.Join(txDir, relPath+".bak")
+		if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
+			return fmt.Errorf("failed to make history tx dir: %v", err)
+		}
+		if err := os.WriteFile(destPath, *contentPtr, 0644); err != nil {
+			return fmt.Errorf("failed to write history file backup: %v", err)
 		}
 	}
 
@@ -63,7 +65,7 @@ func saveHistory(rootDir string, originalFiles map[string]*[]byte) error {
 		return fmt.Errorf("failed to marshal history tx: %v", err)
 	}
 
-	if err := os.WriteFile(filepath.Join(historyDir, txID+".json"), txBytes, 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(historyDir, rawTxID+".json"), txBytes, 0644); err != nil {
 		return fmt.Errorf("failed to write history tx file: %v", err)
 	}
 
@@ -79,9 +81,10 @@ func pruneHistory(historyDir string) {
 
 	var txFiles []string
 	for _, e := range entries {
-		if !e.IsDir() && filepath.Ext(e.Name()) == ".json" && e.Name() != ledgerFilename {
-			txFiles = append(txFiles, e.Name())
+		if e.IsDir() || filepath.Ext(e.Name()) != ".json" || e.Name() == ledgerFilename {
+			continue
 		}
+		txFiles = append(txFiles, e.Name())
 	}
 
 	if len(txFiles) <= maxHistory {
@@ -105,24 +108,28 @@ func listHistory(rootDir string) ([]HistoryTx, error) {
 	historyDir := filepath.Join(rootDir, historyDirName)
 	entries, err := os.ReadDir(historyDir)
 	if err != nil {
-		return []HistoryTx{}, nil
+		if os.IsNotExist(err) {
+			return []HistoryTx{}, nil
+		}
+		return nil, fmt.Errorf("failed to read history directory %s: %w", historyDir, err)
 	}
 
 	var history []HistoryTx
 	for _, e := range entries {
-		if !e.IsDir() && filepath.Ext(e.Name()) == ".json" && e.Name() != ledgerFilename {
-			b, err := os.ReadFile(filepath.Join(historyDir, e.Name()))
-			if err != nil {
-				log.Printf("[DEBUG] listHistory: read file failed for %s: %v", e.Name(), err)
-				continue
-			}
-			var tx HistoryTx
-			if err := json.Unmarshal(b, &tx); err != nil {
-				log.Printf("[DEBUG] listHistory: unmarshal failed for %s: %v", e.Name(), err)
-				continue
-			}
-			history = append(history, tx)
+		if e.IsDir() || filepath.Ext(e.Name()) != ".json" || e.Name() == ledgerFilename {
+			continue
 		}
+		b, err := os.ReadFile(filepath.Join(historyDir, e.Name()))
+		if err != nil {
+			log.Printf("[DEBUG] listHistory: read file failed for %s: %v", e.Name(), err)
+			continue
+		}
+		var tx HistoryTx
+		if err := json.Unmarshal(b, &tx); err != nil {
+			log.Printf("[DEBUG] listHistory: unmarshal failed for %s: %v", e.Name(), err)
+			continue
+		}
+		history = append(history, tx)
 	}
 
 	sort.Slice(history, func(i, j int) bool {
@@ -135,9 +142,9 @@ func listHistory(rootDir string) ([]HistoryTx, error) {
 	return history, nil
 }
 
-func revertTransaction(rootDir, txID string) error {
+func revertTransaction(rootDir string, txID TxID) error {
 	historyDir := filepath.Join(rootDir, historyDirName)
-	txFile := filepath.Join(historyDir, txID+".json")
+	txFile := filepath.Join(historyDir, string(txID)+".json")
 
 	b, err := os.ReadFile(txFile)
 	if err != nil {
@@ -149,7 +156,7 @@ func revertTransaction(rootDir, txID string) error {
 		return fmt.Errorf("corrupt transaction file: %s", txID)
 	}
 
-	txDir := filepath.Join(historyDir, txID+"_files")
+	txDir := filepath.Join(historyDir, string(txID)+"_files")
 
 	for _, op := range tx.Files {
 		targetPath := filepath.Join(rootDir, filepath.FromSlash(op.Path))

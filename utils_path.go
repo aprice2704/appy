@@ -136,9 +136,10 @@ func resolveDirectoryUnderRoot(rootDir, dirName string, sampleFiles []string) st
 				bestDir = cDir
 			}
 		}
-		if bestScore > 0 && bestDir != "" {
-			return bestDir
+		if bestScore <= 0 || bestDir == "" {
+			return candidateDirs[0]
 		}
+		return bestDir
 	}
 
 	if len(candidateDirs) > 0 {

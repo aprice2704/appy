@@ -31,6 +31,34 @@ func expandTypeAliases(s string) string {
 	return s
 }
 
+func parseBraceOptions(inside string) []string {
+	var options []string
+	current := &strings.Builder{}
+	innerDepth := 0
+	for i := 0; i < len(inside); i++ {
+		ch := inside[i]
+		switch {
+		case ch == '{':
+			innerDepth++
+			current.WriteByte(ch)
+		case ch == '}':
+			innerDepth--
+			current.WriteByte(ch)
+		case (ch == ',' || ch == ' ') && innerDepth == 0:
+			if s := strings.TrimSpace(current.String()); s != "" {
+				options = append(options, s)
+			}
+			current.Reset()
+		default:
+			current.WriteByte(ch)
+		}
+	}
+	if rem := strings.TrimSpace(current.String()); rem != "" {
+		options = append(options, rem)
+	}
+	return options
+}
+
 func expandBraces(pattern string) []string {
 	openIdx := strings.Index(pattern, "{")
 	if openIdx == -1 {
@@ -58,31 +86,7 @@ func expandBraces(pattern string) []string {
 	suffix := pattern[closeIdx+1:]
 	inside := pattern[openIdx+1 : closeIdx]
 
-	var options []string
-	current := &strings.Builder{}
-	innerDepth := 0
-	for i := 0; i < len(inside); i++ {
-		ch := inside[i]
-		if ch == '{' {
-			innerDepth++
-			current.WriteByte(ch)
-		} else if ch == '}' {
-			innerDepth--
-			current.WriteByte(ch)
-		} else if (ch == ',' || ch == ' ') && innerDepth == 0 {
-			s := strings.TrimSpace(current.String())
-			if s != "" {
-				options = append(options, s)
-			}
-			current.Reset()
-		} else {
-			current.WriteByte(ch)
-		}
-	}
-	if rem := strings.TrimSpace(current.String()); rem != "" {
-		options = append(options, rem)
-	}
-
+	options := parseBraceOptions(inside)
 	var results []string
 	for _, opt := range options {
 		expandedCombo := prefix + opt + suffix
@@ -123,10 +127,10 @@ func ParseSuperGlob(raw string) SuperGlobResult {
 }
 
 type EvaluatedFile struct {
-	Path     string `json:"path"`
-	Size     int64  `json:"size"`
-	Tokens   int64  `json:"tokens"`
-	FileType string `json:"file_type"`
+	Path     string   `json:"path"`
+	Size     int64    `json:"size"`
+	Tokens   int64    `json:"tokens"`
+	FileType FileType `json:"file_type"`
 }
 
 func EvaluateSuperGlob(absRootDir string, raw string, extraExcludes []string) ([]EvaluatedFile, SuperGlobResult, bool) {
@@ -158,7 +162,7 @@ func EvaluateSuperGlob(absRootDir string, raw string, extraExcludes []string) ([
 			Path:     relSlash,
 			Size:     info.Size(),
 			Tokens:   info.Size() / 4,
-			FileType: filepath.Ext(absPath),
+			FileType: FileType(filepath.Ext(absPath)),
 		})
 	})
 	return files, parsed, limitExceeded

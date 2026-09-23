@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"path/filepath"
@@ -9,6 +10,25 @@ import (
 
 	"github.com/aprice2704/fdm/code/patcheng"
 )
+
+type errRefusingOverwrite struct {
+	msg string
+}
+
+func (e *errRefusingOverwrite) Error() string {
+	return e.msg
+}
+
+func isRefusingOverwrite(err error) bool {
+	if err == nil {
+		return false
+	}
+	var target *errRefusingOverwrite
+	if errors.As(err, &target) {
+		return true
+	}
+	return strings.Contains(err.Error(), "refusing to overwrite existing file")
+}
 
 func (s *AppyServer) handleApply(w http.ResponseWriter, r *http.Request) {
 	log.Printf("[DEBUG] /api/apply request received")
@@ -55,7 +75,7 @@ func (s *AppyServer) handleApply(w http.ResponseWriter, r *http.Request) {
 		af, newContent, isDelete, isLedgerSkip, hashes, err := s.applySingleFile(rawFilename, patches, originalFiles)
 		if err != nil {
 			log.Printf("[DEBUG] /api/apply: applySingleFile error on %s: %v", rawFilename, err)
-			if strings.Contains(err.Error(), "refusing to overwrite existing file") {
+			if isRefusingOverwrite(err) {
 				continue
 			}
 			hasErrors = true

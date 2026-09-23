@@ -30,8 +30,35 @@ type RetestPayload struct {
 	Packages []string `json:"packages"`
 }
 
+type TxID string
+
+type FileStatus string
+
+const (
+	FileStatusReady   FileStatus = "READY"
+	FileStatusError   FileStatus = "ERROR"
+	FileStatusIgnored FileStatus = "IGNORED"
+	FileStatusApplied FileStatus = "APPLIED"
+)
+
+type FileType string
+
+type CompilerStatus string
+
+const (
+	CompilerStatusPass CompilerStatus = "PASS"
+	CompilerStatusFail CompilerStatus = "FAIL"
+)
+
+type TestStatus string
+
+const (
+	TestStatusPass TestStatus = "PASS"
+	TestStatusFail TestStatus = "FAIL"
+)
+
 type HistoryTx struct {
-	TxID      string          `json:"tx_id"`
+	TxID      TxID            `json:"tx_id"`
 	Timestamp int64           `json:"timestamp"`
 	Files     []HistoryFileOp `json:"files"`
 }
@@ -42,7 +69,7 @@ type HistoryFileOp struct {
 }
 
 type RevertPayload struct {
-	TxID string `json:"tx_id"`
+	TxID TxID `json:"tx_id"`
 }
 
 type TxtarPayload struct {
@@ -55,9 +82,9 @@ type TxtarPayload struct {
 
 type PreviewFile struct {
 	Path     string         `json:"path"`
-	Status   string         `json:"status"` // READY, ERROR, IGNORED
+	Status   FileStatus     `json:"status"` // READY, ERROR, IGNORED
 	NetLines int            `json:"net_lines"`
-	FileType string         `json:"file_type,omitempty"`
+	FileType FileType       `json:"file_type,omitempty"`
 	FileIcon string         `json:"file_icon,omitempty"`
 	Patches  []PreviewPatch `json:"patches"`
 }
@@ -77,7 +104,7 @@ type ApplyFile struct {
 	Path        string       `json:"path"`
 	Applied     bool         `json:"applied"`
 	NetLines    int          `json:"net_lines"`
-	FileType    string       `json:"file_type,omitempty"`
+	FileType    FileType     `json:"file_type,omitempty"`
 	FileIcon    string       `json:"file_icon,omitempty"`
 	HashBefore  string       `json:"hash_before,omitempty"`
 	HashAfter   string       `json:"hash_after,omitempty"`
@@ -87,10 +114,10 @@ type ApplyFile struct {
 }
 
 type CompilerCheckFile struct {
-	Path           string   `json:"path"`
-	CompilerStatus string   `json:"compiler_status"` // PASS, FAIL
-	Diagnostics    []string `json:"diagnostics,omitempty"`
-	RawOutput      string   `json:"raw_output,omitempty"`
+	Path           string         `json:"path"`
+	CompilerStatus CompilerStatus `json:"compiler_status"` // PASS, FAIL
+	Diagnostics    []string       `json:"diagnostics,omitempty"`
+	RawOutput      string         `json:"raw_output,omitempty"`
 }
 
 type FailedPatch struct {
@@ -105,12 +132,12 @@ type RetestResponse struct {
 }
 
 type RetestResponseFile struct {
-	Path           string `json:"path"`
-	TestStatus     string `json:"test_status"` // PASS, FAIL
-	Package        string `json:"package"`
-	Summary        string `json:"summary"`
-	FailureExcerpt string `json:"failure_excerpt,omitempty"`
-	RawOutput      string `json:"raw_output,omitempty"`
+	Path           string     `json:"path"`
+	TestStatus     TestStatus `json:"test_status"` // PASS, FAIL
+	Package        string     `json:"package"`
+	Summary        string     `json:"summary"`
+	FailureExcerpt string     `json:"failure_excerpt,omitempty"`
+	RawOutput      string     `json:"raw_output,omitempty"`
 }
 
 var (

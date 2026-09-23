@@ -228,3 +228,15 @@ go install .
 tq
 go install .
 rm *.txtar
+v ; tre
+tq
+go install .
+./run_appy.sh -port=8089
+rg "refusing to complete_replace"
+rgg -l "refusing to complete_replace"
+tq
+l
+tq
+l
+go install .
+rm *.txtar

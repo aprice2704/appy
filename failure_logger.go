@@ -26,13 +26,20 @@ type PatchFailureLog struct {
 	Patches   []patcheng.FuzzyPatch `json:"patches,omitempty"`
 }
 
+type ActivityStatus string
+
+const (
+	ActivityStatusSuccess ActivityStatus = "SUCCESS"
+	ActivityStatusFail    ActivityStatus = "FAIL"
+)
+
 type PatchActivityLog struct {
-	Timestamp string   `json:"timestamp"`
-	Action    string   `json:"action"` // "apply", "preview"
-	File      string   `json:"file"`
-	Status    string   `json:"status"` // "SUCCESS", "FAIL"
-	Methods   []string `json:"methods,omitempty"`
-	NetLines  int      `json:"net_lines"`
+	Timestamp string         `json:"timestamp"`
+	Action    string         `json:"action"` // "apply", "preview"
+	File      string         `json:"file"`
+	Status    ActivityStatus `json:"status"` // "SUCCESS", "FAIL"
+	Methods   []string       `json:"methods,omitempty"`
+	NetLines  int            `json:"net_lines"`
 }
 
 func detectPatchMethod(p patcheng.FuzzyPatch) string {

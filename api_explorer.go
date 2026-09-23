@@ -13,13 +13,13 @@ import (
 )
 
 type FSTreeNode struct {
-	Name     string `json:"name"`
-	Path     string `json:"path"`
-	IsDir    bool   `json:"is_dir"`
-	Size     int64  `json:"size,omitempty"`
-	ModTime  int64  `json:"mod_time,omitempty"`
-	FileIcon string `json:"file_icon,omitempty"`
-	FileType string `json:"file_type,omitempty"`
+	Name     string   `json:"name"`
+	Path     string   `json:"path"`
+	IsDir    bool     `json:"is_dir"`
+	Size     int64    `json:"size,omitempty"`
+	ModTime  int64    `json:"mod_time,omitempty"`
+	FileIcon string   `json:"file_icon,omitempty"`
+	FileType FileType `json:"file_type,omitempty"`
 }
 
 func (s *AppyServer) handleFSTree(w http.ResponseWriter, r *http.Request) {
@@ -73,7 +73,8 @@ func (s *AppyServer) handleFSTree(w http.ResponseWriter, r *http.Request) {
 				node.ModTime = info.ModTime().Unix()
 			}
 			prof := patcheng.DefaultRegistry.GetByExtension(filepath.Ext(name))
-			node.FileType, node.FileIcon = getFileMeta(prof)
+			ft, icon := getFileMeta(prof)
+			node.FileType, node.FileIcon = FileType(ft), icon
 		}
 		nodes = append(nodes, node)
 	}

@@ -29,6 +29,11 @@ func (s *AppyServer) handlePreview(w http.ResponseWriter, r *http.Request) {
 	parsed, err := patcheng.ParseTextBundle(req.Bundle, patcheng.DefaultRegistry)
 	if err != nil {
 		log.Printf("[DEBUG] /api/preview: ParseTextBundle failed: %v", err)
+		appendFailureLog(s.rootDir, PatchFailureLog{
+			Phase: "parse",
+			File:  "<bundle>",
+			Error: err.Error(),
+		})
 		sendError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -72,7 +77,7 @@ func (s *AppyServer) previewSingleFile(rawFilename string, patches []patcheng.Fu
 
 	var filePreviews []PreviewPatch
 	pathFixes := make(map[string]string)
-	fileStatus := "READY"
+	fileStatus := FileStatusReady
 	fileNetLines := 0
 
 	for _, p := range patches {
@@ -80,7 +85,7 @@ func (s *AppyServer) previewSingleFile(rawFilename string, patches []patcheng.Fu
 		if fix != "" {
 			pathFixes[rawFilename] = fix
 		}
-		if statusOverride != "" && fileStatus != "ERROR" {
+		if statusOverride != "" && fileStatus != FileStatusError {
 			fileStatus = statusOverride
 		}
 		filePreviews = append(filePreviews, pp)
@@ -90,13 +95,13 @@ func (s *AppyServer) previewSingleFile(rawFilename string, patches []patcheng.Fu
 		Path:     rawFilename,
 		Status:   fileStatus,
 		NetLines: fileNetLines,
-		FileType: fType,
+		FileType: FileType(fType),
 		FileIcon: fIcon,
 		Patches:  filePreviews,
 	}, pathFixes
 }
 
-func (s *AppyServer) previewSinglePatch(rawFilename, content string, prof *patcheng.LanguageProfile, p patcheng.FuzzyPatch) (PreviewPatch, string, string) {
+func (s *AppyServer) previewSinglePatch(rawFilename, content string, prof *patcheng.LanguageProfile, p patcheng.FuzzyPatch) (PreviewPatch, FileStatus, string) {
 	pp := PreviewPatch{
 		SearchBlock:  p.Search,
 		ReplaceBlock: p.Replace,
@@ -123,7 +128,7 @@ func (s *AppyServer) previewSinglePatch(rawFilename, content string, prof *patch
 	appliedPatchesMu.RUnlock()
 
 	if alreadyApplied {
-		return pp, "APPLIED", ""
+		return pp, FileStatusApplied, ""
 	}
 
 	var pErr error
@@ -132,14 +137,14 @@ func (s *AppyServer) previewSinglePatch(rawFilename, content string, prof *patch
 	} else if p.FullOverwrite && p.Search == "CREATE_ASSERT" && len(content) > 0 {
 		pErr = fmt.Errorf("refusing to create file: %s already exists (size: %d bytes). Use 'complete_replace' or 'overwrite'", rawFilename, len(content))
 	} else if p.FullOverwrite && p.Search == "REPLACE_ASSERT" && len(content) == 0 {
-		pErr = fmt.Errorf("refusing to complete_replace file: %s does not exist or is empty. Use 'create' or 'overwrite'", rawFilename)
+		// Safe auto-promotion: if file does not exist or is empty, promote complete_replace to create/overwrite
+		p.Search = "CREATE_ASSERT"
+		_, pErr = patcheng.ApplyFuzzyPatchesAgnostic(prof, content, []patcheng.FuzzyPatch{p})
 	} else {
 		_, pErr = patcheng.ApplyFuzzyPatchesAgnostic(prof, content, []patcheng.FuzzyPatch{p})
 	}
 
-	if pErr != nil {
-		log.Printf("[DEBUG] /api/preview: patch preview failed for %s: %v", rawFilename, pErr)
-	} else {
+	if pErr == nil {
 		return pp, "", ""
 	}
 
@@ -148,13 +153,13 @@ func (s *AppyServer) previewSinglePatch(rawFilename, content string, prof *patch
 
 	if strings.Contains(errMsg, "refusing to overwrite existing file") {
 		pp.Error = "File already exists. Use '\\%%% overwrite' to replace it."
-		return pp, "IGNORED", ""
+		return pp, FileStatusIgnored, ""
 	}
 
 	if strings.Contains(errMsg, "target file is empty or does not exist") {
 		pp.Error = "Target file missing. Click 'Fix File Paths'."
 		fixed := findUniquePathSuffix(s.rootDir, rawFilename)
-		return pp, "ERROR", fixed
+		return pp, FileStatusError, fixed
 	}
 
 	if strings.Contains(errMsg, "ambiguous") {
@@ -171,5 +176,5 @@ func (s *AppyServer) previewSinglePatch(rawFilename, content string, prof *patch
 		Patches: []patcheng.FuzzyPatch{p},
 	})
 
-	return pp, "ERROR", ""
+	return pp, FileStatusError, ""
 }

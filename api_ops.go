@@ -73,7 +73,7 @@ func (s *AppyServer) handleRetest(w http.ResponseWriter, r *http.Request) {
 	var outFiles []RetestResponseFile
 	for _, fail := range report.HardFails {
 		outFiles = append(outFiles, RetestResponseFile{
-			TestStatus: "FAIL",
+			TestStatus: TestStatusFail,
 			Package:    fail.Task.Package,
 			RawOutput:  fail.Output,
 		})

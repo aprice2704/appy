@@ -34,25 +34,19 @@ func (s *AppyServer) handleResolvePath(w http.ResponseWriter, r *http.Request) {
 			}
 		} else {
 			rel, err := filepath.Rel(s.rootDir, name)
-			if err != nil || strings.HasPrefix(rel, "..") || rel == ".." {
-				if encErr := json.NewEncoder(w).Encode(map[string]string{"path": filepath.ToSlash(name)}); encErr != nil {
-					log.Printf("[ERROR] handleResolvePath: encoding path failed: %v", encErr)
-				}
-			} else {
-				if encErr := json.NewEncoder(w).Encode(map[string]string{"path": filepath.ToSlash(rel)}); encErr != nil {
-					log.Printf("[ERROR] handleResolvePath: encoding path failed: %v", encErr)
-				}
+			outPath := filepath.ToSlash(name)
+			if err == nil && !strings.HasPrefix(rel, "..") && rel != ".." {
+				outPath = filepath.ToSlash(rel)
+			}
+			if encErr := json.NewEncoder(w).Encode(map[string]string{"path": outPath}); encErr != nil {
+				log.Printf("[ERROR] handleResolvePath: encoding path failed: %v", encErr)
 			}
 			return
 		}
 	}
 
 	directPath := filepath.Join(s.rootDir, name)
-	if _, err := os.Stat(directPath); err != nil {
-		if !os.IsNotExist(err) {
-			log.Printf("[DEBUG] handleResolvePath: stat failed on directPath %s: %v", directPath, err)
-		}
-	} else {
+	if _, err := os.Stat(directPath); err == nil {
 		if encErr := json.NewEncoder(w).Encode(map[string]string{"path": filepath.ToSlash(name)}); encErr != nil {
 			log.Printf("[ERROR] handleResolvePath: encoding direct match failed: %v", encErr)
 		}
@@ -64,21 +58,22 @@ func (s *AppyServer) handleResolvePath(w http.ResponseWriter, r *http.Request) {
 		if encErr := json.NewEncoder(w).Encode(map[string]string{"path": match}); encErr != nil {
 			log.Printf("[ERROR] handleResolvePath: encoding suffix match failed: %v", encErr)
 		}
-	} else {
-		matches := findAllPathSuffixMatches(s.rootDir, name)
-		if len(matches) > 1 {
-			if encErr := json.NewEncoder(w).Encode(map[string]any{
-				"path":       filepath.ToSlash(name),
-				"ambiguous":  true,
-				"candidates": matches,
-			}); encErr != nil {
-				log.Printf("[ERROR] handleResolvePath: encoding ambiguous candidates failed: %v", encErr)
-			}
-			return
+		return
+	}
+
+	matches := findAllPathSuffixMatches(s.rootDir, name)
+	if len(matches) > 1 {
+		if encErr := json.NewEncoder(w).Encode(map[string]any{
+			"path":       filepath.ToSlash(name),
+			"ambiguous":  true,
+			"candidates": matches,
+		}); encErr != nil {
+			log.Printf("[ERROR] handleResolvePath: encoding ambiguous candidates failed: %v", encErr)
 		}
-		if encErr := json.NewEncoder(w).Encode(map[string]string{"path": filepath.ToSlash(name)}); encErr != nil {
-			log.Printf("[ERROR] handleResolvePath: encoding default path failed: %v", encErr)
-		}
+		return
+	}
+	if encErr := json.NewEncoder(w).Encode(map[string]string{"path": filepath.ToSlash(name)}); encErr != nil {
+		log.Printf("[ERROR] handleResolvePath: encoding default path failed: %v", encErr)
 	}
 }
 
@@ -100,13 +95,26 @@ func (s *AppyServer) handleResolveDirectory(w http.ResponseWriter, r *http.Reque
 	})
 }
 
+func formatSuggestionPath(fullCandidate, rootDir string, isAbs bool, isDir bool) string {
+	outPath := filepath.ToSlash(fullCandidate)
+	if !isAbs {
+		rel, relErr := filepath.Rel(rootDir, fullCandidate)
+		if relErr == nil && !strings.HasPrefix(rel, "..") {
+			outPath = filepath.ToSlash(rel)
+		}
+	}
+	if isDir {
+		outPath += "/"
+	}
+	return outPath
+}
+
 func (s *AppyServer) handleAutocompletePath(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
-	prefix := r.URL.Query().Get("prefix")
-	prefix = strings.TrimSpace(prefix)
+	prefix := strings.TrimSpace(r.URL.Query().Get("prefix"))
 
 	var searchDir string
 	var filePrefix string
@@ -135,29 +143,17 @@ func (s *AppyServer) handleAutocompletePath(w http.ResponseWriter, r *http.Reque
 	if err != nil {
 		log.Printf("[DEBUG] handleAutocompletePath: ReadDir failed for %s: %v", searchDir, err)
 	} else {
+		lowerPrefix := strings.ToLower(filePrefix)
 		for _, e := range entries {
 			name := e.Name()
 			if name == ".git" || name == "node_modules" || name == ".appy_history" {
 				continue
 			}
-			if filePrefix == "" || strings.HasPrefix(strings.ToLower(name), strings.ToLower(filePrefix)) {
-				fullCandidate := filepath.Join(searchDir, name)
-				var outPath string
-				if isAbs {
-					outPath = filepath.ToSlash(fullCandidate)
-				} else {
-					rel, relErr := filepath.Rel(s.rootDir, fullCandidate)
-					if relErr != nil || strings.HasPrefix(rel, "..") {
-						outPath = filepath.ToSlash(fullCandidate)
-					} else {
-						outPath = filepath.ToSlash(rel)
-					}
-				}
-				if e.IsDir() {
-					outPath += "/"
-				}
-				suggestions = append(suggestions, outPath)
+			if filePrefix != "" && !strings.HasPrefix(strings.ToLower(name), lowerPrefix) {
+				continue
 			}
+			fullCandidate := filepath.Join(searchDir, name)
+			suggestions = append(suggestions, formatSuggestionPath(fullCandidate, s.rootDir, isAbs, e.IsDir()))
 		}
 	}
 

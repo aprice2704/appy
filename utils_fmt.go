@@ -24,9 +24,11 @@ func normalizeSpace(s string) string {
 func getNonEmptyLines(s string) []string {
 	var res []string
 	for _, l := range strings.Split(s, "\n") {
-		if strings.TrimSpace(l) != "" {
-			res = append(res, l)
+		trimmed := strings.TrimSpace(l)
+		if trimmed == "" {
+			continue
 		}
+		res = append(res, l)
 	}
 	return res
 }
@@ -67,38 +69,41 @@ func findTextAnchor(content string, search string) string {
 				score++
 			}
 		}
-		if score > bestScore {
-			bestScore = score
-			bestStart = i
+		if score <= bestScore {
+			continue
 		}
+		bestScore = score
+		bestStart = i
 	}
 
-	if bestScore > 0 && bestStart >= 0 {
-		start := bestStart - 2
-		if start < 0 {
-			start = 0
-		}
-		end := bestStart + len(searchLines) + 2
-		if end > len(contentLines) {
-			end = len(contentLines)
-		}
-		var sb strings.Builder
-		if end-start <= 8 {
-			for i := start; i < end; i++ {
-				sb.WriteString(formatHintLine(i, bestStart, searchLines, contentLines))
-			}
-		} else {
-			for i := start; i < start+3; i++ {
-				sb.WriteString(formatHintLine(i, bestStart, searchLines, contentLines))
-			}
-			sb.WriteString(fmt.Sprintf("... [%d lines elided] ...\n", (end-3)-(start+3)))
-			for i := end - 3; i < end; i++ {
-				sb.WriteString(formatHintLine(i, bestStart, searchLines, contentLines))
-			}
+	if bestScore <= 0 || bestStart < 0 {
+		return ""
+	}
+
+	start := bestStart - 2
+	if start < 0 {
+		start = 0
+	}
+	end := bestStart + len(searchLines) + 2
+	if end > len(contentLines) {
+		end = len(contentLines)
+	}
+	var sb strings.Builder
+	if end-start <= 8 {
+		for i := start; i < end; i++ {
+			sb.WriteString(formatHintLine(i, bestStart, searchLines, contentLines))
 		}
 		return sb.String()
 	}
-	return ""
+
+	for i := start; i < start+3; i++ {
+		sb.WriteString(formatHintLine(i, bestStart, searchLines, contentLines))
+	}
+	sb.WriteString(fmt.Sprintf("... [%d lines elided] ...\n", (end-3)-(start+3)))
+	for i := end - 3; i < end; i++ {
+		sb.WriteString(formatHintLine(i, bestStart, searchLines, contentLines))
+	}
+	return sb.String()
 }
 
 func generateDiagnosticHint(profile *patcheng.LanguageProfile, filename, content, search string, nearLine int) string {
@@ -168,10 +173,11 @@ func ValidateFuzzySearchBlock(p patcheng.FuzzyPatch) error {
 
 	lines := getNonEmptyLines(p.Search)
 	for i, l := range lines {
-		if strings.TrimSpace(l) == "..." {
-			if i < 1 || len(lines)-i-1 < 1 {
-				return fmt.Errorf("REJECTED: Invalid use of elision (...). You must provide at least 1 line of strictly unique context on BOTH sides of the elision.")
-			}
+		if strings.TrimSpace(l) != "..." {
+			continue
+		}
+		if i < 1 || len(lines)-i-1 < 1 {
+			return fmt.Errorf("REJECTED: Invalid use of elision (...). You must provide at least 1 line of strictly unique context on BOTH sides of the elision.")
 		}
 	}
 
