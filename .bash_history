@@ -240,3 +240,7 @@ tq
 l
 go install .
 rm *.txtar
+ll -s size
+rm *.txtar
+ll appy-chrome-extension/
+./run_appy.sh -port=8089
